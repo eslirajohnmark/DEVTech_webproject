@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>DEVTech · Tacloban Computer Repair</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/home.css') }}" />
+</head>
+<body>
+<div class="hp-wrapper">
+
+    <!-- ===== NAVIGATION ===== -->
+    <nav class="hp-nav" id="navbar">
+        <div class="hp-nav-content">
+            <a href="{{ url_for('home') }}" class="hp-logo">
+                <i class="fas fa-code-branch"></i> <span>DEVTech</span>
+            </a>
+            <div class="hp-nav-links" id="navLinks">
+                <a href="{{ url_for('home') }}" class="hp-link-active" id="navHome">Home</a>
+                <a href="{{ url_for('request_service') }}">Services</a>
+                <a href="#about" id="navAbout">About</a>
+                <a href="#contact" id="navContact">Contact</a>
+                {% if 'user_id' in session %}
+                    <a href="{{ url_for('user_dashboard') }}" class="hp-btn-primary">Dashboard</a>
+                    <a href="{{ url_for('logout') }}" class="hp-btn-outline">Logout</a>
+                {% else %}
+                    <a href="{{ url_for('login') }}" class="hp-btn-outline">Login</a>
+                    <a href="{{ url_for('register') }}" class="hp-btn-primary">Sign Up</a>
+                {% endif %}
+            </div>
+            <button class="hp-menu-toggle" id="menuToggle" aria-label="Toggle navigation">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ===== HERO SECTION ===== -->
+    <header class="hp-hero" id="home">
+        <div class="hp-hero-content">
+            <div class="hp-hero-text">
+                <div class="hp-hero-badge">
+                    <i class="fas fa-shield-alt"></i> Trusted Since 2018
+                </div>
+                <h1 class="hp-hero-title">
+                    Computer Trouble in Tacloban?<br />
+                    <span class="highlight">We Can Fix It.</span>
+                </h1>
+                <p class="hp-hero-subtitle">
+                    Expert diagnostic and repair services, booked online. Get your tech back to 100% in no time.
+                </p>
+                <div class="hp-hero-actions">
+                    <a href="{{ url_for('request_service') }}" class="hp-btn-large" id="bookNowBtn">
+                        <i class="fas fa-calendar-check"></i> Book Your Repair Now
+                    </a>
+                    <a href="{{ url_for('user_troubleshooting') }}" class="hp-btn-secondary" id="howItWorksBtn">
+                        <i class="fas fa-play-circle"></i> How It Works
+                    </a>
+                </div>
+                <div class="hp-hero-stats">
+                    <div class="hp-stat">
+                        <span class="hp-stat-number" id="repairCount">{{ repair_count|default('2,500+') }}</span>
+                        <span class="hp-stat-label">Repairs Done</span>
+                    </div>
+                    <div class="hp-stat">
+                        <span class="hp-stat-number">98%</span>
+                        <span class="hp-stat-label">Success Rate</span>
+                    </div>
+                    <div class="hp-stat">
+                        <span class="hp-stat-number">4.9★</span>
+                        <span class="hp-stat-label">Customer Rating</span>
+                    </div>
+                </div>
+            </div>
+            <div class="hp-hero-visual">
+                <div class="hp-hero-image">
+                    <div class="hp-image-content">
+                        <div class="hp-floating-icon top-right">
+                            <i class="fas fa-clock"></i> Same-day fix
+                        </div>
+                        <div class="hp-floating-icon bottom-left">
+                            <i class="fas fa-wifi"></i> Free pickup
+                        </div>
+                        <div class="hp-image-placeholder">
+                            <i class="fas fa-laptop-medical"></i>
+                            <span>DEVTech</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ===== CARD GRID ===== -->
+    <section class="hp-card-grid">
+        <!-- Card 1: Process -->
+        <div class="hp-info-card">
+            <div class="hp-card-header">
+                <span class="hp-card-badge">Process</span>
+                <h3 class="hp-card-title">How We Work</h3>
+            </div>
+            <div class="hp-process-list">
+                <div class="hp-step" data-step="1">
+                    <div class="hp-step-number">01</div>
+                    <div class="hp-step-content">
+                        <strong>Diagnose</strong>
+                        <p>Quick troubleshoot to find the root cause of your computer issues.</p>
+                    </div>
+                </div>
+                <div class="hp-step" data-step="2">
+                    <div class="hp-step-number">02</div>
+                    <div class="hp-step-content">
+                        <strong>Book</strong>
+                        <p>Schedule your check‑in online at a time that works for you.</p>
+                    </div>
+                </div>
+                <div class="hp-step" data-step="3">
+                    <div class="hp-step-number">03</div>
+                    <div class="hp-step-content">
+                        <strong>Repair</strong>
+                        <p>Expert technicians fix your device and get you back to 100%.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="hp-icon-row">
+                <div class="hp-mini-feature">
+                    <i class="fas fa-lightbulb"></i>
+                    <span>Quick Diagnostic</span>
+                </div>
+                <div class="hp-mini-feature">
+                    <i class="fas fa-calendar-check"></i>
+                    <span>Online Booking</span>
+                </div>
+                <div class="hp-mini-feature">
+                    <i class="fas fa-tools"></i>
+                    <span>Expert Repair</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 2: Troubleshoot -->
+        <div class="hp-info-card hp-center-text">
+            <div class="hp-card-header">
+                <span class="hp-card-badge">Troubleshoot</span>
+                <h3 class="hp-card-title">Quick Troubleshoot</h3>
+            </div>
+            <p class="hp-text-muted">Common issue keywords like:</p>
+            <ul class="hp-keyword-list" id="keywordList">
+                <li data-issue="slow"><i class="fas fa-tachometer-alt"></i> Slow Computer</li>
+                <li data-issue="virus"><i class="fas fa-shield-virus"></i> Virus Issues</li>
+                <li data-issue="screen"><i class="fas fa-laptop"></i> Laptop Screen Repair</li>
+            </ul>
+        </div>
+
+        <!-- Card 3: Services -->
+        <div class="hp-info-card">
+            <div class="hp-card-header">
+                <span class="hp-card-badge">Services</span>
+                <h3 class="hp-card-title">What We Fix</h3>
+            </div>
+            {% if services %}
+                {% for service in services %}
+                <div class="hp-service-item" data-service="{{ service.id }}">
+                    <div class="hp-service-icon"><i class="fas fa-server"></i></div>
+                    <div>
+                        <strong>{{ service.name }}</strong>
+                        <p>{{ service.description[:80] }}{% if service.description|length > 80 %}...{% endif %}</p>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="hp-service-item">
+                    <div class="hp-service-icon"><i class="fas fa-server"></i></div>
+                    <div>
+                        <strong>Hardware repair</strong>
+                        <p>Motherboard, screens, batteries, and more.</p>
+                    </div>
+                </div>
+                <div class="hp-service-item">
+                    <div class="hp-service-icon"><i class="fas fa-code"></i></div>
+                    <div>
+                        <strong>Software fix</strong>
+                        <p>OS, drivers, malware removal, optimization.</p>
+                    </div>
+                </div>
+                <div class="hp-service-item">
+                    <div class="hp-service-icon"><i class="fas fa-search-plus"></i></div>
+                    <div>
+                        <strong>Diagnostics</strong>
+                        <p>Full system analysis to pinpoint issues.</p>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </section>
+
+    <!-- ===== ABOUT SECTION ===== -->
+    <section class="hp-about-section" id="about">
+        <div class="hp-about-container">
+            <div class="hp-about-header">
+                <span class="hp-about-badge">About Us</span>
+                <h2>Your Trusted Computer Repair Partner in Tacloban</h2>
+                <p>We're passionate about bringing your technology back to life with expert care and precision.</p>
+            </div>
+            <div class="hp-about-grid">
+                <div class="hp-about-card">
+                    <div class="hp-about-icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <h3>Expert Team</h3>
+                    <p>Our certified technicians have years of experience diagnosing and repairing all types of computer issues.</p>
+                </div>
+                <div class="hp-about-card">
+                    <div class="hp-about-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <h3>Fast Turnaround</h3>
+                    <p>Most repairs are completed within 24-48 hours. We understand your time is valuable.</p>
+                </div>
+                <div class="hp-about-card">
+                    <div class="hp-about-icon">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3>Quality Guarantee</h3>
+                    <p>We stand behind our work with a 30-day service warranty on all repairs.</p>
+                </div>
+                <div class="hp-about-card">
+                    <div class="hp-about-icon">
+                        <i class="fas fa-hand-holding-heart"></i>
+                    </div>
+                    <h3>Customer First</h3>
+                    <p>Your satisfaction is our top priority. We're committed to providing exceptional service.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== CONTACT SECTION ===== -->
+    <section class="hp-contact-section" id="contact">
+        <div class="hp-contact-container">
+            <div class="hp-contact-header">
+                <span class="hp-contact-badge">Get in Touch</span>
+                <h2>We'd Love to Hear From You</h2>
+                <p>Have questions or need assistance? Reach out to us and we'll get back to you promptly.</p>
+            </div>
+            <div class="hp-contact-grid">
+                <div class="hp-contact-info">
+                    <div class="hp-contact-item">
+                        <div class="hp-contact-icon">
+                            <i class="fas fa-map-marker-alt"></i>
+                        </div>
+                        <div class="hp-contact-details">
+                            <h4>Visit Us</h4>
+                            <p>Tacloban City, Leyte</p>
+                            <p>Open Mon-Sat: 8AM - 8PM</p>
+                        </div>
+                    </div>
+                    <div class="hp-contact-item">
+                        <div class="hp-contact-icon">
+                            <i class="fas fa-phone"></i>
+                        </div>
+                        <div class="hp-contact-details">
+                            <h4>Call Us</h4>
+                            <p>(053) 123-4567</p>
+                            <p>+63 912 345 6789</p>
+                        </div>
+                    </div>
+                    <div class="hp-contact-item">
+                        <div class="hp-contact-icon">
+                            <i class="fas fa-envelope"></i>
+                        </div>
+                        <div class="hp-contact-details">
+                            <h4>Email Us</h4>
+                            <p>support@devtech.ph</p>
+                            <p>info@devtech.ph</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="hp-contact-form-wrapper">
+                    <form class="hp-contact-form" id="contactForm">
+                        <div class="hp-form-group">
+                            <label for="contactName">Your Name</label>
+                            <input type="text" id="contactName" placeholder="Enter your full name" required />
+                        </div>
+                        <div class="hp-form-group">
+                            <label for="contactEmail">Email Address</label>
+                            <input type="email" id="contactEmail" placeholder="Enter your email" required />
+                        </div>
+                        <div class="hp-form-group">
+                            <label for="contactSubject">Subject</label>
+                            <input type="text" id="contactSubject" placeholder="What's this about?" required />
+                        </div>
+                        <div class="hp-form-group">
+                            <label for="contactMessage">Message</label>
+                            <textarea id="contactMessage" rows="4" placeholder="Tell us how we can help..." required></textarea>
+                        </div>
+                        <button type="submit" class="hp-contact-submit">
+                            <i class="fas fa-paper-plane"></i> Send Message
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== CTA BANNER ===== -->
+    <section class="hp-cta-banner">
+        <div class="hp-container" style="max-width: 100%;">
+            <div class="hp-cta-content">
+                <h2>Ready to Get Your Tech Back to 100%?</h2>
+                <p>Book your repair now and experience professional service you can trust.</p>
+                <a href="{{ url_for('request_service') }}" class="hp-btn-cta" id="ctaScheduleBtn">
+                    <i class="fas fa-calendar-check"></i> Schedule Your Repair
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="hp-footer">
+        <div class="hp-container" style="max-width: 100%;">
+            <div class="hp-footer-grid">
+                <div class="hp-footer-brand">
+                    <a href="{{ url_for('home') }}" class="hp-logo">
+                        <i class="fas fa-code-branch"></i> DEV<span>Tech</span>
+                    </a>
+                    <p>Expert computer repair services in Tacloban. We bring your tech back to life.</p>
+                    <div class="hp-social-links">
+                        <a href="#" data-platform="facebook"><i class="fab fa-facebook-f"></i></a>
+                        <a href="#" data-platform="twitter"><i class="fab fa-twitter"></i></a>
+                        <a href="#" data-platform="instagram"><i class="fab fa-instagram"></i></a>
+                        <a href="#" data-platform="youtube"><i class="fab fa-youtube"></i></a>
+                    </div>
+                </div>
+                <div class="hp-footer-links">
+                    <h4>Services</h4>
+                    <a href="{{ url_for('request_service') }}">Hardware Repair</a>
+                    <a href="{{ url_for('request_service') }}">Software Fix</a>
+                    <a href="{{ url_for('request_service') }}">Virus Removal</a>
+                    <a href="{{ url_for('request_service') }}">Data Recovery</a>
+                </div>
+                <div class="hp-footer-links">
+                    <h4>Support</h4>
+                    <a href="#about">About</a>
+                    <a href="#contact" id="footerContactLink">Contact</a>
+                    <a href="#">Privacy Policy</a>
+                    <a href="#">Terms of Service</a>
+                </div>
+                <div class="hp-footer-contact">
+                    <h4>Get in Touch</h4>
+                    <p><i class="fas fa-map-marker-alt"></i> Tacloban City, Leyte</p>
+                    <p><i class="fas fa-phone"></i> (053) 123-4567</p>
+                    <p><i class="fas fa-envelope"></i> support@devtech.ph</p>
+                    <p><i class="fas fa-clock"></i> Mon-Sat: 8AM - 8PM</p>
+                </div>
+            </div>
+            <div class="hp-footer-bottom">
+                <span>© 2026 DEVTech · Tacloban repair hub</span>
+                <span><i class="fas fa-shield-alt"></i> Secure · Reliable · Fast</span>
+            </div>
+        </div>
+    </footer>
+</div>
+
+<!-- ===== JAVASCRIPT ===== -->
+<script src="{{ url_for('static', filename='js/home.js') }}"></script>
+
+<p style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);">
+    Staff access:
+    <a href="{{ url_for('technician.login') }}">Technician Sign-In</a>
+    · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>
+</p>
+
+</body>
+</html>

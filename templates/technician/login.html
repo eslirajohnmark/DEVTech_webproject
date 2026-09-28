@@ -1,0 +1,120 @@
+{% extends 'base/technician_base.html' %}
+{% set page_module = 'login' %}
+
+{% block title %}Technician Login{% endblock %}
+{% block meta_page %}login{% endblock %}
+{% block meta_title %}Sign In{% endblock %}
+{% block body_class %}tech-login-page tech-login-page--split{% endblock %}
+
+{% block body %}
+<section class="tech-auth-hero">
+    <div class="tech-auth-hero-inner">
+        <div class="tech-brand tech-brand--hero">
+            <div class="tech-brand-mark"><i class="fas fa-screwdriver-wrench"></i></div>
+            <div class="tech-brand-text">
+                <div class="tech-brand-name">DEV<span>Tech</span></div>
+                <div class="tech-brand-sub">Technician Portal</div>
+            </div>
+        </div>
+        <h1 class="tech-auth-hero-title">
+            Every device,<br />every job,<br /><span>under control.</span>
+        </h1>
+        <p class="tech-auth-hero-sub">
+            Sign in to see your assigned jobs, record device intake,
+            update repair statuses, and talk to customers — all from one place.
+        </p>
+        <ul class="tech-auth-hero-list">
+            <li><i class="fas fa-circle-check"></i> Only your own assigned jobs</li>
+            <li><i class="fas fa-circle-check"></i> Customer &amp; admin messaging</li>
+            <li><i class="fas fa-circle-check"></i> Device intake &amp; incident reports</li>
+        </ul>
+        <div class="tech-auth-hero-foot">
+            <i class="fas fa-shield-halved"></i>
+            <span>Tech ID + password sign-in</span>
+        </div>
+    </div>
+</section>
+
+<section class="tech-auth-panel">
+    <div class="tech-auth-card">
+        <header class="tech-auth-head">
+            <h2>Sign in</h2>
+            <p>Use your Staff / Tech ID and password</p>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="tech-login-error is-shown">
+            <i class="fas fa-circle-exclamation"></i>
+            <span>{{ messages[0] }}</span>
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="tech-login-error" id="loginError">
+            <i class="fas fa-circle-exclamation"></i>
+            <span id="loginErrorText"></span>
+        </div>
+
+        <div class="tech-login-success" id="successBanner">
+            <i class="fas fa-circle-check"></i>
+            <span id="successBannerText"></span>
+        </div>
+
+        <form id="loginForm" autocomplete="off" novalidate>
+            <div class="tech-field">
+                <label class="tech-label" for="loginId">
+                    Staff / Tech ID Number <span class="req">*</span></label>
+                <div class="tech-input-icon">
+                    <i class="fas fa-id-badge"></i>
+                    <input class="tech-input tech-input--mono" id="loginId"
+                           type="text" placeholder="TECH-0001" maxlength="12"
+                           value="{{ prefill_id or '' }}" autocomplete="username" />
+                </div>
+                <p class="tech-error" id="errLoginId">
+                    Enter your Tech ID in the format TECH-0001.</p>
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="loginPassword">
+                    Password <span class="req">*</span></label>
+                <div class="tech-input-icon tech-password-wrap">
+                    <i class="fas fa-lock"></i>
+                    <input class="tech-input" id="loginPassword" type="password"
+                           placeholder="Your password" autocomplete="current-password" />
+                    <button type="button" class="tech-password-toggle"
+                            data-target="loginPassword" aria-label="Show password">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                </div>
+                <p class="tech-error" id="errLoginPassword">Enter your password.</p>
+            </div>
+
+            <div class="tech-auth-row">
+                <label class="tech-check tech-check--inline">
+                    <input type="checkbox" id="rememberMe" />
+                    <span>Keep me signed in</span>
+                </label>
+                <a href="#" class="tech-auth-link" id="forgotLink">Forgot password?</a>
+            </div>
+
+            <button type="submit" class="tech-btn tech-btn--primary tech-btn--wide"
+                    id="signInBtn" style="margin-top:1.1rem;">
+                <i class="fas fa-arrow-right-to-bracket"></i> Sign In
+            </button>
+        </form>
+
+        <div class="tech-auth-divider"><span>New technician?</span></div>
+
+        <a href="{{ url_for('technician.register') }}"
+           class="tech-btn tech-btn--ghost tech-btn--wide"
+           style="justify-content:center;">
+            <i class="fas fa-user-plus"></i> Create an account
+        </a>
+
+        <p class="tech-login-note">
+            Demo accounts — <code>TECH-0001</code> / <code>1234</code>
+        </p>
+    </div>
+</section>
+{% endblock %}

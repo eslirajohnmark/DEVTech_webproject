@@ -1,0 +1,301 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}My Orders{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>My Orders</h1>
+        <p>Track and manage your shop purchases</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+        </a>
+        <a href="{{ url_for('user_shop') }}" class="user-icon-btn" title="Continue shopping">
+            <i class="fas fa-store"></i>
+        </a>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Filter Tabs -->
+<div class="usr-filter-tabs" style="display:flex; gap:0.5rem; margin-bottom:1.5rem; flex-wrap:wrap;">
+    <a href="{{ url_for('user_orders', status='all') }}" class="usr-filter-tab {% if status_filter == 'all' %}active{% endif %}">
+        All <span class="badge">{{ status_counts.all }}</span>
+    </a>
+    <a href="{{ url_for('user_orders', status='pending') }}" class="usr-filter-tab {% if status_filter == 'pending' %}active{% endif %}">
+        Pending <span class="badge">{{ status_counts.pending }}</span>
+    </a>
+    <a href="{{ url_for('user_orders', status='processing') }}" class="usr-filter-tab {% if status_filter == 'processing' %}active{% endif %}">
+        Processing <span class="badge">{{ status_counts.processing }}</span>
+    </a>
+    <a href="{{ url_for('user_orders', status='completed') }}" class="usr-filter-tab {% if status_filter == 'completed' %}active{% endif %}">
+        Completed <span class="badge">{{ status_counts.completed }}</span>
+    </a>
+    <a href="{{ url_for('user_orders', status='cancelled') }}" class="usr-filter-tab {% if status_filter == 'cancelled' %}active{% endif %}">
+        Cancelled <span class="badge">{{ status_counts.cancelled }}</span>
+    </a>
+</div>
+
+{% if orders %}
+<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:1.5rem;">
+    {% for order in orders %}
+    <div class="user-product-card" style="cursor:default;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.6rem;">
+            <div>
+                <h4 style="margin:0; color:var(--user-text-primary);">{{ order.order_number }}</h4>
+                <span style="font-size:0.8rem; color:var(--user-text-muted);">
+                    <i class="fas fa-calendar"></i> {{ order.created_at.strftime('%b %d, %Y') if order.created_at else 'N/A' }}
+                </span>
+            </div>
+            <span class="user-status-badge {{ order.status }}">{{ order.status|title }}</span>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin:0.6rem 0;">
+            <span style="font-size:1.2rem; font-weight:700; color:var(--user-primary);">₱{{ "%.2f"|format(order.total_amount) }}</span>
+            <span style="font-size:0.85rem; color:var(--user-text-muted);">{{ order.items|length }} item{{ 's' if order.items|length != 1 else '' }}</span>
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.8rem;">
+            <span class="user-payment-badge {{ order.payment_status }}">
+                {% if order.payment_method == 'gcash' %}<i class="fas fa-mobile-alt"></i> GCash{% elif order.payment_method == 'cod' %}<i class="fas fa-money-bill-wave"></i> COD{% else %}No Payment{% endif %}
+                &middot; {{ order.payment_status|title }}
+            </span>
+        </div>
+
+        <div style="display:flex; gap:0.5rem;">
+            <button class="user-action-btn-sm view-btn" style="flex:1; justify-content:center;" onclick="viewOrderDetails({{ order.id }})">
+                <i class="fas fa-eye"></i> View Details
+            </button>
+            {% if order.status in ['pending', 'processing'] %}
+            <button class="user-action-btn-sm cancel-btn" style="flex:1; justify-content:center;" onclick="cancelOrder({{ order.id }}, '{{ order.order_number }}')">
+                <i class="fas fa-times"></i> Cancel
+            </button>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="user-empty-state">
+    <i class="fas fa-box-open" style="font-size:3rem; opacity:0.3;"></i>
+    <h3>No Orders Found</h3>
+    <p>{% if status_filter != 'all' %}You don't have any {{ status_filter }} orders.{% else %}You haven't placed any orders yet.{% endif %}</p>
+    <a href="{{ url_for('user_shop') }}" class="user-btn-primary" style="margin-top:1rem;">
+        <i class="fas fa-store"></i> Browse the Shop
+    </a>
+</div>
+{% endif %}
+
+<!-- Order Details Modal -->
+<div class="user-modal" id="orderDetailsModal">
+    <div class="user-modal-content" style="max-width: 620px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Order Details</h2>
+            <button class="user-modal-close" onclick="closeOrderDetailsModal()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="orderDetailsBody">
+            <div class="booking-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading order details...</p>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeOrderDetailsModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<script>
+    function showUserToast(message, type = 'info', duration = 4000) {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.style.cssText = `
+                position: fixed; top: 20px; right: 20px; z-index: 10000;
+                display: flex; flex-direction: column; gap: 10px;
+                max-width: 400px; width: 100%; pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+
+        const colors = { success: '#22c55e', error: '#ef4444', warning: '#f59e0b', info: '#2563eb' };
+        const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
+
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            pointer-events: auto; background: var(--user-card); padding: 12px 20px;
+            border-radius: 12px; border-left: 4px solid ${colors[type] || '#2563eb'};
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15); display: flex; align-items: center;
+            gap: 12px; font-size: 0.9rem; font-weight: 500; color: var(--user-text-primary);
+            transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            width: 100%;
+        `;
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color:${colors[type] || '#2563eb'}; font-size:1.2rem;"></i>
+            <span style="flex:1;">${message}</span>
+            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+        `;
+        container.appendChild(toast);
+        requestAnimationFrame(() => { toast.style.transform = 'translateX(0)'; });
+        setTimeout(() => {
+            toast.style.transform = 'translateX(120%)';
+            setTimeout(() => { if (toast.parentElement) toast.remove(); }, 400);
+        }, duration);
+    }
+
+    function viewOrderDetails(orderId) {
+        const modal = document.getElementById('orderDetailsModal');
+        const body = document.getElementById('orderDetailsBody');
+        body.innerHTML = `
+            <div class="booking-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading order details...</p>
+            </div>
+        `;
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        fetch(`/api/order/${orderId}`)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to load order');
+                return response.json();
+            })
+            .then(order => {
+                const itemsHtml = order.items.map(item => `
+                    <tr>
+                        <td>${item.product_name}</td>
+                        <td style="text-align:center;">${item.quantity}</td>
+                        <td style="text-align:right;">₱${item.price.toFixed(2)}</td>
+                        <td style="text-align:right; font-weight:600;">₱${item.subtotal.toFixed(2)}</td>
+                    </tr>
+                `).join('');
+
+                const paymentLabel = order.payment_method === 'gcash' ? 'GCash' : (order.payment_method === 'cod' ? 'Cash on Delivery' : 'Not set');
+
+                const addr = order.address || {};
+                const hasStructuredAddress = addr.address_line || addr.city;
+                const addressHtml = hasStructuredAddress ? `
+                    <div style="grid-column:1 / -1;">
+                        <span style="font-size:0.8rem; color:var(--user-text-muted);">Delivery Address</span>
+                        <p style="font-weight:600; margin:0.2rem 0;">
+                            ${addr.recipient_name ? addr.recipient_name + ' &middot; ' : ''}${addr.recipient_phone ? addr.recipient_phone + '<br>' : ''}
+                            ${[addr.address_line, addr.city, addr.province, addr.postal_code].filter(Boolean).join(', ')}
+                        </p>
+                        ${addr.has_pin ? `<a href="${addr.map_url}" target="_blank" rel="noopener" style="font-size:0.82rem;"><i class="fas fa-map-marker-alt"></i> View pinned location on map</a>` : ''}
+                    </div>
+                ` : (order.shipping_address ? `
+                    <div style="grid-column:1 / -1;">
+                        <span style="font-size:0.8rem; color:var(--user-text-muted);">Delivery Address</span>
+                        <p style="font-weight:600; margin:0.2rem 0;">${order.shipping_address}</p>
+                    </div>
+                ` : '');
+
+                body.innerHTML = `
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1.2rem;">
+                        <div>
+                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Order Number</span>
+                            <p style="font-weight:600; margin:0.2rem 0;">${order.order_number}</p>
+                        </div>
+                        <div>
+                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Date Placed</span>
+                            <p style="font-weight:600; margin:0.2rem 0;">${order.created_at}</p>
+                        </div>
+                        <div>
+                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Status</span>
+                            <p style="font-weight:600; margin:0.2rem 0; text-transform:capitalize;">${order.status}</p>
+                        </div>
+                        <div>
+                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Payment</span>
+                            <p style="font-weight:600; margin:0.2rem 0;">${paymentLabel} &middot; <span style="text-transform:capitalize;">${order.payment_status}</span></p>
+                        </div>
+                        ${addressHtml}
+                    </div>
+                    <table class="user-table" style="width:100%;">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th style="text-align:center;">Qty</th>
+                                <th style="text-align:right;">Price</th>
+                                <th style="text-align:right;">Subtotal</th>
+                            </tr>
+                        </thead>
+                        <tbody>${itemsHtml}</tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3" style="text-align:right; font-weight:700; padding-top:0.6rem;">Total</td>
+                                <td style="text-align:right; font-weight:700; color:var(--user-primary); padding-top:0.6rem;">₱${order.total_amount.toFixed(2)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    ${order.can_cancel ? `
+                    <div style="margin-top:1.2rem; text-align:right;">
+                        <button class="user-btn-danger" onclick="closeOrderDetailsModal(); cancelOrder(${order.id}, '${order.order_number}');">
+                            <i class="fas fa-times"></i> Cancel This Order
+                        </button>
+                    </div>` : ''}
+                `;
+            })
+            .catch(() => {
+                body.innerHTML = `<p style="color:var(--danger); text-align:center; padding:2rem;">Could not load order details. Please try again.</p>`;
+            });
+    }
+
+    function closeOrderDetailsModal() {
+        document.getElementById('orderDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    function cancelOrder(orderId, orderNumber) {
+        if (!confirm(`Cancel order ${orderNumber}? This cannot be undone.`)) return;
+
+        fetch(`/api/order/${orderId}/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showUserToast(data.message || 'Order cancelled', 'success');
+                setTimeout(() => location.reload(), 1200);
+            } else {
+                showUserToast(data.message || 'Failed to cancel order', 'error');
+            }
+        })
+        .catch(() => showUserToast('An error occurred while cancelling', 'error'));
+    }
+
+    document.getElementById('orderDetailsModal').addEventListener('click', function(e) {
+        if (e.target === this) closeOrderDetailsModal();
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeOrderDetailsModal();
+    });
+
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() { this.parentElement.remove(); });
+    });
+</script>
+{% endblock %}

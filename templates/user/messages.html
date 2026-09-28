@@ -1,0 +1,384 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Messages{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Messages</h1>
+        <p>Communicate with our support team</p>
+    </div>
+    <div class="user-top-actions">
+        <button class="user-btn-primary" onclick="openNewMessage()" style="font-size:0.8rem; padding:0.4rem 1rem;">
+            <i class="fas fa-plus"></i> New Message
+        </button>
+        <button class="user-icon-btn" onclick="window.location.reload()">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Messages Layout -->
+<div class="user-messages-layout">
+    <!-- Sidebar - Conversation List -->
+    <div class="user-messages-sidebar">
+        <div class="user-messages-search">
+            <div class="user-search-box">
+                <i class="fas fa-search"></i>
+                <input type="text" placeholder="Search conversations..." onkeyup="searchConversations(this.value)">
+            </div>
+        </div>
+
+        <div class="user-conversation-list" id="conversationList">
+            {% if conversations %}
+                {% for conv in conversations %}
+                <div class="user-conversation-item {% if conv.is_active %}active{% endif %}" 
+                     data-search="{{ conv.name }} {{ conv.last_message }}" 
+                     onclick="selectConversation('{{ conv.id }}')">
+                    <div class="user-conversation-avatar">
+                        <i class="fas fa-user-circle"></i>
+                        {% if conv.unread_count > 0 %}
+                            <span class="user-unread-dot"></span>
+                        {% endif %}
+                    </div>
+                    <div class="user-conversation-info">
+                        <div class="user-conversation-header">
+                            <span class="user-conversation-name">{{ conv.name }}</span>
+                            <span class="user-conversation-time">{{ conv.last_time.strftime('%I:%M %p') if conv.last_time else '' }}</span>
+                        </div>
+                        <div class="user-conversation-preview">
+                            <span class="user-conversation-last">{{ conv.last_message|truncate(40) }}</span>
+                            {% if conv.unread_count > 0 %}
+                                <span class="user-unread-badge">{{ conv.unread_count }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="user-empty-state" style="padding:2rem 1rem;">
+                    <i class="fas fa-inbox"></i>
+                    <h4>No Conversations</h4>
+                    <p>Start a new conversation by clicking "New Message"</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Main - Chat Area -->
+    <div class="user-messages-main">
+        {% if selected_conversation %}
+            <!-- Chat Header -->
+            <div class="user-chat-header">
+                <div class="user-chat-header-info">
+                    <div class="user-chat-avatar">
+                        <i class="fas fa-user-circle"></i>
+                    </div>
+                    <div>
+                        <h4 class="user-chat-name">{{ selected_conversation.name }}</h4>
+                        <span class="user-chat-status {% if selected_conversation.is_online %}online{% endif %}">
+                            {% if selected_conversation.is_online %}
+                                <i class="fas fa-circle"></i> Online
+                            {% else %}
+                                <i class="fas fa-circle"></i> Offline
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+                <div class="user-chat-actions">
+                    <button class="user-icon-btn" onclick="showUserToast('Conversation options')">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Messages -->
+            <div class="user-chat-messages" id="chatMessages">
+                {% if messages %}
+                    {% for msg in messages %}
+                    <div class="user-chat-message {% if msg.is_sent %}sent{% else %}received{% endif %}">
+                        <div class="user-chat-bubble">
+                            <p>{{ msg.content }}</p>
+                            <span class="user-chat-time">{{ msg.created_at.strftime('%I:%M %p') }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="user-empty-state" style="padding:3rem 1rem;">
+                        <i class="fas fa-comment-dots"></i>
+                        <h4>No Messages Yet</h4>
+                        <p>Start the conversation by sending a message below.</p>
+                    </div>
+                {% endif %}
+            </div>
+
+            <!-- Chat Input -->
+            <div class="user-chat-input">
+                <div class="user-chat-input-wrapper">
+                    <button class="user-chat-attach" onclick="showUserToast('Attach file feature coming soon')">
+                        <i class="fas fa-paperclip"></i>
+                    </button>
+                    <input type="text" class="user-chat-input-field" placeholder="Type your message here..." 
+                           onkeydown="if(event.key==='Enter') sendMessage()" id="messageInput">
+                    <button class="user-chat-send" onclick="sendMessage()">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        {% else %}
+            <!-- No Conversation Selected -->
+            <div class="user-empty-state" style="padding:4rem 2rem;">
+                <i class="fas fa-comment-dots" style="font-size:4rem; opacity:0.3;"></i>
+                <h3>Select a Conversation</h3>
+                <p>Choose a conversation from the sidebar or start a new one.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- New Message Modal -->
+<div class="user-modal" id="newMessageModal">
+    <div class="user-modal-content" style="max-width: 500px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-plus-circle"></i> New Message</h2>
+            <button class="user-modal-close" onclick="closeNewMessage()">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <form id="newMessageForm" onsubmit="submitNewMessage(event)">
+                <div class="user-form-group">
+                    <label for="messageRecipient">Recipient</label>
+                    <select id="messageRecipient" class="user-form-input" required>
+                        <option value="">Select recipient...</option>
+                        <option value="support">Support Team</option>
+                        <option value="admin">Administrator</option>
+                        <option value="technician">Technician</option>
+                    </select>
+                </div>
+                <div class="user-form-group">
+                    <label for="messageSubject">Subject</label>
+                    <input type="text" id="messageSubject" class="user-form-input" placeholder="Enter subject..." required>
+                </div>
+                <div class="user-form-group">
+                    <label for="messageContent">Message</label>
+                    <textarea id="messageContent" class="user-form-textarea" rows="5" placeholder="Write your message here..." required></textarea>
+                </div>
+                <div class="user-form-actions" style="display:flex; gap:0.8rem; margin-top:1rem;">
+                    <button type="button" class="user-btn-secondary" onclick="closeNewMessage()">Cancel</button>
+                    <button type="submit" class="user-btn-primary">
+                        <i class="fas fa-paper-plane"></i> Send Message
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ============================================
+    // MESSAGE FUNCTIONS
+    // ============================================
+
+    let selectedConversationId = {{ selected_conversation.id if selected_conversation else 'null' }};
+
+    function selectConversation(convId) {
+        window.location.href = `/messages/${convId}`;
+    }
+
+    function searchConversations(query) {
+        const items = document.querySelectorAll('.user-conversation-item');
+        const search = query.toLowerCase().trim();
+        
+        items.forEach(item => {
+            const data = item.dataset.search.toLowerCase();
+            if (search === '' || data.includes(search)) {
+                item.style.display = '';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('messageInput');
+        if (!input) return;
+        
+        const content = input.value.trim();
+        
+        if (!content || !selectedConversationId) {
+            showUserToast('Please type a message', 'warning');
+            return;
+        }
+
+        input.disabled = true;
+        const sendBtn = document.querySelector('.user-chat-send');
+        sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+        fetch(`/messages/${selectedConversationId}/send`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ content: content })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const messagesContainer = document.getElementById('chatMessages');
+                const emptyState = messagesContainer.querySelector('.user-empty-state');
+                if (emptyState) emptyState.remove();
+
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'user-chat-message sent';
+                messageDiv.innerHTML = `
+                    <div class="user-chat-bubble">
+                        <p>${content}</p>
+                        <span class="user-chat-time">${data.time || 'Just now'}</span>
+                    </div>
+                `;
+                messagesContainer.appendChild(messageDiv);
+                
+                input.value = '';
+                showUserToast('Message sent!', 'success');
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            } else {
+                showUserToast(data.message || 'Failed to send message', 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('An error occurred', 'error');
+        })
+        .finally(() => {
+            input.disabled = false;
+            sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';
+            input.focus();
+        });
+    }
+
+    function openNewMessage() {
+        document.getElementById('newMessageModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeNewMessage() {
+        document.getElementById('newMessageModal').classList.remove('active');
+        document.body.style.overflow = '';
+        document.getElementById('newMessageForm').reset();
+    }
+
+    function submitNewMessage(event) {
+        event.preventDefault();
+        
+        const recipient = document.getElementById('messageRecipient').value;
+        const subject = document.getElementById('messageSubject').value;
+        const content = document.getElementById('messageContent').value;
+
+        if (!recipient || !subject || !content) {
+            showUserToast('Please fill in all fields', 'warning');
+            return;
+        }
+
+        const submitBtn = event.target.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+
+        fetch('/messages/new', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ 
+                recipient: recipient, 
+                subject: subject, 
+                content: content 
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showUserToast('Message sent successfully!', 'success');
+                closeNewMessage();
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showUserToast(data.message || 'Failed to send message', 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('An error occurred', 'error');
+        })
+        .finally(() => {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Message';
+        });
+    }
+
+    // Scroll chat to bottom on load
+    document.addEventListener('DOMContentLoaded', function() {
+        const messagesContainer = document.getElementById('chatMessages');
+        if (messagesContainer) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+    });
+
+    // Auto-resize textarea
+    document.getElementById('messageContent')?.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = this.scrollHeight + 'px';
+    });
+
+    // Close modal on backdrop click
+    document.getElementById('newMessageModal')?.addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeNewMessage();
+        }
+    });
+
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeNewMessage();
+        }
+    });
+
+    // Flash message close
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+
+    function showUserToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `user-toast ${type}`;
+        toast.innerHTML = `
+            <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+            ${message}
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 100);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+</script>
+{% endblock %}  

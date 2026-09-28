@@ -1,0 +1,697 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Profile{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>My Profile</h1>
+        <p>View and manage your personal information</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+        </a>
+        <button class="user-icon-btn" onclick="showHelp()" title="Help">
+            <i class="fas fa-question-circle"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Profile Card -->
+<div class="user-profile-card">
+    <!-- Profile Header -->
+    <div class="user-profile-header">
+        <div class="user-avatar-large">
+            <i class="fas fa-user-circle"></i>
+        </div>
+        <div class="user-profile-info">
+            <h2 id="displayName">{{ user.full_name }}</h2>
+            <p class="user-profile-role">
+                <span class="role-badge">{{ user.role|capitalize }}</span>
+                {% if user.email_verified %}
+                <span class="verified-badge"><i class="fas fa-check-circle"></i> Verified</span>
+                {% else %}
+                <span class="unverified-badge" onclick="verifyEmail()" style="cursor:pointer;">
+                    <i class="fas fa-exclamation-circle"></i> Not Verified
+                </span>
+                {% endif %}
+            </p>
+            <p class="user-profile-email" id="displayEmail">{{ user.email }}</p>
+            <div class="user-profile-status">
+                <span class="user-status-dot active"></span>
+                <span>Active</span>
+                <span class="user-profile-joined">Joined: {{ user.created_at.strftime('%B %d, %Y') }}</span>
+            </div>
+        </div>
+        <div class="user-profile-actions">
+            <button class="user-edit-toggle" id="editToggle">
+                <i class="fas fa-pen"></i> Edit Profile
+            </button>
+        </div>
+    </div>
+
+    <!-- Profile Form -->
+    <form class="user-profile-form" id="profileForm" method="POST" action="{{ url_for('user_profile') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="user-profile-grid">
+            <!-- Personal Information -->
+            <div class="user-profile-section">
+                <h3 class="user-section-title">
+                    <i class="fas fa-user"></i> Personal Information
+                </h3>
+                <div class="user-form-group">
+                    <label for="fullName">Full Name <span class="required-star">*</span></label>
+                    <input type="text" id="fullName" name="full_name" value="{{ user.full_name }}" required disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="email">Email Address</label>
+                    <input type="email" id="email" value="{{ user.email }}" disabled />
+                    <button type="button" class="user-btn-secondary" onclick="verifyEmail()" style="margin-top:0.3rem; font-size:0.75rem; padding:0.2rem 0.8rem; align-self:flex-start;">
+                        <i class="fas fa-envelope"></i> Verify Email
+                    </button>
+                </div>
+                <div class="user-form-group">
+                    <label for="phone">Phone Number</label>
+                    <input type="tel" id="phone" name="phone" value="{{ user.phone or '' }}" placeholder="Enter your phone number" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="birthdate">Birth Date</label>
+                    <input type="date" id="birthdate" name="birth_date" value="{{ user.birth_date.strftime('%Y-%m-%d') if user.birth_date else '' }}" disabled />
+                </div>
+            </div>
+
+            <!-- Address Information -->
+            <div class="user-profile-section">
+                <h3 class="user-section-title">
+                    <i class="fas fa-map-pin"></i> Address Information
+                </h3>
+                <div class="user-form-group">
+                    <label for="street">Street Address</label>
+                    <input type="text" id="street" name="address" value="{{ user.address or '' }}" placeholder="Enter your street address" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="city">City</label>
+                    <input type="text" id="city" name="city" value="{{ user.city or 'Tacloban City' }}" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="province">Province</label>
+                    <input type="text" id="province" name="province" value="{{ user.province or 'Leyte' }}" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="postal">Postal Code</label>
+                    <input type="text" id="postal" name="postal_code" value="{{ user.postal_code or '6500' }}" placeholder="Enter postal code" disabled />
+                </div>
+            </div>
+
+            <!-- Account Settings -->
+            <div class="user-profile-section">
+                <h3 class="user-section-title">
+                    <i class="fas fa-cog"></i> Account Settings
+                </h3>
+                <div class="user-form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" value="{{ user.username }}" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="currentPassword">Current Password</label>
+                    <input type="password" id="currentPassword" name="current_password" placeholder="Enter current password" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="newPassword">New Password</label>
+                    <input type="password" id="newPassword" name="new_password" placeholder="Enter new password (min 6 chars)" disabled />
+                </div>
+                <div class="user-form-group">
+                    <label for="confirmPassword">Confirm New Password</label>
+                    <input type="password" id="confirmPassword" name="confirm_password" placeholder="Confirm new password" disabled />
+                </div>
+            </div>
+
+            <!-- Preferences -->
+            <div class="user-profile-section">
+                <h3 class="user-section-title">
+                    <i class="fas fa-sliders-h"></i> Preferences
+                </h3>
+                <div class="user-form-group">
+                    <label for="language">Language</label>
+                    <select id="language" name="language" disabled>
+                        <option value="en" {% if user.preferences and user.preferences.language == 'en' %}selected{% endif %}>English</option>
+                        <option value="fil" {% if user.preferences and user.preferences.language == 'fil' %}selected{% endif %}>Filipino</option>
+                        <option value="ceb" {% if user.preferences and user.preferences.language == 'ceb' %}selected{% endif %}>Cebuano</option>
+                    </select>
+                </div>
+                <div class="user-form-group">
+                    <label for="theme">Theme</label>
+                    <select id="theme" name="theme" onchange="handleThemeChange(this.value)">
+                        <option value="light" {% if user.preferences and user.preferences.theme == 'light' %}selected{% endif %}>Light</option>
+                        <option value="dark" {% if user.preferences and user.preferences.theme == 'dark' %}selected{% endif %}>Dark</option>
+                        <option value="system" {% if user.preferences and user.preferences.theme == 'system' %}selected{% endif %}>System Default</option>
+                    </select>
+                    <small class="user-field-hint"><i class="fas fa-info-circle"></i> Changes apply immediately</small>
+                </div>
+                <div class="user-form-group">
+                    <label>Notification Preferences</label>
+                    <div class="user-checkbox-group">
+                        <label class="user-checkbox">
+                            <input type="checkbox" name="email_notifications" {% if user.preferences and user.preferences.email_notifications %}checked{% endif %} disabled /> Email Notifications
+                        </label>
+                        <label class="user-checkbox">
+                            <input type="checkbox" name="sms_notifications" {% if user.preferences and user.preferences.sms_notifications %}checked{% endif %} disabled /> SMS Notifications
+                        </label>
+                        <label class="user-checkbox">
+                            <input type="checkbox" name="booking_reminders" {% if user.preferences and user.preferences.booking_reminders %}checked{% endif %} disabled /> Booking Reminders
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="user-form-actions" id="formActions" style="display:none;">
+            <button type="button" class="user-btn-secondary" id="cancelEdit">Cancel</button>
+            <button type="submit" class="user-btn-primary">
+                <i class="fas fa-save"></i> Save Changes
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Account Actions -->
+<div class="user-actions-card">
+    <h3 class="user-section-title">
+        <i class="fas fa-shield-alt"></i> Account Actions
+    </h3>
+    <div class="user-actions-grid">
+        <button class="user-action-btn" onclick="viewActivityLog()">
+            <i class="fas fa-file-alt"></i>
+            <span>View Activity Log</span>
+        </button>
+        <button class="user-action-btn" onclick="downloadData()">
+            <i class="fas fa-download"></i>
+            <span>Download Data</span>
+        </button>
+        <button class="user-action-btn" onclick="viewBookingsSummary()">
+            <i class="fas fa-calendar-check"></i>
+            <span>Bookings Summary</span>
+        </button>
+        <button class="user-action-btn user-action-danger" onclick="confirmDeleteAccount()">
+            <i class="fas fa-trash-alt"></i>
+            <span>Delete Account</span>
+        </button>
+    </div>
+</div>
+
+<!-- Help Modal -->
+<div class="user-modal" id="helpModal">
+    <div class="user-modal-content" style="max-width:500px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-question-circle"></i> Help & Support</h2>
+            <button class="user-modal-close" onclick="closeHelpModal()">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <div class="help-section">
+                <h4><i class="fas fa-user-edit"></i> Editing Your Profile</h4>
+                <p>Click the "Edit Profile" button to enable editing. Make your changes and click "Save Changes".</p>
+            </div>
+            <div class="help-section">
+                <h4><i class="fas fa-key"></i> Changing Password</h4>
+                <p>Enter your current password, then your new password and confirm it. Passwords must be at least 6 characters.</p>
+            </div>
+            <div class="help-section">
+                <h4><i class="fas fa-envelope"></i> Email Verification</h4>
+                <p>Click "Verify Email" to receive a verification link. This helps secure your account.</p>
+            </div>
+            <div class="help-section">
+                <h4><i class="fas fa-download"></i> Download Data</h4>
+                <p>Download all your personal data including bookings and transaction history in JSON format.</p>
+            </div>
+            <div class="help-section">
+                <h4><i class="fas fa-trash-alt"></i> Delete Account</h4>
+                <p>⚠️ This action is permanent. All your data will be removed. You must cancel all active bookings first.</p>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-primary" onclick="closeHelpModal()">Got It</button>
+        </div>
+    </div>
+</div>
+
+<!-- Activity Log Modal -->
+<div class="user-modal" id="activityModal">
+    <div class="user-modal-content" style="max-width:700px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-alt"></i> Activity Log</h2>
+            <button class="user-modal-close" onclick="closeActivityModal()">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <div id="activityLogContent">
+                <div class="activity-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading activity log...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeActivityModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<script>
+    // ============================================
+    // STATE
+    // ============================================
+    
+    let isEditing = false;
+
+    // ============================================
+    // HELP MODAL
+    // ============================================
+
+    function showHelp() {
+        document.getElementById('helpModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeHelpModal() {
+        document.getElementById('helpModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // ============================================
+    // TOAST NOTIFICATION
+    // ============================================
+
+    function showUserToast(message, type = 'info', duration = 4000) {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 10000;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                max-width: 400px;
+                width: 100%;
+                pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+        
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            pointer-events: auto;
+            background: var(--user-card);
+            padding: 12px 20px;
+            border-radius: 12px;
+            border-left: 4px solid ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#2563eb'};
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--user-text-primary);
+            transform: translateX(120%);
+            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            width: 100%;
+        `;
+        
+        const icons = {
+            'success': 'fa-check-circle',
+            'error': 'fa-exclamation-circle',
+            'warning': 'fa-exclamation-triangle',
+            'info': 'fa-info-circle'
+        };
+        
+        const colors = {
+            'success': '#22c55e',
+            'error': '#ef4444',
+            'warning': '#f59e0b',
+            'info': '#2563eb'
+        };
+        
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
+            <span style="flex:1;">${message}</span>
+            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:var(--user-text-muted); cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+        `;
+        
+        container.appendChild(toast);
+        
+        requestAnimationFrame(() => {
+            toast.style.transform = 'translateX(0)';
+        });
+        
+        setTimeout(() => {
+            toast.style.transform = 'translateX(120%)';
+            setTimeout(() => {
+                if (toast.parentElement) toast.remove();
+            }, 400);
+        }, duration);
+    }
+
+    // ============================================
+    // EDIT TOGGLE
+    // ============================================
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const editToggle = document.getElementById('editToggle');
+        const cancelEdit = document.getElementById('cancelEdit');
+        const formActions = document.getElementById('formActions');
+        const formInputs = document.querySelectorAll('#profileForm input, #profileForm select');
+        const formCheckboxes = document.querySelectorAll('#profileForm .user-checkbox input');
+
+        function toggleEdit(enable) {
+            isEditing = enable;
+            formInputs.forEach(input => {
+                if (input.id !== 'email' && input.id !== 'username') {
+                    input.disabled = !enable;
+                }
+            });
+            formCheckboxes.forEach(checkbox => {
+                checkbox.disabled = !enable;
+            });
+            
+            document.querySelectorAll('#profileForm select').forEach(select => {
+                select.disabled = !enable;
+            });
+            
+            formActions.style.display = enable ? 'flex' : 'none';
+            editToggle.innerHTML = enable ? 
+                '<i class="fas fa-times"></i> Cancel' : 
+                '<i class="fas fa-pen"></i> Edit Profile';
+            editToggle.classList.toggle('editing', enable);
+            
+            if (!enable) {
+                location.reload();
+            }
+        }
+
+        editToggle.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (isEditing) {
+                if (confirm('Are you sure you want to cancel? Your changes will not be saved.')) {
+                    toggleEdit(false);
+                }
+            } else {
+                toggleEdit(true);
+            }
+        });
+
+        cancelEdit.addEventListener('click', function() {
+            if (confirm('Are you sure you want to cancel? Your changes will not be saved.')) {
+                toggleEdit(false);
+            }
+        });
+
+        document.getElementById('profileForm').addEventListener('submit', function(e) {
+            const newPass = document.getElementById('newPassword').value;
+            const confirmPass = document.getElementById('confirmPassword').value;
+            const currentPass = document.getElementById('currentPassword').value;
+            
+            if (newPass || confirmPass || currentPass) {
+                if (!currentPass) {
+                    alert('Please enter your current password to change it.');
+                    e.preventDefault();
+                    return;
+                }
+                if (!newPass || !confirmPass) {
+                    alert('Please enter and confirm your new password.');
+                    e.preventDefault();
+                    return;
+                }
+                if (newPass !== confirmPass) {
+                    alert('New passwords do not match!');
+                    e.preventDefault();
+                    return;
+                }
+                if (newPass.length < 6) {
+                    alert('Password must be at least 6 characters long.');
+                    e.preventDefault();
+                    return;
+                }
+            }
+        });
+
+        const today = new Date();
+        const birthdate = document.getElementById('birthdate');
+        birthdate.max = today.toISOString().split('T')[0];
+    });
+
+    // ============================================
+    // EMAIL VERIFICATION
+    // ============================================
+
+    function verifyEmail() {
+        showUserToast('📧 Sending verification email...', 'info');
+        
+        fetch('/api/user/verify-email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showUserToast('✅ Verification email sent! Please check your inbox.', 'success');
+            } else {
+                showUserToast('❌ ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('❌ Error sending verification email.', 'error');
+        });
+    }
+
+    // ============================================
+    // ACTIVITY LOG
+    // ============================================
+
+    function viewActivityLog() {
+        document.getElementById('activityModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        const content = document.getElementById('activityLogContent');
+        content.innerHTML = `
+            <div class="activity-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading activity log...</p>
+            </div>
+        `;
+        
+        fetch('/api/user/activity-log')
+            .then(response => response.json())
+            .then(data => {
+                if (data.length === 0) {
+                    content.innerHTML = `
+                        <div class="user-empty-state">
+                            <i class="fas fa-inbox"></i>
+                            <h4>No Activity Found</h4>
+                            <p>Your activity log is empty.</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                let html = '<div class="activity-log-list">';
+                data.forEach(log => {
+                    html += `
+                        <div class="activity-log-item">
+                            <div class="activity-log-icon">
+                                <i class="fas fa-${getActivityIcon(log.action)}"></i>
+                            </div>
+                            <div class="activity-log-details">
+                                <div class="activity-log-action">${log.action.replace('_', ' ').toUpperCase()}</div>
+                                <div class="activity-log-info">${log.details || 'No details'}</div>
+                                <div class="activity-log-time">${log.created_at}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                content.innerHTML = html;
+            })
+            .catch(error => {
+                content.innerHTML = `
+                    <div class="user-empty-state">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <h4>Error Loading Activity</h4>
+                        <p>Unable to load activity log. Please try again.</p>
+                    </div>
+                `;
+            });
+    }
+
+    function getActivityIcon(action) {
+        const icons = {
+            'login': 'sign-in-alt',
+            'logout': 'sign-out-alt',
+            'profile_update': 'user-edit',
+            'booking_created': 'calendar-plus',
+            'booking_cancelled': 'calendar-times',
+            'payment_submitted': 'credit-card',
+            'payment_confirmed': 'check-circle',
+            'account_deleted': 'trash-alt'
+        };
+        return icons[action] || 'clock';
+    }
+
+    function closeActivityModal() {
+        document.getElementById('activityModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // ============================================
+    // DOWNLOAD DATA
+    // ============================================
+
+    function downloadData() {
+        showUserToast('📥 Preparing your data...', 'info');
+        
+        fetch('/api/user/download-data')
+            .then(response => response.json())
+            .then(data => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `user_data_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showUserToast('✅ Data downloaded successfully!', 'success');
+            })
+            .catch(error => {
+                showUserToast('❌ Error downloading data.', 'error');
+            });
+    }
+
+    // ============================================
+    // BOOKINGS SUMMARY
+    // ============================================
+
+    function viewBookingsSummary() {
+        window.location.href = "{{ url_for('total_bookings') }}";
+    }
+
+    // ============================================
+    // DELETE ACCOUNT
+    // ============================================
+
+    function confirmDeleteAccount() {
+        if (!confirm('⚠️ Are you sure you want to delete your account? This action cannot be undone!')) {
+            return;
+        }
+        
+        if (!confirm('⚠️⚠️ FINAL WARNING: This will permanently delete all your data. Are you absolutely sure?')) {
+            return;
+        }
+        
+        showUserToast('⏳ Deleting account...', 'info');
+        
+        fetch('/api/user/delete-account', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showUserToast('✅ Account deleted successfully.', 'success');
+                setTimeout(() => {
+                    window.location.href = "{{ url_for('logout') }}";
+                }, 2000);
+            } else {
+                showUserToast('❌ ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('❌ Error deleting account.', 'error');
+        });
+    }
+
+    // ============================================
+    // FLASH MESSAGE CLOSE
+    // ============================================
+    
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+
+    setTimeout(() => {
+        document.querySelectorAll('.flash-message').forEach(msg => {
+            msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            msg.style.opacity = '0';
+            msg.style.transform = 'translateY(-20px)';
+            setTimeout(() => {
+                if (msg.parentElement) msg.remove();
+            }, 500);
+        });
+    }, 5000);
+
+    // ============================================
+    // MODAL CLOSE HANDLERS
+    // ============================================
+    
+    document.getElementById('helpModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeHelpModal();
+        }
+    });
+
+    document.getElementById('activityModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeActivityModal();
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeHelpModal();
+            closeActivityModal();
+        }
+    });
+
+    // ============================================
+    // KEYBOARD SHORTCUT: Ctrl + Shift + L
+    // ============================================
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+            e.preventDefault();
+            window.location.href = '/admin/login';
+        }
+    });
+
+    console.log('✅ Profile system initialized');
+</script>
+{% endblock %}

@@ -1,0 +1,551 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Support{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Support</h1>
+        <p>Get help with your repair bookings and account</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('user_dashboard') }}" class="user-btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+        </a>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Support Content -->
+<div class="user-support-container">
+    <div class="user-support-grid">
+        <!-- Contact Form -->
+        <div class="user-support-form">
+            <h2><i class="fas fa-paper-plane"></i> Send a Support Request</h2>
+            <form method="POST" action="{{ url_for('support') }}" id="supportForm">
+                <div class="user-form-group">
+                    <label for="category">Category <span class="user-required-star">*</span></label>
+                    <select id="category" name="category" class="user-form-input" required>
+                        <option value="">Select a category...</option>
+                        <option value="booking">Booking Issues</option>
+                        <option value="payment">Payment Problems</option>
+                        <option value="service">Service Related</option>
+                        <option value="technical">Technical Issues</option>
+                        <option value="account">Account Management</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                
+                <div class="user-form-group">
+                    <label for="subject">Subject <span class="user-required-star">*</span></label>
+                    <input type="text" id="subject" name="subject" class="user-form-input" placeholder="Brief summary of your issue" required>
+                </div>
+                
+                <div class="user-form-group">
+                    <label for="message">Message <span class="user-required-star">*</span></label>
+                    <textarea id="message" name="message" class="user-form-textarea" rows="6" placeholder="Describe your issue in detail..." required></textarea>
+                    <div class="user-field-footer">
+                        <span class="user-char-count"><span id="charCount">0</span> / 1000 characters</span>
+                    </div>
+                </div>
+                
+                <button type="submit" class="user-btn-primary full">
+                    <i class="fas fa-paper-plane"></i> Submit Request
+                </button>
+            </form>
+        </div>
+        
+        <!-- FAQ / Quick Help -->
+        <div class="user-support-faq">
+            <h2><i class="fas fa-question-circle"></i> Quick Help</h2>
+            
+            <div class="user-faq-item">
+                <button class="user-faq-question" onclick="toggleFaq(this)">
+                    <span>How do I book a repair?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-faq-answer">
+                    <p>Click on "Book a Repair" in the sidebar, select your service, device type, choose a date and time, then confirm your booking.</p>
+                </div>
+            </div>
+            
+            <div class="user-faq-item">
+                <button class="user-faq-question" onclick="toggleFaq(this)">
+                    <span>What payment methods are accepted?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-faq-answer">
+                    <p>We accept GCash for online payments and C.A.R (Cash After Repair) for in-store payments.</p>
+                </div>
+            </div>
+            
+            <div class="user-faq-item">
+                <button class="user-faq-question" onclick="toggleFaq(this)">
+                    <span>Can I cancel my booking?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-faq-answer">
+                    <p>Yes, you can cancel pending or confirmed bookings from your "My Bookings" page. Click the cancel button on the booking you wish to cancel.</p>
+                </div>
+            </div>
+            
+            <div class="user-faq-item">
+                <button class="user-faq-question" onclick="toggleFaq(this)">
+                    <span>What is C.A.R (Cash After Repair)?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-faq-answer">
+                    <p>C.A.R stands for Cash After Repair. You only pay after the repair is completed and you're satisfied with the service.</p>
+                </div>
+            </div>
+            
+            <div class="user-faq-item">
+                <button class="user-faq-question" onclick="toggleFaq(this)">
+                    <span>How many bookings per time slot?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-faq-answer">
+                    <p>Each time slot can accommodate up to 5 bookings to ensure quality service. If a slot is full, please choose another time.</p>
+                </div>
+            </div>
+            
+            <div class="user-faq-item">
+                <button class="user-faq-question" onclick="toggleFaq(this)">
+                    <span>How do I track my booking status?</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-faq-answer">
+                    <p>Go to "My Bookings" in the sidebar to see the status of all your bookings. You'll also receive notifications for status updates.</p>
+                </div>
+            </div>
+            
+            <div class="user-support-contact">
+                <h4><i class="fas fa-phone"></i> Contact Information</h4>
+                <p><strong>Phone:</strong> 0917 123 4567</p>
+                <p><strong>Email:</strong> support@devtech.com</p>
+                <p><strong>Store Hours:</strong> Mon-Sat, 9:00 AM - 6:00 PM</p>
+                <p><strong>Location:</strong> Tacloban City, Leyte</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- My Tickets Section -->
+{% if tickets %}
+<div class="user-tickets-section">
+    <h2><i class="fas fa-ticket-alt"></i> My Support Tickets</h2>
+    <div class="user-tickets-list">
+        {% for ticket in tickets %}
+        <div class="user-ticket-item">
+            <div class="user-ticket-header">
+                <div class="user-ticket-info">
+                    <span class="user-ticket-id">#{{ ticket.id }}</span>
+                    <span class="user-ticket-subject">{{ ticket.subject }}</span>
+                </div>
+                <div class="user-ticket-status {{ ticket.status }}">
+                    {{ ticket.status|capitalize }}
+                </div>
+            </div>
+            <div class="user-ticket-body">
+                <div class="user-ticket-category">
+                    <i class="fas fa-tag"></i> {{ ticket.category|capitalize }}
+                </div>
+                <div class="user-ticket-message">{{ ticket.message|truncate(100) }}</div>
+                <div class="user-ticket-date">
+                    <i class="fas fa-calendar-alt"></i> {{ ticket.created_at.strftime('%B %d, %Y at %I:%M %p') }}
+                </div>
+                {% if ticket.admin_response %}
+                <div class="user-ticket-response">
+                    <strong><i class="fas fa-reply"></i> Admin Response:</strong>
+                    <p>{{ ticket.admin_response }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<script>
+    // ============================================
+    // CHARACTER COUNT
+    // ============================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        const textarea = document.getElementById('message');
+        if (textarea) {
+            textarea.addEventListener('input', function() {
+                const count = this.value.length;
+                document.getElementById('charCount').textContent = count;
+                if (count > 1000) {
+                    this.value = this.value.substring(0, 1000);
+                    document.getElementById('charCount').textContent = 1000;
+                }
+            });
+        }
+    });
+
+    // ============================================
+    // FAQ TOGGLE
+    // ============================================
+    
+    function toggleFaq(button) {
+        const answer = button.nextElementSibling;
+        const icon = button.querySelector('.fa-chevron-down');
+        
+        // Close other FAQs
+        document.querySelectorAll('.user-faq-answer').forEach(item => {
+            if (item !== answer && item.classList.contains('open')) {
+                item.classList.remove('open');
+                item.previousElementSibling.querySelector('.fa-chevron-down').style.transform = 'rotate(0deg)';
+            }
+        });
+        
+        answer.classList.toggle('open');
+        icon.style.transform = answer.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
+    }
+
+    // ============================================
+    // FORM SUBMISSION
+    // ============================================
+    
+    document.getElementById('supportForm').addEventListener('submit', function(e) {
+        const category = document.getElementById('category').value;
+        const subject = document.getElementById('subject').value;
+        const message = document.getElementById('message').value;
+        
+        if (!category) {
+            e.preventDefault();
+            showUserToast('Please select a category', 'error');
+            return;
+        }
+        
+        if (!subject.trim()) {
+            e.preventDefault();
+            showUserToast('Please enter a subject', 'error');
+            return;
+        }
+        
+        if (!message.trim()) {
+            e.preventDefault();
+            showUserToast('Please describe your issue', 'error');
+            return;
+        }
+    });
+
+    // ============================================
+    // TOAST NOTIFICATION
+    // ============================================
+    
+    function showUserToast(message, type = 'info', duration = 4000) {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 10000;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                max-width: 400px;
+                width: 100%;
+                pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+        
+        const toast = document.createElement('div');
+        const colors = {
+            'success': '#22c55e',
+            'error': '#ef4444',
+            'warning': '#f59e0b',
+            'info': '#2563eb'
+        };
+        
+        toast.style.cssText = `
+            pointer-events: auto;
+            background: var(--user-card);
+            padding: 12px 20px;
+            border-radius: 12px;
+            border-left: 4px solid ${colors[type] || '#2563eb'};
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--user-text-primary);
+            transform: translateX(120%);
+            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            width: 100%;
+        `;
+        
+        const icons = {
+            'success': 'fa-check-circle',
+            'error': 'fa-exclamation-circle',
+            'warning': 'fa-exclamation-triangle',
+            'info': 'fa-info-circle'
+        };
+        
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
+            <span style="flex:1;">${message}</span>
+            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:var(--user-text-muted); cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+        `;
+        
+        container.appendChild(toast);
+        
+        requestAnimationFrame(() => {
+            toast.style.transform = 'translateX(0)';
+        });
+        
+        setTimeout(() => {
+            toast.style.transform = 'translateX(120%)';
+            setTimeout(() => {
+                if (toast.parentElement) toast.remove();
+            }, 400);
+        }, duration);
+    }
+
+    // ============================================
+    // FLASH MESSAGE CLOSE
+    // ============================================
+    
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+
+    setTimeout(() => {
+        document.querySelectorAll('.flash-message').forEach(msg => {
+            msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            msg.style.opacity = '0';
+            msg.style.transform = 'translateY(-20px)';
+            setTimeout(() => {
+                if (msg.parentElement) msg.remove();
+            }, 500);
+        });
+    }, 5000);
+
+    // ============================================
+    // KEYBOARD SHORTCUT: Ctrl + Shift + L
+    // ============================================
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+            e.preventDefault();
+            window.location.href = '/admin/login';
+        }
+    });
+
+    console.log('✅ Support page initialized');
+
+    // ============================================
+    // SUPPORT CHATBOT
+    // Answers basic questions instantly using the same FAQ content
+    // already on this page, so users get an answer without waiting on
+    // a ticket response for common questions. Falls back to pointing
+    // them at the ticket form for anything it doesn't recognize.
+    // ============================================
+
+    const CHATBOT_KB = [
+        {
+            keywords: ['book', 'booking', 'schedule', 'appointment', 'reserve'],
+            answer: 'To book a repair: click "Book a Repair" in the sidebar, select your service and device type, choose a date and time, then confirm your booking. You\'ll see it appear under "My Bookings" right away.'
+        },
+        {
+            keywords: ['payment method', 'pay', 'gcash', 'cash', 'car', 'how much', 'cod'],
+            answer: 'For repair bookings, we accept GCash (paid online, verified by our team) and C.A.R - Cash After Repair, where you pay once the repair is done and you\'re satisfied. For shop orders, we accept GCash and COD (Cash on Delivery).'
+        },
+        {
+            keywords: ['cancel', 'refund'],
+            answer: 'You can cancel pending or confirmed bookings from your "My Bookings" page - just click the cancel button on the booking you want to cancel. Refunds for already-paid GCash bookings are handled case-by-case; mention it in a support ticket and our team will help.'
+        },
+        {
+            keywords: ['what is car', 'c.a.r', 'cash after repair'],
+            answer: 'C.A.R stands for Cash After Repair - you only pay once the repair is completed and you\'re happy with the service. No upfront payment needed.'
+        },
+        {
+            keywords: ['time slot', 'slots', 'how many bookings'],
+            answer: 'Each time slot can accommodate up to 5 bookings to keep service quality high. If your preferred slot is full, just pick another available time.'
+        },
+        {
+            keywords: ['track', 'status', 'where is my', 'progress'],
+            answer: 'Go to "My Bookings" in the sidebar to see the live status of all your bookings (Pending, In Progress, Completed, etc). You\'ll also get a notification whenever the status changes.'
+        },
+        {
+            keywords: ['technician', 'who is fixing', 'assigned', 'repair person'],
+            answer: 'Once your booking is approved, we assign a verified technician to your job. You can see their name and a "Verified ✓" badge in your booking\'s details once one is assigned.'
+        },
+        {
+            keywords: ['shop', 'buy', 'product', 'parts', 'order', 'cart'],
+            answer: 'You can browse computer parts and accessories in the Shop tab. Add items to your cart, then check out with GCash or Cash on Delivery. Track your purchase under "My Orders."'
+        },
+        {
+            keywords: ['contact', 'phone', 'number', 'email', 'address', 'location', 'hours', 'open'],
+            answer: 'You can reach us at 0917 123 4567 or support@devtech.com. We\'re open Mon-Sat, 9:00 AM - 6:00 PM, located in Tacloban City, Leyte.'
+        },
+        {
+            keywords: ['ticket', 'human', 'agent', 'representative', 'real person', 'talk to someone'],
+            answer: 'Of course - fill out the "Send a Support Request" form on the left with your issue, and our team will respond directly. You can track the reply under "My Support Tickets" below.'
+        },
+        {
+            keywords: ['hi', 'hello', 'hey', 'good morning', 'good afternoon'],
+            answer: 'Hi there! 👋 I can help with booking, payments, order tracking, and general questions. What do you need help with?'
+        },
+        {
+            keywords: ['thank', 'thanks', 'thank you'],
+            answer: "You're welcome! Let me know if there's anything else I can help with."
+        },
+    ];
+
+    const CHATBOT_SUGGESTIONS = [
+        'How do I book a repair?',
+        'What payment methods do you accept?',
+        'How do I track my booking?',
+        'I need to talk to a human'
+    ];
+
+    function findChatbotAnswer(message) {
+        const lower = message.toLowerCase();
+        let bestMatch = null;
+        let bestScore = 0;
+
+        CHATBOT_KB.forEach(function(entry) {
+            let score = 0;
+            entry.keywords.forEach(function(kw) {
+                if (lower.includes(kw)) score++;
+            });
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = entry;
+            }
+        });
+
+        if (bestMatch) return bestMatch.answer;
+
+        return "I don't have an exact answer for that yet. Please fill out the \"Send a Support Request\" form on the left and our team will get back to you directly - or try asking in a different way.";
+    }
+
+    function chatbotAppendMessage(text, sender) {
+        const messagesEl = document.getElementById('chatbotMessages');
+        const msg = document.createElement('div');
+        msg.className = 'chatbot-msg ' + sender;
+        msg.textContent = text;
+        messagesEl.appendChild(msg);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function chatbotAppendSuggestions() {
+        const messagesEl = document.getElementById('chatbotMessages');
+        const wrap = document.createElement('div');
+        wrap.className = 'chatbot-suggestions';
+        CHATBOT_SUGGESTIONS.forEach(function(s) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'chatbot-suggestion-chip';
+            chip.textContent = s;
+            chip.onclick = function() { chatbotSend(s); };
+            wrap.appendChild(chip);
+        });
+        messagesEl.appendChild(wrap);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function chatbotSend(prefilled) {
+        const input = document.getElementById('chatbotInput');
+        const message = (prefilled !== undefined ? prefilled : input.value).trim();
+        if (!message) return;
+
+        chatbotAppendMessage(message, 'user');
+        input.value = '';
+
+        const messagesEl = document.getElementById('chatbotMessages');
+        const typing = document.createElement('div');
+        typing.className = 'chatbot-typing';
+        typing.id = 'chatbotTypingIndicator';
+        typing.innerHTML = '<span></span><span></span><span></span>';
+        messagesEl.appendChild(typing);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        setTimeout(function() {
+            const indicator = document.getElementById('chatbotTypingIndicator');
+            if (indicator) indicator.remove();
+            chatbotAppendMessage(findChatbotAnswer(message), 'bot');
+        }, 500 + Math.random() * 400);
+    }
+
+    function chatbotToggle() {
+        const win = document.getElementById('chatbotWindow');
+        const badge = document.getElementById('chatbotBadge');
+        win.classList.toggle('open');
+        if (badge) badge.style.display = 'none';
+
+        if (win.classList.contains('open') && !win.dataset.greeted) {
+            win.dataset.greeted = 'true';
+            setTimeout(function() {
+                chatbotAppendMessage("Hi! I'm the DEVTech support assistant. Ask me about bookings, payments, orders, or anything else - or tap a suggestion below.", 'bot');
+                chatbotAppendSuggestions();
+            }, 300);
+        }
+    }
+
+    document.getElementById('chatbotInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            chatbotSend();
+        }
+    });
+</script>
+
+<!-- Support Chatbot Widget -->
+<button class="chatbot-toggle-btn" onclick="chatbotToggle()" title="Chat with support assistant">
+    <i class="fas fa-comment-dots"></i>
+    <span class="chatbot-badge" id="chatbotBadge"></span>
+</button>
+
+<div class="chatbot-window" id="chatbotWindow">
+    <div class="chatbot-header">
+        <div class="chatbot-header-icon"><i class="fas fa-headset"></i></div>
+        <div class="chatbot-header-info">
+            <h4>DEVTech Assistant</h4>
+            <span><span class="chatbot-status-dot"></span> Instant answers</span>
+        </div>
+        <button class="chatbot-close-btn" onclick="chatbotToggle()">&times;</button>
+    </div>
+    <div class="chatbot-messages" id="chatbotMessages"></div>
+    <div class="chatbot-input-row">
+        <input type="text" id="chatbotInput" placeholder="Type your question..." autocomplete="off">
+        <button class="chatbot-send-btn" onclick="chatbotSend()" title="Send">
+            <i class="fas fa-paper-plane"></i>
+        </button>
+    </div>
+</div>
+
+{% endblock %}

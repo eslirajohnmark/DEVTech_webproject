@@ -1,0 +1,23 @@
+/* ============================================================================
+ * UTILITIES — tiny single-purpose helpers
+ * ==========================================================================*/
+.u-flex     { display: flex; }
+.u-flex-col { display: flex; flex-direction: column; }
+.u-items-center { align-items: center; }
+.u-justify-between { justify-content: space-between; }
+.u-gap-1    { gap: 0.25rem; }
+.u-gap-2    { gap: 0.5rem; }
+.u-gap-3    { gap: 0.75rem; }
+.u-mt-1     { margin-top: 0.25rem; }
+.u-mt-2     { margin-top: 0.5rem; }
+.u-mt-3     { margin-top: 0.75rem; }
+.u-mb-1     { margin-bottom: 0.25rem; }
+.u-mb-2     { margin-bottom: 0.5rem; }
+.u-mb-3     { margin-bottom: 0.75rem; }
+.u-w-full   { width: 100%; }
+.u-text-muted { color: var(--t-text-muted); }
+.u-text-soft  { color: var(--t-text-soft); }
+.u-text-sm    { font-size: 0.8rem; }
+.u-text-xs    { font-size: 0.72rem; }
+.u-tabular    { font-variant-numeric: tabular-nums; }
+.u-hidden     { display: none; }

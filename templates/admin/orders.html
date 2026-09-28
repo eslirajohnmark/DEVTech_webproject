@@ -1,0 +1,47 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Order Management · DEVTech{% endblock %}
+{% block page_title %}Order Management{% endblock %}
+{% block page_subtitle %}View and manage all customer orders{% endblock %}
+
+{% block content %}
+<div class="admin-table-container">
+    <div style="padding:1rem 1.2rem;">
+        <h3 style="font-weight:600; color:var(--admin-text-primary);">
+            <i class="fas fa-shopping-cart" style="color:var(--admin-primary);"></i> All Orders
+        </h3>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Order #</th>
+                <th>User</th>
+                <th>Service</th>
+                <th>Status</th>
+                <th>Payment</th>
+                <th>Total</th>
+                <th>Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for order in orders %}
+            <tr>
+                <td>{{ order.order_number or '#' + order.id|string }}</td>
+                <td>{{ order.username or 'Guest' }}</td>
+                <td>{{ order.service or 'N/A' }}</td>
+                <td><span class="admin-status-badge {% if order.status == 'completed' %}active{% elif order.status == 'pending' %}pending{% elif order.status == 'processing' %}processing{% else %}inactive{% endif %}">{{ order.status }}</span></td>
+                <td><span class="admin-status-badge {% if order.payment_status == 'paid' %}active{% elif order.payment_status == 'pending' %}pending{% else %}inactive{% endif %}">{{ order.payment_status }}</span></td>
+                <td>₱{{ order.total }}</td>
+                <td>{{ order.created_at.strftime('%Y-%m-%d') if order.created_at else 'N/A' }}</td>
+                <td>
+                    <a href="{{ url_for('admin_order_detail', order_id=order.id) }}" class="admin-btn admin-btn-primary admin-btn-sm">
+                        <i class="fas fa-eye"></i>
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

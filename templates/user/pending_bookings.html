@@ -1,0 +1,304 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Pending Bookings{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Pending Bookings</h1>
+        <p>View all your pending repair bookings</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+            <i class="fas fa-plus"></i> New Booking
+        </a>
+        <button class="user-icon-btn" onclick="showUserToast('Notifications')">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length }}</span>
+        </button>
+    </div>
+</div>
+
+<!-- Stats Summary -->
+<div class="user-stats-grid">
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
+            <i class="fas fa-exclamation-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|length }}</span>
+            <span class="user-stat-label">Pending Action</span>
+        </div>
+    </div>
+</div>
+
+<!-- Bookings Table -->
+<div class="user-table-container">
+    {% if bookings %}
+        <table class="user-table">
+            <thead>
+                <tr>
+                    <th>Booking ID</th>
+                    <th>Service</th>
+                    <th>Device</th>
+                    <th>Date & Time</th>
+                    <th>Payment</th>
+                    <th>Amount</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for booking in bookings %}
+                <tr>
+                    <td><span class="user-booking-id">{{ booking.booking_number }}</span></td>
+                    <td><span class="user-service-name">{{ booking.service.name }}</span></td>
+                    <td>{{ booking.device_type }}</td>
+                    <td>
+                        <div class="user-booking-datetime">
+                            <div>{{ booking.booking_date.strftime('%b %d, %Y') }}</div>
+                            <div class="user-time">{{ booking.booking_time.strftime('%I:%M %p') }}</div>
+                        </div>
+                    </td>
+                    <td>
+                        {% if booking.transaction %}
+                            <span class="user-payment-badge {{ booking.transaction.payment_status }}">
+                                {{ booking.transaction.payment_status.title() }}
+                            </span>
+                        {% else %}
+                            <span class="user-payment-badge none">No Payment</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="user-amount">₱{{ "%.2f"|format(booking.service.price) }}</span></td>
+                    <td>
+                        <button class="user-action-btn-sm view-btn" onclick="openBookingDetails('{{ booking.id }}')" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <a href="{{ url_for('user_transactions') }}" class="user-action-btn-sm pay-btn" title="Pay Now">
+                            <i class="fas fa-credit-card"></i>
+                        </a>
+                        <button class="user-action-btn-sm cancel-btn" onclick="confirmCancel('{{ booking.id }}', '{{ booking.booking_number }}')" title="Cancel Booking">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="user-empty-state">
+            <i class="fas fa-check-circle" style="color:var(--success);"></i>
+            <h3>No Pending Bookings</h3>
+            <p>You don't have any pending bookings. All caught up!</p>
+            <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+                <i class="fas fa-plus"></i> Book Now
+            </a>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Booking Details Modal -->
+<div class="user-modal" id="bookingDetailsModal">
+    <div class="user-modal-content" style="max-width: 700px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Booking Details</h2>
+            <button class="user-modal-close" onclick="closeBookingDetails()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="bookingDetailsBody">
+            <div id="bookingDetailsContent">
+                <div class="booking-detail-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading booking details...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeBookingDetails()">Close</button>
+            <button class="user-btn-primary" id="modalActionBtn" style="display:none;">
+                <i class="fas fa-credit-card"></i> Pay Now
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Cancel Confirmation Modal -->
+<div class="user-modal" id="cancelModal">
+    <div class="user-modal-content" style="max-width: 450px;">
+        <div class="user-modal-header" style="border-bottom-color: var(--danger);">
+            <h2 style="color: var(--danger);"><i class="fas fa-exclamation-triangle"></i> Cancel Booking</h2>
+            <button class="user-modal-close" onclick="closeCancelModal()">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <p style="font-size: 1.1rem; margin-bottom: 10px;">
+                Are you sure you want to cancel this booking?
+            </p>
+            <p style="color: var(--user-text-muted);">
+                <strong>Booking:</strong> <span id="cancelBookingId"></span>
+            </p>
+            <p style="color: var(--danger); font-size: 0.9rem; margin-top: 10px;">
+                <i class="fas fa-info-circle"></i> This action cannot be undone.
+            </p>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeCancelModal()">Keep Booking</button>
+            <button class="user-btn-danger" id="confirmCancelBtn">
+                <i class="fas fa-times"></i> Yes, Cancel Booking
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const bookingData = {
+        {% for booking in bookings %}
+        "{{ booking.id }}": {
+            id: {{ booking.id }},
+            booking_number: "{{ booking.booking_number }}",
+            service_name: "{{ booking.service.name }}",
+            service_price: "{{ "%.2f"|format(booking.service.price) }}",
+            device_type: "{{ booking.device_type }}",
+            description: "{{ booking.description|escape }}",
+            address: "{{ booking.address or 'In-shop repair' }}",
+            booking_date: "{{ booking.booking_date.strftime('%B %d, %Y') }}",
+            booking_time: "{{ booking.booking_time.strftime('%I:%M %p') }}",
+            status: "{{ booking.status }}",
+            is_in_shop: {{ 'true' if booking.is_in_shop else 'false' }},
+            created_at: "{{ booking.created_at.strftime('%B %d, %Y at %I:%M %p') }}",
+            technician_name: {{ ('"' + booking.technician.full_name + '"') if booking.technician else 'null' }},
+            technician_phone: {{ ('"' + (booking.technician.phone or 'N/A') + '"') if booking.technician else 'null' }},
+            technician_verified: {{ 'true' if (booking.technician and booking.technician.id_verified) else 'false' }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    function openBookingDetails(bookingId) {
+        const booking = bookingData[bookingId];
+        if (!booking) {
+            showUserToast('Booking not found', 'error');
+            return;
+        }
+
+        const statusDisplay = booking.status.replace('_', ' ').toUpperCase();
+
+        let technicianHTML = '';
+        if (booking.technician_name) {
+            technicianHTML = `
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-user-cog"></i> Assigned Technician</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Name:</span>
+                        <span class="booking-detail-value">${booking.technician_name} ${booking.technician_verified ? '<span style="color:var(--success); font-size:0.85em;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:var(--warning); font-size:0.85em;">Verification Pending</span>'}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Contact:</span>
+                        <span class="booking-detail-value">${booking.technician_phone}</span>
+                    </div>
+                </div>
+            `;
+        } else {
+            technicianHTML = `
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-user-cog"></i> Assigned Technician</h4>
+                    <p style="color:var(--user-text-muted); font-size:0.9rem;">A technician will be assigned once this booking is approved.</p>
+                </div>
+            `;
+        }
+
+        const detailsHTML = `
+            <div class="booking-detail-item">
+                <div class="booking-detail-header">
+                    <span class="booking-detail-id">${booking.booking_number}</span>
+                    <span class="booking-detail-status ${booking.status}">${statusDisplay}</span>
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-wrench"></i> Service Details</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Service:</span>
+                        <span class="booking-detail-value">${booking.service_name}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Device:</span>
+                        <span class="booking-detail-value">${booking.device_type}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Price:</span>
+                        <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${booking.service_price}</span>
+                    </div>
+                    ${booking.description ? `
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Description:</span>
+                        <span class="booking-detail-value">${booking.description}</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-calendar-alt"></i> Schedule</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Date:</span>
+                        <span class="booking-detail-value">${booking.booking_date}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Time:</span>
+                        <span class="booking-detail-value">${booking.booking_time}</span>
+                    </div>
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-map-marker-alt"></i> Location</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Type:</span>
+                        <span class="booking-detail-value">${booking.is_in_shop ? '🏪 In-shop repair' : '🏠 Home service'}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Address:</span>
+                        <span class="booking-detail-value">${booking.address}</span>
+                    </div>
+                </div>
+
+                ${technicianHTML}
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-info-circle"></i> Additional Info</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Requested:</span>
+                        <span class="booking-detail-value">${booking.created_at}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('bookingDetailsContent').innerHTML = detailsHTML;
+        document.getElementById('bookingDetailsModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeBookingDetails() {
+        document.getElementById('bookingDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    function closeCancelModal() {
+        document.getElementById('cancelModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    function confirmCancel(bookingId, bookingNumber) {
+        // NOTE: cancellation for repair bookings does not yet have a
+        // backend endpoint wired up (this was already the case before
+        // this technician-assignment feature was added - not something
+        // introduced here). This dialog is left in place so the button
+        // doesn't silently do nothing, but says so plainly instead of
+        // pretending to succeed.
+        document.getElementById('cancelBookingId').textContent = bookingNumber;
+        document.getElementById('cancelModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+        showUserToast('Booking cancellation isn\'t wired up on the backend yet - contact support to cancel for now.', 'info');
+    }
+
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() { this.parentElement.remove(); });
+    });
+</script>
+{% endblock %}

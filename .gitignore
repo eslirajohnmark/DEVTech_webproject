@@ -1,0 +1,99 @@
+instance/
+logs/
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================================
+# Virtual environments
+# ============================================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ============================================================
+# Secrets — the whole point of this file
+# ============================================================
+.env
+.env.local
+.env.*.local
+
+# But keep the template
+!.env.example
+
+# ============================================================
+# Flask / instance data
+# ============================================================
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploaded files — never track user uploads in git
+static/uploads/
+static/uploads/**
+
+# ============================================================
+# Logs
+# ============================================================
+logs/
+*.log
+*.log.*
+
+# ============================================================
+# Testing
+# ============================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ============================================================
+# Editors and OS
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Node (only if you ever add a build step)
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Keep the folder structure in git even though the contents are ignored
+!instance/uploads/tech/.gitkeep
+!logs/.gitkeep

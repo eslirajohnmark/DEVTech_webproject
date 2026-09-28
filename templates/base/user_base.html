@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en" id="htmlRoot">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DEVTech · {% block title %}User Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/user.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    {% block extra_css %}{% endblock %}
+    
+    <!-- Theme Script - Runs before page load -->
+    <script>
+        (function() {
+            // Get theme from localStorage or system preference
+            let theme = localStorage.getItem('devtech_theme');
+            
+            if (!theme || theme === 'system') {
+                // Check system preference
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    theme = 'dark';
+                } else {
+                    theme = 'light';
+                }
+            }
+            
+            // Apply theme
+            if (theme === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+            }
+            
+            // Store theme
+            localStorage.setItem('devtech_theme', theme);
+        })();
+    </script>
+</head>
+<body>
+    <div class="user-dashboard-wrapper">
+        <!-- Sidebar -->
+        <aside class="user-sidebar">
+            <div class="user-sidebar-brand">
+                <div class="user-logo-icon">
+                    <i class="fas fa-microchip"></i>
+                </div>
+                <div class="user-brand-text">
+                    <span class="user-brand-name">DEV<span>Tech</span></span>
+                    <span class="user-brand-sub">Computer Services</span>
+                </div>
+            </div>
+
+            <!-- Mobile Menu Toggle -->
+            <button class="user-menu-toggle" onclick="toggleMobileMenu()" aria-label="Toggle menu">
+                <i class="fas fa-bars"></i>
+            </button>
+
+            <div class="user-profile-mini">
+                <div class="user-avatar-mini">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <div class="user-sidebar-promo">
+                    <i class="fas fa-desktop user-sidebar-promo-mark"></i>
+                    <h5>Your Device.<br>Our Priority.</h5>
+                    <p>Fast · Reliable · Professional</p>
+                </div>
+
+                <div class="user-profile-info">
+                    <span class="user-profile-name">{{ session.get('username', 'User') }}</span>
+                    <span class="user-profile-role">Customer</span>
+                </div>
+            </div>
+
+            <nav class="user-nav-menu" id="mobileNavMenu">
+                <a href="{{ url_for('user_dashboard') }}" class="user-nav-item {% if request.endpoint == 'user_dashboard' %}active{% endif %}">
+                    <i class="fas fa-th-large"></i> Dashboard
+                </a>
+                <a href="{{ url_for('total_bookings') }}" class="user-nav-item {% if request.endpoint == 'total_bookings' %}active{% endif %}">
+                    <i class="fas fa-calendar-check"></i> My Bookings
+                </a>
+                <a href="{{ url_for('service_catalog') }}" class="user-nav-item {% if request.endpoint in ['service_catalog','book_appointment'] %}active{% endif %}">
+                    <i class="fas fa-calendar-alt"></i> Service Request
+                </a>
+                <a href="{{ url_for('user_shop') }}" class="user-nav-item {% if request.endpoint == 'user_shop' %}active{% endif %}">
+                    <i class="fas fa-store"></i> Shop
+                </a>
+                <a href="{{ url_for('user_orders') }}" class="user-nav-item {% if request.endpoint == 'user_orders' %}active{% endif %}">
+                    <i class="fas fa-box"></i> My Orders
+                </a>
+                <a href="{{ url_for('user_profile') }}" class="user-nav-item {% if request.endpoint == 'user_profile' %}active{% endif %}">
+                    <i class="fas fa-user"></i> Profile
+                </a>
+                <a href="{{ url_for('user_troubleshooting') }}" class="user-nav-item {% if request.endpoint == 'user_troubleshooting' %}active{% endif %}">
+                    <i class="fas fa-tools"></i> Troubleshooting
+                </a>
+                <a href="{{ url_for('user_transactions') }}" class="user-nav-item {% if request.endpoint == 'user_transactions' %}active{% endif %}">
+                    <i class="fas fa-history"></i> Transactions
+                </a>
+                <a href="{{ url_for('support') }}" class="user-nav-item {% if request.endpoint == 'support' %}active{% endif %}">
+                    <i class="fas fa-headset"></i> Support
+                </a>
+                <!-- Theme Toggle in Sidebar -->
+                <div class="user-nav-item theme-toggle-item" style="margin-top:auto; border-top:1px solid var(--user-border); padding-top:0.5rem;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
+                        <span style="display:flex; align-items:center; gap:0.8rem;">
+                            <i class="fas fa-moon"></i>
+                            <span>Dark Mode</span>
+                        </span>
+                        <label class="user-theme-switch">
+                            <input type="checkbox" id="themeToggleSidebar" onchange="toggleTheme()">
+                            <span class="user-theme-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <a href="{{ url_for('logout') }}" class="user-nav-item" style="border-top:1px solid var(--user-border); padding-top:0.8rem;">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="user-main-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script>
+        // ============================================
+        // THEME MANAGEMENT
+        // ============================================
+        
+        function getCurrentTheme() {
+            return localStorage.getItem('devtech_theme') || 'light';
+        }
+        
+        function setTheme(theme) {
+            const html = document.documentElement;
+            
+            if (theme === 'dark') {
+                html.setAttribute('data-theme', 'dark');
+            } else {
+                html.removeAttribute('data-theme');
+            }
+            
+            localStorage.setItem('devtech_theme', theme);
+            
+            // Update toggle switch
+            const toggle = document.getElementById('themeToggleSidebar');
+            if (toggle) {
+                toggle.checked = (theme === 'dark');
+            }
+            
+            // Update profile page theme selector if it exists
+            const themeSelect = document.getElementById('theme');
+            if (themeSelect) {
+                themeSelect.value = theme;
+            }
+        }
+        
+        function toggleTheme() {
+            const current = getCurrentTheme();
+            const newTheme = (current === 'dark') ? 'light' : 'dark';
+            setTheme(newTheme);
+            
+            // Save to server
+            fetch('/api/user/theme', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ theme: newTheme })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('Theme updated to ' + newTheme.charAt(0).toUpperCase() + newTheme.slice(1), 'success');
+                }
+            })
+            .catch(error => {
+                console.error('Error saving theme:', error);
+            });
+        }
+        
+        function applyThemeFromPreference(theme) {
+            setTheme(theme);
+            
+            // Update server preference
+            fetch('/api/user/theme', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ theme: theme })
+            })
+            .catch(error => {
+                console.error('Error saving theme:', error);
+            });
+        }
+        
+        // Listen for system theme changes
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+                const current = localStorage.getItem('devtech_theme');
+                if (current === 'system' || !current) {
+                    const newTheme = e.matches ? 'dark' : 'light';
+                    setTheme(newTheme);
+                }
+            });
+        }
+        
+        // Initialize theme toggle state
+        document.addEventListener('DOMContentLoaded', function() {
+            const current = getCurrentTheme();
+            const toggle = document.getElementById('themeToggleSidebar');
+            if (toggle) {
+                toggle.checked = (current === 'dark');
+            }
+            
+            // Load user preference from server
+            fetch('/api/user/preferences')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.theme) {
+                        const stored = localStorage.getItem('devtech_theme');
+                        if (!stored || stored === 'system') {
+                            setTheme(data.theme);
+                            const toggle = document.getElementById('themeToggleSidebar');
+                            if (toggle) {
+                                toggle.checked = (data.theme === 'dark');
+                            }
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading preferences:', error);
+                });
+        });
+
+        // ============================================
+        // MOBILE MENU TOGGLE
+        // ============================================
+        
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobileNavMenu');
+            const icon = document.querySelector('.user-menu-toggle i');
+            
+            menu.classList.toggle('open');
+            
+            if (menu.classList.contains('open')) {
+                icon.className = 'fas fa-times';
+                document.body.style.overflow = 'hidden';
+            } else {
+                icon.className = 'fas fa-bars';
+                document.body.style.overflow = '';
+            }
+        }
+
+        document.querySelectorAll('.user-nav-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const menu = document.getElementById('mobileNavMenu');
+                const icon = document.querySelector('.user-menu-toggle i');
+                if (window.innerWidth <= 768) {
+                    menu.classList.remove('open');
+                    icon.className = 'fas fa-bars';
+                    document.body.style.overflow = '';
+                }
+            });
+        });
+
+        window.addEventListener('resize', function() {
+            const menu = document.getElementById('mobileNavMenu');
+            const icon = document.querySelector('.user-menu-toggle i');
+            if (window.innerWidth > 768) {
+                menu.classList.remove('open');
+                icon.className = 'fas fa-bars';
+                document.body.style.overflow = '';
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const menu = document.getElementById('mobileNavMenu');
+                const icon = document.querySelector('.user-menu-toggle i');
+                if (menu.classList.contains('open')) {
+                    menu.classList.remove('open');
+                    icon.className = 'fas fa-bars';
+                    document.body.style.overflow = '';
+                }
+            }
+        });
+
+        // ============================================
+        // TOAST FOR THEME CHANGES
+        // ============================================
+        
+        function showToast(message, type = 'info', duration = 3000) {
+            let container = document.getElementById('toastContainer');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toastContainer';
+                container.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    z-index: 10000;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
+                    max-width: 400px;
+                    width: 100%;
+                    pointer-events: none;
+                `;
+                document.body.appendChild(container);
+            }
+            
+            const toast = document.createElement('div');
+            const colors = {
+                'success': '#22c55e',
+                'error': '#ef4444',
+                'warning': '#f59e0b',
+                'info': '#2563eb'
+            };
+            
+            toast.style.cssText = `
+                pointer-events: auto;
+                background: var(--user-card);
+                padding: 12px 20px;
+                border-radius: 12px;
+                border-left: 4px solid ${colors[type] || '#2563eb'};
+                box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                font-size: 0.9rem;
+                font-weight: 500;
+                color: var(--user-text-primary);
+                transform: translateX(120%);
+                transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+                width: 100%;
+            `;
+            
+            const icons = {
+                'success': 'fa-check-circle',
+                'error': 'fa-exclamation-circle',
+                'warning': 'fa-exclamation-triangle',
+                'info': 'fa-info-circle'
+            };
+            
+            toast.innerHTML = `
+                <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
+                <span style="flex:1;">${message}</span>
+                <button onclick="this.parentElement.remove()" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+            `;
+            
+            container.appendChild(toast);
+            
+            requestAnimationFrame(() => {
+                toast.style.transform = 'translateX(0)';
+            });
+            
+            setTimeout(() => {
+                toast.style.transform = 'translateX(120%)';
+                setTimeout(() => {
+                    if (toast.parentElement) toast.remove();
+                }, 400);
+            }, duration);
+        }
+
+        // ============================================
+        // ADMIN SHORTCUT: Ctrl + Shift + L
+        // ============================================
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+                e.preventDefault();
+                const currentPath = window.location.pathname;
+                if (currentPath === '/admin/login' || currentPath === '/admin/login/') return;
+                window.location.href = '/admin/login';
+            }
+        });
+    </script>
+
+    <script src="{{ url_for('static', filename='js/user.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

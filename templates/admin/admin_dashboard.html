@@ -1,0 +1,452 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- Top Bar -->
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Dashboard</h1>
+        <p>Overview of your system operations</p>
+    </div>
+    <div class="admin-top-actions">
+        <a href="{{ url_for('admin_requests') }}" class="admin-icon-btn" title="{{ pending_bookings + pending_payments }} item(s) need your attention">
+            <i class="fas fa-bell"></i>
+            {% if pending_bookings + pending_payments > 0 %}
+            <span class="admin-badge">{{ pending_bookings + pending_payments }}</span>
+            {% endif %}
+        </a>
+        <button class="admin-icon-btn" onclick="location.reload()" title="Refresh dashboard data">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+        <div class="admin-date-display">
+            <i class="fas fa-calendar-alt"></i>
+            <span id="currentDate"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Welcome Banner -->
+<div class="admin-welcome-banner">
+    <div>
+        <h2>Welcome back, {{ session.get('username', 'Administrator') }} 👋</h2>
+        <p>Here's what's happening across DEVTech today.</p>
+    </div>
+    <div class="admin-welcome-stat">
+        <strong>₱{{ "%.2f"|format(total_revenue) }}</strong>
+        <span>Confirmed Revenue</span>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="admin-stats-grid">
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-users"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ total_users|default(0) }}</span>
+            <span class="admin-stat-label">Total Users</span>
+        </div>
+        {% if users_trend.direction == 'flat' %}
+        <span class="admin-stat-trend flat"><i class="fas fa-minus"></i> 0%</span>
+        {% else %}
+        <span class="admin-stat-trend {{ users_trend.direction }}"><i class="fas fa-arrow-{{ users_trend.direction }}"></i> {{ users_trend.percent }}%</span>
+        {% endif %}
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(59,130,246,0.08); color:#3b82f6;">
+            <i class="fas fa-clipboard-list"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ pending_bookings|default(0) }}</span>
+            <span class="admin-stat-label">Pending Requests</span>
+        </div>
+        {% if requests_trend.direction == 'flat' %}
+        <span class="admin-stat-trend flat"><i class="fas fa-minus"></i> 0%</span>
+        {% else %}
+        <span class="admin-stat-trend {{ requests_trend.direction }}"><i class="fas fa-arrow-{{ requests_trend.direction }}"></i> {{ requests_trend.percent }}%</span>
+        {% endif %}
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-clock"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ pending_payments|default(0) }}</span>
+            <span class="admin-stat-label">Pending Payments</span>
+        </div>
+        {% if payments_trend.direction == 'flat' %}
+        <span class="admin-stat-trend flat"><i class="fas fa-minus"></i> 0%</span>
+        {% else %}
+        <span class="admin-stat-trend {{ payments_trend.direction }}"><i class="fas fa-arrow-{{ payments_trend.direction }}"></i> {{ payments_trend.percent }}%</span>
+        {% endif %}
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ total_bookings|default(0) }}</span>
+            <span class="admin-stat-label">Total Services</span>
+        </div>
+        {% if services_trend.direction == 'flat' %}
+        <span class="admin-stat-trend flat"><i class="fas fa-minus"></i> 0%</span>
+        {% else %}
+        <span class="admin-stat-trend {{ services_trend.direction }}"><i class="fas fa-arrow-{{ services_trend.direction }}"></i> {{ services_trend.percent }}%</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Dashboard Grid -->
+<div class="admin-dashboard-grid">
+
+    <!-- Service Requests Panel -->
+    <section class="admin-grid-panel admin-requests-panel">
+        <div class="admin-panel-header">
+            <h3 class="admin-panel-title">
+                <i class="fas fa-clipboard-list"></i> Recent Service Requests
+            </h3>
+            <a href="{{ url_for('admin_requests') }}" class="admin-panel-link">View All →</a>
+        </div>
+
+        {% if recent_bookings %}
+            {% for booking in recent_bookings %}
+            <div class="admin-request-item">
+                <div class="admin-request-header">
+                    <div class="admin-request-user">
+                        <i class="fas fa-user-circle"></i>
+                        <div>
+                            <span class="admin-request-name">{{ booking.user.full_name }}</span>
+                            <span class="admin-request-id">{{ booking.booking_number }}</span>
+                        </div>
+                    </div>
+                    <span class="admin-request-date">{{ booking.created_at.strftime('%b %d, %Y') if booking.created_at else 'N/A' }}</span>
+                </div>
+                <div class="admin-request-body">
+                    <p class="admin-request-desc">{{ booking.description[:50] if booking.description else 'No description' }}{% if booking.description and booking.description|length > 50 %}...{% endif %}</p>
+                    <div class="admin-request-meta">
+                        <span class="admin-request-service">{{ booking.service.name if booking.service else 'N/A' }}</span>
+                        <span class="admin-request-status {{ booking.status }}">{{ booking.status }}</span>
+                    </div>
+                </div>
+                <div class="admin-request-actions">
+                    <button class="admin-btn admin-view-details-btn" onclick="viewBookingDetails('{{ booking.id }}')">
+                        <i class="fas fa-eye"></i> View Details
+                    </button>
+                    {% if booking.status == 'pending' %}
+                    <form method="POST" action="{{ url_for('admin_request_status', booking_id=booking.id) }}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="status" value="confirmed">
+                        <button type="submit" class="admin-btn admin-btn-approve">
+                            <i class="fas fa-check"></i> Approve
+                        </button>
+                    </form>
+                    <button class="admin-btn admin-btn-reject" onclick="openRejectModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
+                        <i class="fas fa-times"></i> Reject
+                    </button>
+                    {% else %}
+                    <span class="admin-request-status {{ booking.status }}">{{ booking.status }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="admin-empty-state">
+                <i class="fas fa-inbox" style="font-size:2rem; display:block; margin-bottom:0.5rem; color:var(--text-muted);"></i>
+                <p style="color:var(--text-muted);">No recent service requests</p>
+            </div>
+        {% endif %}
+
+        <div class="admin-panel-footer">
+            <a href="{{ url_for('admin_requests') }}" class="admin-btn admin-btn-secondary full">View All Requests</a>
+        </div>
+    </section>
+
+    <!-- Right Column -->
+    <div class="admin-right-column">
+
+        <!-- Payment Confirmation Panel -->
+        <section class="admin-grid-panel">
+            <div class="admin-panel-header">
+                <h3 class="admin-panel-title">
+                    <i class="fas fa-check-double"></i> Payment Confirmation
+                </h3>
+                <a href="{{ url_for('admin_payments') }}" class="admin-panel-link">View All →</a>
+            </div>
+
+            {% if recent_pending_payments %}
+                {% for txn in recent_pending_payments %}
+                <div class="admin-user-item">
+                    <div class="admin-user-avatar">
+                        <i class="fas fa-{% if txn.payment_method == 'gcash' %}mobile-alt{% else %}money-bill-wave{% endif %}"></i>
+                    </div>
+                    <div class="admin-user-info">
+                        <span class="admin-user-name">{{ txn.transaction_number }}</span>
+                        <span class="admin-user-email">
+                            {{ txn.user.full_name if txn.user else 'Unknown user' }} &middot;
+                            ₱{{ "%.2f"|format(txn.amount) }} &middot;
+                            {{ txn.payment_method|upper if txn.payment_method else 'N/A' }}
+                        </span>
+                    </div>
+                    <a href="{{ url_for('admin_payments') }}" class="admin-btn admin-btn-secondary" style="font-size:0.75rem; padding:0.3rem 0.7rem;">Review</a>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="admin-empty-state">
+                    <i class="fas fa-check-circle" style="font-size:2rem; display:block; margin-bottom:0.5rem; color:var(--success);"></i>
+                    <p style="color:var(--text-muted);">No pending payments</p>
+                </div>
+            {% endif %}
+
+            <div class="admin-panel-footer">
+                <a href="{{ url_for('admin_payments') }}" class="admin-btn admin-btn-secondary full">Manage Payments</a>
+            </div>
+        </section>
+
+        <!-- Recent Users -->
+        <section class="admin-grid-panel">
+            <div class="admin-panel-header">
+                <h3 class="admin-panel-title">
+                    <i class="fas fa-users"></i> Recent Users
+                </h3>
+                <a href="{{ url_for('admin_users') }}" class="admin-panel-link">View All →</a>
+            </div>
+
+            {% if recent_users %}
+                {% for user in recent_users[:3] %}
+                <div class="admin-user-item">
+                    <div class="admin-user-avatar">
+                        <i class="fas fa-user-circle"></i>
+                    </div>
+                    <div class="admin-user-info">
+                        <span class="admin-user-name">{{ user.full_name }}</span>
+                        <span class="admin-user-email">{{ user.email }}</span>
+                    </div>
+                    <span class="admin-user-date">{{ user.created_at.strftime('%b %d') if user.created_at else 'N/A' }}</span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="admin-empty-state">
+                    <i class="fas fa-users" style="font-size:2rem; display:block; margin-bottom:0.5rem; color:var(--text-muted);"></i>
+                    <p style="color:var(--text-muted);">No recent users</p>
+                </div>
+            {% endif %}
+
+            <div class="admin-panel-footer">
+                <a href="{{ url_for('admin_users') }}" class="admin-btn admin-btn-secondary full">View All Users</a>
+            </div>
+        </section>
+    </div>
+</div>
+
+<!-- Reject Modal -->
+<div class="admin-modal" id="rejectModal">
+    <div class="admin-modal-content">
+        <div class="admin-modal-header">
+            <div class="admin-modal-icon-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <button class="admin-modal-close" onclick="closeAdminModal('rejectModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body" style="text-align:center;">
+            <h3 style="font-size:1.2rem; font-weight:700; color:var(--text-primary);">Reject Request</h3>
+            <p style="color:var(--text-secondary); margin:0.5rem 0;" id="rejectMessage">
+                Are you sure you want to reject request from <strong id="rejectUserName">User</strong>?
+            </p>
+            <form id="rejectForm" method="POST" action="">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="admin-form-group" style="margin-top:1rem; text-align:left;">
+                    <label for="rejectReason" style="color:var(--text-secondary);">Reason for rejection:</label>
+                    <textarea id="rejectReason" name="reason" rows="3" placeholder="Provide a reason for rejecting this request..." required></textarea>
+                </div>
+                <div class="admin-modal-actions" style="margin-top:1.5rem; display:flex; gap:0.8rem; justify-content:center;">
+                    <button type="button" class="admin-btn admin-btn-secondary" onclick="closeAdminModal('rejectModal')">Cancel</button>
+                    <button type="submit" class="admin-btn admin-btn-reject">Confirm Rejection</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Booking Details Modal -->
+<div class="admin-modal" id="bookingDetailsModal">
+    <div class="admin-modal-content admin-modal-wide">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Booking Details</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('bookingDetailsModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body" id="bookingDetailsBody">
+            <div class="admin-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading booking details...</p>
+            </div>
+        </div>
+        <div class="admin-modal-footer">
+            <button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('bookingDetailsModal')">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function viewBookingDetails(bookingId) {
+        const modal = document.getElementById('bookingDetailsModal');
+        const body = document.getElementById('bookingDetailsBody');
+        body.innerHTML = `
+            <div class="admin-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading booking details...</p>
+            </div>
+        `;
+        openAdminModal('bookingDetailsModal');
+
+        fetch(`/api/admin/booking/${bookingId}`)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to load booking');
+                return response.json();
+            })
+            .then(b => {
+                const paymentHtml = b.transaction ? `
+                    <div class="admin-detail-section-title">Payment</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Transaction No.</label>
+                            <span>${b.transaction.transaction_number}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Amount</label>
+                            <span>₱${b.transaction.amount.toFixed(2)}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Method</label>
+                            <span style="text-transform:uppercase;">${b.transaction.payment_method || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Payment Status</label>
+                            <span style="text-transform:capitalize;">${b.transaction.payment_status}</span>
+                        </div>
+                        ${b.transaction.gcash_reference ? `
+                        <div class="admin-detail-item">
+                            <label>GCash Reference</label>
+                            <span>${b.transaction.gcash_reference}</span>
+                        </div>` : ''}
+                    </div>
+                ` : `
+                    <div class="admin-detail-section-title">Payment</div>
+                    <p style="color:var(--text-muted); font-size:0.85rem;">No payment recorded for this booking yet.</p>
+                `;
+
+                body.innerHTML = `
+                    <div class="admin-detail-section-title">Booking Info</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Booking Number</label>
+                            <span>${b.booking_number}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Status</label>
+                            <span style="text-transform:capitalize;">${b.status}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Date</label>
+                            <span>${b.booking_date || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Time</label>
+                            <span>${b.booking_time || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Device Type</label>
+                            <span>${b.device_type}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Service Location</label>
+                            <span>${b.is_in_shop ? 'In-shop drop-off' : 'On-site / pickup'}</span>
+                        </div>
+                        <div class="admin-detail-item" style="grid-column: 1 / -1;">
+                            <label>Description</label>
+                            <p>${b.description || 'No description provided.'}</p>
+                        </div>
+                        ${b.address ? `
+                        <div class="admin-detail-item" style="grid-column: 1 / -1;">
+                            <label>Address</label>
+                            <p>${b.address}</p>
+                        </div>` : ''}
+                    </div>
+
+                    <div class="admin-detail-section-title">Customer</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Full Name</label>
+                            <span>${b.customer.full_name}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Email</label>
+                            <span>${b.customer.email || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Phone</label>
+                            <span>${b.customer.phone || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Address on File</label>
+                            <span>${b.customer.address || 'N/A'}</span>
+                        </div>
+                    </div>
+
+                    <div class="admin-detail-section-title">Service</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Service Name</label>
+                            <span>${b.service.name}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Price</label>
+                            <span>₱${b.service.price.toFixed(2)}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Est. Duration</label>
+                            <span>${b.service.estimated_hours ? b.service.estimated_hours + ' hr(s)' : 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Requested On</label>
+                            <span>${b.created_at || 'N/A'}</span>
+                        </div>
+                    </div>
+
+                    ${paymentHtml}
+                `;
+            })
+            .catch(() => {
+                body.innerHTML = `<p style="color:var(--danger); text-align:center; padding:2rem;">Could not load booking details. Please try again.</p>`;
+            });
+    }
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const now = new Date();
+        const options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' };
+        const dateEl = document.getElementById('currentDate');
+        if (dateEl) {
+            dateEl.textContent = now.toLocaleDateString('en-US', options);
+        }
+    });
+
+    function openRejectModal(bookingId, userName) {
+        document.getElementById('rejectUserName').textContent = userName;
+        document.getElementById('rejectForm').action = "{{ url_for('admin_request_status', booking_id=0) }}".replace('0', bookingId);
+        // Add status input if not exists
+        let statusInput = document.querySelector('#rejectForm input[name="status"]');
+        if (!statusInput) {
+            statusInput = document.createElement('input');
+            statusInput.type = 'hidden';
+            statusInput.name = 'status';
+            document.getElementById('rejectForm').appendChild(statusInput);
+        }
+        statusInput.value = 'cancelled';
+        openAdminModal('rejectModal');
+    }
+</script>
+{% endblock %}

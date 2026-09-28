@@ -1,0 +1,366 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Completed Bookings{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Completed Bookings</h1>
+        <p>View all your completed repair bookings</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+            <i class="fas fa-plus"></i> New Booking
+        </a>
+        <button class="user-icon-btn" onclick="showUserToast('Notifications')">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length }}</span>
+        </button>
+    </div>
+</div>
+
+<!-- Stats Summary -->
+<div class="user-stats-grid">
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|length }}</span>
+            <span class="user-stat-label">Completed</span>
+        </div>
+    </div>
+</div>
+
+<!-- Bookings Table -->
+<div class="user-table-container">
+    {% if bookings %}
+        <table class="user-table">
+            <thead>
+                <tr>
+                    <th>Booking ID</th>
+                    <th>Service</th>
+                    <th>Device</th>
+                    <th>Date & Time</th>
+                    <th>Payment</th>
+                    <th>Amount</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for booking in bookings %}
+                <tr>
+                    <td><span class="user-booking-id">{{ booking.booking_number }}</span></td>
+                    <td><span class="user-service-name">{{ booking.service.name }}</span></td>
+                    <td>{{ booking.device_type }}</td>
+                    <td>
+                        <div class="user-booking-datetime">
+                            <div>{{ booking.booking_date.strftime('%b %d, %Y') }}</div>
+                            <div class="user-time">{{ booking.booking_time.strftime('%I:%M %p') }}</div>
+                        </div>
+                    </td>
+                    <td>
+                        {% if booking.transaction %}
+                            <span class="user-payment-badge {{ booking.transaction.payment_status }}">
+                                {{ booking.transaction.payment_status.title() }}
+                            </span>
+                        {% else %}
+                            <span class="user-payment-badge none">No Payment</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="user-amount">₱{{ "%.2f"|format(booking.service.price) }}</span></td>
+                    <td>
+                        <button class="user-action-btn-sm view-btn" onclick="openBookingDetails('{{ booking.id }}')" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="user-empty-state">
+            <i class="fas fa-check-circle" style="color:var(--success);"></i>
+            <h3>No Completed Bookings</h3>
+            <p>You don't have any completed bookings yet.</p>
+            <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+                <i class="fas fa-plus"></i> Book Now
+            </a>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Booking Details Modal -->
+<div class="user-modal" id="bookingDetailsModal">
+    <div class="user-modal-content" style="max-width: 700px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Booking Details</h2>
+            <button class="user-modal-close" onclick="closeBookingDetails()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="bookingDetailsBody">
+            <div id="bookingDetailsContent">
+                <div class="booking-detail-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading booking details...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeBookingDetails()">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const bookingData = {
+        {% for booking in bookings %}
+        "{{ booking.id }}": {
+            id: {{ booking.id }},
+            booking_number: "{{ booking.booking_number }}",
+            service_name: "{{ booking.service.name }}",
+            service_price: "{{ "%.2f"|format(booking.service.price) }}",
+            device_type: "{{ booking.device_type }}",
+            description: "{{ booking.description|escape }}",
+            address: "{{ booking.address or 'In-shop repair' }}",
+            booking_date: "{{ booking.booking_date.strftime('%B %d, %Y') }}",
+            booking_time: "{{ booking.booking_time.strftime('%I:%M %p') }}",
+            status: "{{ booking.status }}",
+            is_in_shop: {{ 'true' if booking.is_in_shop else 'false' }},
+            created_at: "{{ booking.created_at.strftime('%B %d, %Y at %I:%M %p') }}",
+            updated_at: "{{ booking.updated_at.strftime('%B %d, %Y at %I:%M %p') if booking.updated_at else 'N/A' }}",
+            technician_name: {{ ('"' + booking.technician.full_name + '"') if booking.technician else 'null' }},
+            technician_phone: {{ ('"' + (booking.technician.phone or 'N/A') + '"') if booking.technician else 'null' }},
+            technician_verified: {{ 'true' if (booking.technician and booking.technician.id_verified) else 'false' }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    const paymentData = {
+        {% for booking in bookings %}
+            {% if booking.transaction %}
+            "{{ booking.id }}": {
+                transaction_number: "{{ booking.transaction.transaction_number }}",
+                payment_method: "{{ booking.transaction.payment_method }}",
+                payment_status: "{{ booking.transaction.payment_status }}",
+                amount: "{{ "%.2f"|format(booking.transaction.amount) }}",
+                gcash_reference: "{{ booking.transaction.gcash_reference or 'N/A' }}",
+                rejection_reason: "{{ booking.transaction.rejection_reason or '' }}",
+                transaction_date: "{{ booking.transaction.transaction_date.strftime('%B %d, %Y at %I:%M %p') }}"
+            }{% if not loop.last %},{% endif %}
+            {% endif %}
+        {% endfor %}
+    };
+
+    function getPaymentMethodDisplay(method) {
+        if (method === 'gcash') {
+            return '<i class="fas fa-mobile-alt" style="color:#0073e6;"></i> GCash';
+        } else if (method === 'cod' || method === 'C.A.R') {
+            return '<i class="fas fa-money-bill-wave" style="color:#22c55e;"></i> C.A.R (Cash After Repair)';
+        }
+        return '<i class="fas fa-credit-card"></i> Not specified';
+    }
+
+    function getPaymentStatusDisplay(status) {
+        const statusMap = {
+            'pending': '<span class="payment-status pending">⏳ Pending</span>',
+            'confirmed': '<span class="payment-status confirmed">✅ Confirmed</span>',
+            'rejected': '<span class="payment-status rejected">❌ Rejected</span>',
+            'refunded': '<span class="payment-status refunded">🔄 Refunded</span>',
+            'none': '<span class="payment-status none">No Payment</span>'
+        };
+        return statusMap[status] || '<span class="payment-status unknown">❓ Unknown</span>';
+    }
+
+    function openBookingDetails(bookingId) {
+        const booking = bookingData[bookingId];
+        if (!booking) {
+            showUserToast('Booking not found', 'error');
+            return;
+        }
+
+        const payment = paymentData[bookingId] || null;
+        const statusDisplay = booking.status.replace('_', ' ').toUpperCase();
+
+        let technicianHTML = '';
+        if (booking.technician_name) {
+            technicianHTML = `
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-user-cog"></i> Assigned Technician</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Name:</span>
+                        <span class="booking-detail-value">${booking.technician_name} ${booking.technician_verified ? '<span style="color:var(--success); font-size:0.85em;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:var(--warning); font-size:0.85em;">Verification Pending</span>'}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Contact:</span>
+                        <span class="booking-detail-value">${booking.technician_phone}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        let paymentHTML = '';
+        if (payment) {
+            const paymentMethodDisplay = getPaymentMethodDisplay(payment.payment_method);
+            const paymentStatusDisplay = getPaymentStatusDisplay(payment.payment_status);
+
+            paymentHTML = `
+                <div class="booking-detail-section payment-section">
+                    <h4><i class="fas fa-credit-card"></i> Payment Information</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Transaction:</span>
+                        <span class="booking-detail-value"><strong>${payment.transaction_number}</strong></span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Payment Method:</span>
+                        <span class="booking-detail-value">${paymentMethodDisplay}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Payment Status:</span>
+                        <span class="booking-detail-value">${paymentStatusDisplay}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Amount:</span>
+                        <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${payment.amount}</span>
+                    </div>
+                    ${payment.payment_method === 'gcash' ? `
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">GCash Reference:</span>
+                        <span class="booking-detail-value">${payment.gcash_reference}</span>
+                    </div>
+                    ` : ''}
+                    ${payment.rejection_reason ? `
+                    <div class="booking-detail-row rejection-reason">
+                        <span class="booking-detail-label">Rejection Reason:</span>
+                        <span class="booking-detail-value" style="color:var(--danger);">${payment.rejection_reason}</span>
+                    </div>
+                    ` : ''}
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Transaction Date:</span>
+                        <span class="booking-detail-value">${payment.transaction_date}</span>
+                    </div>
+                </div>
+            `;
+        } else {
+            paymentHTML = `
+                <div class="booking-detail-section payment-section">
+                    <h4><i class="fas fa-credit-card"></i> Payment Information</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label" style="color:var(--user-text-muted);">No payment record found</span>
+                        <span class="booking-detail-value" style="color:var(--user-text-muted);">Awaiting payment</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        const detailsHTML = `
+            <div class="booking-detail-item">
+                <div class="booking-detail-header">
+                    <span class="booking-detail-id">${booking.booking_number}</span>
+                    <span class="booking-detail-status ${booking.status}">${statusDisplay}</span>
+                </div>
+                
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-wrench"></i> Service Details</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Service:</span>
+                        <span class="booking-detail-value">${booking.service_name}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Device:</span>
+                        <span class="booking-detail-value">${booking.device_type}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Price:</span>
+                        <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${booking.service_price}</span>
+                    </div>
+                    ${booking.description ? `
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Description:</span>
+                        <span class="booking-detail-value">${booking.description}</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-calendar-alt"></i> Schedule</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Date:</span>
+                        <span class="booking-detail-value">${booking.booking_date}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Time:</span>
+                        <span class="booking-detail-value">${booking.booking_time}</span>
+                    </div>
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-map-marker-alt"></i> Location</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Type:</span>
+                        <span class="booking-detail-value">${booking.is_in_shop ? '🏪 In-shop repair' : '🏠 Home service'}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Address:</span>
+                        <span class="booking-detail-value">${booking.address}</span>
+                    </div>
+                </div>
+
+                ${technicianHTML}
+
+                ${paymentHTML}
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-info-circle"></i> Additional Info</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Created:</span>
+                        <span class="booking-detail-value">${booking.created_at}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Last Updated:</span>
+                        <span class="booking-detail-value">${booking.updated_at}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('bookingDetailsContent').innerHTML = detailsHTML;
+        document.getElementById('bookingDetailsModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeBookingDetails() {
+        document.getElementById('bookingDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    document.getElementById('bookingDetailsModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeBookingDetails();
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeBookingDetails();
+        }
+    });
+
+    function showUserToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `user-toast ${type}`;
+        toast.innerHTML = `
+            <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+            ${message}
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 100);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+</script>
+{% endblock %}

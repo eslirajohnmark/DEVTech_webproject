@@ -1,0 +1,516 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Dashboard</h1>
+        <p>Manage your repairs and bookings</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View all notifications">
+            <i class="fas fa-bell"></i>
+            {% if notifications|length > 0 %}
+                <span class="user-badge">{{ notifications|length }}</span>
+            {% endif %}
+        </a>
+        <a href="{{ url_for('messages') }}" class="user-icon-btn" title="View all messages">
+            <i class="fas fa-envelope"></i>
+            {% if unread_messages > 0 %}
+                <span class="user-badge" style="background:var(--user-success);">{{ unread_messages }}</span>
+            {% endif %}
+        </a>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Stats Cards -->
+<div class="user-stats-grid">
+    <!-- Total Bookings -->
+    <div class="user-stat-card clickable" onclick="window.location.href='{{ url_for('total_bookings') }}'">
+        <div class="user-stat-icon" style="background:rgba(37,99,235,0.08); color:var(--primary);">
+            <i class="fas fa-calendar-check"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|length }}</span>
+            <span class="user-stat-label">Total Bookings</span>
+        </div>
+        <span class="user-stat-trend up"><i class="fas fa-arrow-up"></i> 14%</span>
+    </div>
+
+    <!-- Completed -->
+    <div class="user-stat-card clickable" onclick="window.location.href='{{ url_for('completed_bookings') }}'">
+        <div class="user-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|selectattr('status', 'equalto', 'completed')|list|length }}</span>
+            <span class="user-stat-label">Completed</span>
+        </div>
+        <span class="user-stat-trend up"><i class="fas fa-arrow-up"></i> 22%</span>
+    </div>
+
+    <!-- In Progress -->
+    <div class="user-stat-card clickable" onclick="window.location.href='{{ url_for('inprogress_bookings') }}'">
+        <div class="user-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-clock"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|selectattr('status', 'in', ['pending', 'confirmed', 'in_progress'])|list|length }}</span>
+            <span class="user-stat-label">In Progress</span>
+        </div>
+        <span class="user-stat-trend down"><i class="fas fa-arrow-down"></i> 5%</span>
+    </div>
+
+    <!-- Pending Action -->
+    <div class="user-stat-card clickable" onclick="window.location.href='{{ url_for('pending_bookings') }}'">
+        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
+            <i class="fas fa-exclamation-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|selectattr('status', 'equalto', 'pending')|list|length }}</span>
+            <span class="user-stat-label">Pending Action</span>
+        </div>
+        <span class="user-stat-trend down"><i class="fas fa-arrow-down"></i> 2%</span>
+    </div>
+
+    <!-- Rejected Requests -->
+    <div class="user-stat-card clickable" onclick="window.location.href='{{ url_for('rejected_requests') }}'">
+        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:#dc2626;">
+            <i class="fas fa-times-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|selectattr('status', 'equalto', 'cancelled')|list|length }}</span>
+            <span class="user-stat-label">Rejected Requests</span>
+        </div>
+        <span class="user-stat-trend down"><i class="fas fa-arrow-down"></i> 8%</span>
+    </div>
+</div>
+
+<!-- Dashboard Grid -->
+<div class="user-dashboard-grid">
+    <!-- Bookings -->
+    <section class="user-grid-panel">
+        <div class="user-panel-header">
+            <h3 class="user-panel-title">
+                <i class="fas fa-calendar-alt"></i> Recent Bookings
+            </h3>
+            <a href="{{ url_for('total_bookings') }}" class="user-panel-link">View All →</a>
+        </div>
+
+        {% if bookings %}
+            {% for booking in bookings[:3] %}
+            <div class="user-booking-item">
+                <div class="user-booking-status {{ booking.status }}"></div>
+                <div class="user-booking-details">
+                    <div class="user-booking-header">
+                        <p class="user-booking-id">{{ booking.booking_number }}</p>
+                        <span class="user-booking-status-badge {{ booking.status }}">{{ booking.status.replace('_', ' ') }}</span>
+                    </div>
+                    <p class="user-booking-desc">{{ booking.service.name }}</p>
+                    <p class="user-booking-meta">
+                        <i class="fas fa-calendar-day"></i> {{ booking.booking_date.strftime('%b %d, %Y') }}
+                        <i class="fas fa-clock" style="margin-left:0.8rem;"></i> {{ booking.booking_time.strftime('%I:%M %p') }}
+                    </p>
+                    <div class="user-booking-actions">
+                        {% if booking.status == 'pending' %}
+                            <a href="{{ url_for('user_transactions') }}" class="user-action-btn">
+                                <i class="fas fa-credit-card"></i> Pay Now
+                            </a>
+                        {% endif %}
+                        <button class="user-action-btn secondary" onclick="openBookingDetails('{{ booking.id }}')">
+                            <i class="fas fa-chevron-right"></i> Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="user-empty-state">
+                <i class="fas fa-inbox"></i>
+                <h4>No Bookings Yet</h4>
+                <p>Book your first repair service today!</p>
+            </div>
+        {% endif %}
+
+        <div class="user-panel-footer">
+            <a href="{{ url_for('request_service') }}" class="user-action-btn full">
+                <i class="fas fa-plus"></i> New Booking
+            </a>
+        </div>
+    </section>
+
+    <!-- Right Column -->
+    <div class="user-right-column">
+        <!-- Notifications -->
+        <section class="user-grid-panel">
+            <div class="user-panel-header">
+                <h3 class="user-panel-title">
+                    <i class="fas fa-bell"></i> Notifications
+                </h3>
+                <a href="{{ url_for('notifications') }}" class="user-panel-link">View All →</a>
+            </div>
+
+            {% if notifications %}
+                {% for notif in notifications[:3] %}
+                <div class="user-notification-item unread">
+                    <div class="user-notification-icon {{ notif.type }}">
+                        <i class="fas fa-{% if notif.type == 'success' %}check{% elif notif.type == 'error' %}times{% elif notif.type == 'warning' %}exclamation{% else %}info{% endif %}"></i>
+                    </div>
+                    <div class="user-notification-text">
+                        <p class="user-notification-title">{{ notif.title }}</p>
+                        <p class="user-notification-sub">{{ notif.message|truncate(60) }}</p>
+                        <span class="user-notification-time">{{ notif.created_at.strftime('%b %d, %I:%M %p') }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="user-empty-state" style="padding:1rem;">
+                    <i class="fas fa-check-circle" style="color:var(--success);"></i>
+                    <h4>All Caught Up!</h4>
+                    <p>No new notifications</p>
+                </div>
+            {% endif %}
+
+            <div class="user-panel-footer">
+                <a href="{{ url_for('notifications') }}" class="user-action-btn full secondary">
+                    <i class="fas fa-bell"></i> View All Notifications
+                </a>
+            </div>
+        </section>
+
+        <!-- Quick Actions -->
+        <section class="user-grid-panel">
+            <h3 class="user-panel-title">
+                <i class="fas fa-bolt"></i> Quick Actions
+            </h3>
+            <div class="user-quick-actions">
+                <a href="{{ url_for('request_service') }}" class="user-quick-btn">
+                    <i class="fas fa-plus-circle"></i> New Booking
+                </a>
+                <a href="{{ url_for('total_bookings') }}" class="user-quick-btn">
+                    <i class="fas fa-history"></i> History
+                </a>
+                <a href="{{ url_for('user_profile') }}" class="user-quick-btn">
+                    <i class="fas fa-file-invoice"></i> Invoices
+                </a>
+                <a href="{{ url_for('messages') }}" class="user-quick-btn">
+                    <i class="fas fa-headset"></i> Support
+                </a>
+            </div>
+        </section>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- BOOKING DETAILS MODAL -->
+<!-- ============================================ -->
+<div class="user-modal" id="bookingDetailsModal">
+    <div class="user-modal-content" style="max-width: 600px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Booking Details</h2>
+            <button class="user-modal-close" onclick="closeBookingDetails()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="bookingDetailsBody">
+            <div id="bookingDetailsContent">
+                <div class="booking-detail-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading booking details...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeBookingDetails()">Close</button>
+            <button class="user-btn-primary" id="modalActionBtn" style="display:none;">
+                <i class="fas fa-credit-card"></i> Pay Now
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ============================================
+    // BOOKING DETAILS FUNCTIONS
+    // ============================================
+
+    const bookingData = {
+        {% for booking in bookings %}
+        "{{ booking.id }}": {
+            id: {{ booking.id }},
+            booking_number: "{{ booking.booking_number }}",
+            service_name: "{{ booking.service.name }}",
+            service_price: "{{ "%.2f"|format(booking.service.price) }}",
+            device_type: "{{ booking.device_type }}",
+            description: "{{ booking.description|escape }}",
+            address: "{{ booking.address or 'In-shop repair' }}",
+            booking_date: "{{ booking.booking_date.strftime('%B %d, %Y') }}",
+            booking_time: "{{ booking.booking_time.strftime('%I:%M %p') }}",
+            status: "{{ booking.status }}",
+            is_in_shop: {{ 'true' if booking.is_in_shop else 'false' }},
+            created_at: "{{ booking.created_at.strftime('%B %d, %Y at %I:%M %p') }}",
+            updated_at: "{{ booking.updated_at.strftime('%B %d, %Y at %I:%M %p') if booking.updated_at else 'N/A' }}",
+            technician_name: {{ ('"' + booking.technician.full_name + '"') if booking.technician else 'null' }},
+            technician_phone: {{ ('"' + (booking.technician.phone or 'N/A') + '"') if booking.technician else 'null' }},
+            technician_verified: {{ 'true' if (booking.technician and booking.technician.id_verified) else 'false' }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    const paymentData = {
+        {% for transaction in transactions %}
+        "{{ transaction.booking_id }}": {
+            transaction_number: "{{ transaction.transaction_number }}",
+            payment_method: "{{ transaction.payment_method }}",
+            payment_status: "{{ transaction.payment_status }}",
+            amount: "{{ "%.2f"|format(transaction.amount) }}",
+            gcash_reference: "{{ transaction.gcash_reference or 'N/A' }}",
+            rejection_reason: "{{ transaction.rejection_reason or '' }}",
+            transaction_date: "{{ transaction.transaction_date.strftime('%B %d, %Y at %I:%M %p') }}"
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    function getPaymentMethodDisplay(method) {
+        if (method === 'gcash') {
+            return '<i class="fas fa-mobile-alt" style="color:#0073e6;"></i> GCash';
+        } else if (method === 'cod' || method === 'C.A.R') {
+            return '<i class="fas fa-money-bill-wave" style="color:#22c55e;"></i> C.A.R (Cash After Repair)';
+        }
+        return '<i class="fas fa-credit-card"></i> Not specified';
+    }
+
+    function getPaymentStatusDisplay(status) {
+        const statusMap = {
+            'pending': '<span class="payment-status pending">⏳ Pending</span>',
+            'confirmed': '<span class="payment-status confirmed">✅ Confirmed</span>',
+            'rejected': '<span class="payment-status rejected">❌ Rejected</span>',
+            'refunded': '<span class="payment-status refunded">🔄 Refunded</span>'
+        };
+        return statusMap[status] || '<span class="payment-status unknown">❓ Unknown</span>';
+    }
+
+    function openBookingDetails(bookingId) {
+        const booking = bookingData[bookingId];
+        if (!booking) {
+            showUserToast('Booking not found', 'error');
+            return;
+        }
+
+        const payment = paymentData[bookingId] || null;
+        const statusDisplay = booking.status.replace('_', ' ').toUpperCase();
+
+        let technicianHTML = '';
+        if (booking.technician_name) {
+            technicianHTML = `
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-user-cog"></i> Assigned Technician</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Name:</span>
+                        <span class="booking-detail-value">${booking.technician_name} ${booking.technician_verified ? '<span style="color:var(--success); font-size:0.85em;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:var(--warning); font-size:0.85em;">Verification Pending</span>'}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Contact:</span>
+                        <span class="booking-detail-value">${booking.technician_phone}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        let paymentHTML = '';
+        if (payment) {
+            const paymentMethodDisplay = getPaymentMethodDisplay(payment.payment_method);
+            const paymentStatusDisplay = getPaymentStatusDisplay(payment.payment_status);
+
+            paymentHTML = `
+                <div class="booking-detail-section payment-section">
+                    <h4><i class="fas fa-credit-card"></i> Payment Information</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Transaction:</span>
+                        <span class="booking-detail-value"><strong>${payment.transaction_number}</strong></span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Payment Method:</span>
+                        <span class="booking-detail-value">${paymentMethodDisplay}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Payment Status:</span>
+                        <span class="booking-detail-value">${paymentStatusDisplay}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Amount:</span>
+                        <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${payment.amount}</span>
+                    </div>
+                    ${payment.payment_method === 'gcash' ? `
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">GCash Reference:</span>
+                        <span class="booking-detail-value">${payment.gcash_reference}</span>
+                    </div>
+                    ` : ''}
+                    ${payment.rejection_reason ? `
+                    <div class="booking-detail-row rejection-reason">
+                        <span class="booking-detail-label">Rejection Reason:</span>
+                        <span class="booking-detail-value" style="color:var(--danger);">${payment.rejection_reason}</span>
+                    </div>
+                    ` : ''}
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Transaction Date:</span>
+                        <span class="booking-detail-value">${payment.transaction_date}</span>
+                    </div>
+                </div>
+            `;
+        } else {
+            paymentHTML = `
+                <div class="booking-detail-section payment-section">
+                    <h4><i class="fas fa-credit-card"></i> Payment Information</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label" style="color:var(--user-text-muted);">No payment record found</span>
+                        <span class="booking-detail-value" style="color:var(--user-text-muted);">Please complete payment</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        const detailsHTML = `
+            <div class="booking-detail-item">
+                <div class="booking-detail-header">
+                    <span class="booking-detail-id">${booking.booking_number}</span>
+                    <span class="booking-detail-status ${booking.status}">${statusDisplay}</span>
+                </div>
+                
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-wrench"></i> Service Details</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Service:</span>
+                        <span class="booking-detail-value">${booking.service_name}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Device:</span>
+                        <span class="booking-detail-value">${booking.device_type}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Price:</span>
+                        <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${booking.service_price}</span>
+                    </div>
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-calendar-alt"></i> Schedule</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Date:</span>
+                        <span class="booking-detail-value">${booking.booking_date}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Time:</span>
+                        <span class="booking-detail-value">${booking.booking_time}</span>
+                    </div>
+                </div>
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-map-marker-alt"></i> Location</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Type:</span>
+                        <span class="booking-detail-value">${booking.is_in_shop ? '🏪 In-shop repair' : '🏠 Home service'}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Address:</span>
+                        <span class="booking-detail-value">${booking.address}</span>
+                    </div>
+                </div>
+
+                ${technicianHTML}
+
+                ${paymentHTML}
+
+                <div class="booking-detail-section">
+                    <h4><i class="fas fa-info-circle"></i> Additional Info</h4>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Description:</span>
+                        <span class="booking-detail-value">${booking.description}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Created:</span>
+                        <span class="booking-detail-value">${booking.created_at}</span>
+                    </div>
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Last Updated:</span>
+                        <span class="booking-detail-value">${booking.updated_at}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('bookingDetailsContent').innerHTML = detailsHTML;
+
+        const actionBtn = document.getElementById('modalActionBtn');
+        if (booking.status === 'pending' || (payment && payment.payment_status === 'pending')) {
+            actionBtn.style.display = 'inline-flex';
+            actionBtn.innerHTML = '<i class="fas fa-credit-card"></i> Pay Now';
+            actionBtn.onclick = function() {
+                closeBookingDetails();
+                window.location.href = "{{ url_for('user_transactions') }}";
+            };
+        } else {
+            actionBtn.style.display = 'none';
+        }
+
+        document.getElementById('bookingDetailsModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeBookingDetails() {
+        document.getElementById('bookingDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    document.getElementById('bookingDetailsModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeBookingDetails();
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeBookingDetails();
+        }
+    });
+
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+
+    function showUserToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `user-toast ${type}`;
+        toast.innerHTML = `
+            <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+            ${message}
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 100);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+</script>
+{% endblock %}

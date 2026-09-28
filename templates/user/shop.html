@@ -1,0 +1,1477 @@
+<!-- shop.html - Fully Functional Notification System -->
+{% extends "base/user_base.html" %}
+
+{% block title %}Shop{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Shop</h1>
+        <p>Browse and purchase computer parts &amp; accessories</p>
+    </div>
+    <div class="user-top-actions">
+        <!-- Notification Bell - Links to notifications page -->
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications" id="notifBtn">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge" id="notifBadge">0</span>
+        </a>
+        <button class="user-icon-btn" onclick="toggleCart()" title="View cart" id="cartToggleBtn">
+            <i class="fas fa-shopping-cart"></i>
+            <span class="user-badge" id="cartBadge">{{ cart_count if cart_count else 0 }}</span>
+        </button>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Filter Bar -->
+<div class="user-shop-filters">
+    <div class="user-filter-group">
+        <span class="user-filter-label">Category:</span>
+        <select class="user-filter-select" id="categoryFilter" onchange="filterProducts()">
+            <option value="all">All Products</option>
+            <option value="memory">Memory (RAM)</option>
+            <option value="storage">Storage (SSD/HDD)</option>
+            <option value="battery">Batteries</option>
+            <option value="accessory">Accessories</option>
+            <option value="cpu">Processors</option>
+            <option value="gpu">Graphics Cards</option>
+        </select>
+    </div>
+    <div class="user-filter-group">
+        <span class="user-filter-label">Sort:</span>
+        <select class="user-filter-select" id="sortFilter" onchange="filterProducts()">
+            <option value="popular">Most Popular</option>
+            <option value="price-low">Price: Low to High</option>
+            <option value="price-high">Price: High to Low</option>
+            <option value="newest">Newest First</option>
+        </select>
+    </div>
+    <div class="user-search">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="Search products..." class="user-search-input" id="searchInput" oninput="filterProducts()" />
+    </div>
+</div>
+
+<!-- Product Grid -->
+<div class="user-shop-grid" id="productGrid">
+    {% for product in products %}
+    <div class="user-product-card" 
+         data-category="{{ product.category }}" 
+         data-price="{{ product.price }}" 
+         data-name="{{ product.name }}" 
+         data-id="{{ product.id }}" 
+         data-stock="{{ product.stock_quantity }}"
+         data-product='{{ product|tojson|safe }}'>
+        {% if product.stock_quantity > 0 and product.stock_quantity <= 3 %}
+        <div class="user-product-badge sale">Low Stock</div>
+        {% elif product.stock_quantity <= 0 %}
+        <div class="user-product-badge out">Out of Stock</div>
+        {% endif %}
+        <div class="user-product-image">
+            <i class="fas fa-{% if product.category == 'memory' %}memory{% elif product.category == 'storage' %}hdd{% elif product.category == 'battery' %}battery-three-quarters{% elif product.category == 'accessory' %}plug{% elif product.category == 'cpu' %}microchip{% elif product.category == 'gpu' %}gamepad{% else %}box{% endif %}"></i>
+        </div>
+        <h3 class="user-product-name">{{ product.name }}</h3>
+        <p class="user-product-desc">{{ product.description[:80] }}{% if product.description|length > 80 %}...{% endif %}</p>
+        <div class="user-product-meta">
+            <span class="user-product-price">₱{{ "%.2f"|format(product.price) }}</span>
+            <span class="user-product-compat">{{ product.compatibility or 'Universal' }}</span>
+        </div>
+        <div class="user-product-stock">
+            <span class="stock-label">In Stock:</span>
+            <span class="stock-count {% if product.stock_quantity <= 0 %}out{% endif %}" id="stock-{{ product.id }}">{{ product.stock_quantity }}</span>
+            <span class="stock-unit">units</span>
+        </div>
+        <div class="user-product-actions">
+            <button class="user-product-btn view-btn" onclick="showProductDetails('{{ product.id }}')">
+                <span>View Details</span>
+            </button>
+            <button class="user-product-btn buy-btn" onclick="addToCart('{{ product.id }}')" {% if product.stock_quantity <= 0 %}disabled{% endif %}>
+                <i class="fas fa-cart-plus"></i> <span class="btn-text">Add to Cart</span>
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Logged-in user's saved delivery address (used to pre-fill checkout) -->
+<script id="userAddressData" type="application/json">{{ {
+    'full_name': user.full_name or '',
+    'phone': user.phone or '',
+    'address': user.address or '',
+    'city': user.city or '',
+    'province': user.province or '',
+    'postal_code': user.postal_code or '',
+    'latitude': user.latitude | float if user.latitude is not none else None,
+    'longitude': user.longitude | float if user.longitude is not none else None
+} | tojson | safe }}</script>
+
+<!-- Leaflet (OpenStreetMap) — used for the delivery-address pin picker in checkout -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<!-- Cart Sidebar -->
+<div class="user-cart-sidebar" id="cartSidebar">
+    <div class="user-cart-header">
+        <div class="user-cart-header-left">
+            <i class="fas fa-shopping-bag"></i>
+            <h3>Your Cart</h3>
+            <span class="user-cart-count" id="cartCountDisplay">0</span>
+        </div>
+        <button class="user-cart-close" onclick="toggleCart()">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+    <div class="user-cart-body" id="cartBody">
+        <div class="user-cart-empty" id="cartEmpty">
+            <div class="user-cart-empty-icon">
+                <i class="fas fa-shopping-bag"></i>
+            </div>
+            <h4>Your cart is empty</h4>
+            <p>Looks like you haven't added any items yet.</p>
+            <button class="user-btn-primary" onclick="toggleCart()">Start Shopping</button>
+        </div>
+        <div class="user-cart-items" id="cartItems" style="display:none;"></div>
+    </div>
+    <div class="user-cart-footer" id="cartFooter" style="display:none;">
+        <div class="user-cart-summary">
+            <div class="user-cart-subtotal">
+                <span>Subtotal</span>
+                <span id="cartTotal">₱0.00</span>
+            </div>
+            <div class="user-cart-shipping">
+                <span>Shipping</span>
+                <span>Free</span>
+            </div>
+            <div class="user-cart-total">
+                <span>Total</span>
+                <span id="cartGrandTotal">₱0.00</span>
+            </div>
+        </div>
+        <div class="user-cart-actions">
+            <button class="user-btn-primary full" onclick="checkout()">
+                <i class="fas fa-credit-card"></i> Proceed to Checkout
+            </button>
+            <button class="user-btn-secondary full" onclick="clearCart()">
+                <i class="fas fa-trash-alt"></i> Clear Cart
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Cart Overlay -->
+<div class="user-cart-overlay" id="cartOverlay" onclick="toggleCart()"></div>
+
+<!-- Product Modal -->
+<div class="user-modal" id="productModal">
+    <div class="user-modal-content">
+        <div class="user-modal-header">
+            <h2 id="modalTitle">Product Details</h2>
+            <button class="user-modal-close" onclick="closeProductModal()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="productModalBody">
+            <div class="user-modal-image">
+                <i class="fas fa-box" id="modalIcon" style="font-size:4rem;"></i>
+            </div>
+            <h3 id="modalName" style="font-size:1.3rem; font-weight:700;">Product Name</h3>
+            <p class="user-modal-price" id="modalPrice">₱0.00</p>
+            <p class="user-modal-desc" id="modalDesc">Description</p>
+            <div class="user-modal-compat">
+                <i class="fas fa-check-circle" style="color:var(--success);"></i>
+                <span>Compatibility: </span>
+                <span id="modalCompat">Universal</span>
+            </div>
+            <div class="user-modal-stock">
+                <span>Available Stock: </span>
+                <span id="modalStock">0</span>
+                <span> units</span>
+            </div>
+            <div class="user-modal-quantity">
+                <label>Quantity:</label>
+                <div class="user-quantity-control">
+                    <button class="user-qty-btn" onclick="changeModalQty(-1)">-</button>
+                    <input type="number" id="modalQty" value="1" min="1" max="99">
+                    <button class="user-qty-btn" onclick="changeModalQty(1)">+</button>
+                </div>
+            </div>
+            <div class="user-modal-actions">
+                <button class="user-btn-primary full" onclick="buyProductFromModal()">
+                    <i class="fas fa-shopping-cart"></i> Add to Cart
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Payment Method Modal -->
+<div class="user-modal" id="paymentModal">
+    <div class="user-modal-content" style="max-width: 480px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-credit-card"></i> Checkout</h2>
+            <button class="user-modal-close" onclick="closePaymentModal()">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <div class="user-cart-summary" style="margin-bottom:1.2rem;">
+                <div class="user-cart-total">
+                    <span>Total to Pay</span>
+                    <span id="paymentModalTotal">₱0.00</span>
+                </div>
+            </div>
+
+            <!-- Delivery Address -->
+            <div class="user-checkout-section">
+                <div class="user-checkout-section-title">
+                    <i class="fas fa-map-marker-alt"></i> Delivery Address
+                </div>
+
+                <!-- Saved address on file: shown by default, user can keep it or change it -->
+                <div class="user-address-card" id="addressView" style="display:none;">
+                    <div class="user-address-card-icon"><i class="fas fa-location-dot"></i></div>
+                    <div class="user-address-card-body">
+                        <p class="user-address-name" id="addrViewName"></p>
+                        <p class="user-address-line" id="addrViewLine"></p>
+                        <p class="user-address-phone" id="addrViewPhone"></p>
+                        <p class="user-address-pin-note" id="addrViewPin" style="display:none;">
+                            <i class="fas fa-map-pin"></i> Exact location pinned on map
+                        </p>
+                    </div>
+                    <button type="button" class="user-address-edit-btn" onclick="showAddressEditForm()">
+                        <i class="fas fa-pen"></i> Change
+                    </button>
+                </div>
+
+                <!-- No usable address on file yet -->
+                <div class="user-address-missing" id="addressMissingNotice" style="display:none;">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>You don't have a delivery address saved yet. Please add one to continue.</span>
+                </div>
+
+                <!-- Add / edit address form -->
+                <div class="user-address-form" id="addressEditForm" style="display:none;">
+                    <div class="user-form-row cols-2">
+                        <div class="user-form-group">
+                            <label for="addrFullName">Full Name</label>
+                            <input type="text" id="addrFullName" placeholder="Recipient's full name" oninput="updatePlaceOrderState()">
+                        </div>
+                        <div class="user-form-group">
+                            <label for="addrPhone">Phone Number</label>
+                            <input type="text" id="addrPhone" placeholder="09XXXXXXXXX" oninput="updatePlaceOrderState()">
+                        </div>
+                    </div>
+                    <div class="user-form-group">
+                        <label for="addrLine">Street Address</label>
+                        <input type="text" id="addrLine" placeholder="House/Unit No., Street, Barangay" oninput="updatePlaceOrderState()">
+                    </div>
+                    <div class="user-form-row cols-city-province-postal">
+                        <div class="user-form-group">
+                            <label for="addrCity">City / Municipality</label>
+                            <input type="text" id="addrCity" placeholder="City" oninput="updatePlaceOrderState()">
+                        </div>
+                        <div class="user-form-group">
+                            <label for="addrProvince">Province</label>
+                            <input type="text" id="addrProvince" placeholder="Province" oninput="updatePlaceOrderState()">
+                        </div>
+                        <div class="user-form-group">
+                            <label for="addrPostal">Postal Code</label>
+                            <input type="text" id="addrPostal" placeholder="e.g. 6000" oninput="updatePlaceOrderState()">
+                        </div>
+                    </div>
+
+                    <!-- Location pin picker (Leaflet / OpenStreetMap) -->
+                    <div class="user-form-group">
+                        <div class="user-address-map-header">
+                            <label>Pin Your Exact Location <span class="user-field-optional">(optional, helps the rider find you)</span></label>
+                            <button type="button" class="user-locate-btn" id="locateMeBtn" onclick="locateMeOnMap()">
+                                <i class="fas fa-crosshairs"></i> Use My Location
+                            </button>
+                        </div>
+                        <div class="user-address-map" id="addressMap"></div>
+                        <p class="user-address-coords" id="addressCoords">
+                            <i class="fas fa-map-pin"></i> <span>Tap the map or drag the pin to set your delivery location</span>
+                        </p>
+                    </div>
+
+                    <div class="user-address-form-actions">
+                        <button type="button" class="user-btn-secondary small" id="addressCancelBtn" onclick="cancelAddressEdit()" style="display:none;">
+                            Cancel
+                        </button>
+                        <button type="button" class="user-btn-primary small" id="addressSaveBtn" onclick="saveAddress()">
+                            <i class="fas fa-check"></i> Save Address
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payment Method -->
+            <div class="user-checkout-section">
+                <div class="user-checkout-section-title">
+                    <i class="fas fa-wallet"></i> Payment Method
+                </div>
+                <div class="user-payment-options">
+                    <label class="user-payment-option selected" id="paymentOptionCod" onclick="selectPaymentMethod('cod')">
+                        <input type="radio" name="paymentMethod" value="cod" checked onchange="selectPaymentMethod('cod')">
+                        <span class="user-payment-option-icon cod"><i class="fas fa-money-bill-wave"></i></span>
+                        <span class="user-payment-option-info">
+                            <strong>Cash on Delivery (COD)</strong>
+                            <small>Pay in cash when your order arrives</small>
+                        </span>
+                        <span class="user-payment-option-check"><i class="fas fa-check-circle"></i></span>
+                    </label>
+                    <label class="user-payment-option" id="paymentOptionGcash" onclick="selectPaymentMethod('gcash')">
+                        <input type="radio" name="paymentMethod" value="gcash" onchange="selectPaymentMethod('gcash')">
+                        <span class="user-payment-option-icon gcash"><i class="fas fa-mobile-alt"></i></span>
+                        <span class="user-payment-option-info">
+                            <strong>GCash</strong>
+                            <small>Pay via GCash, verified by our team</small>
+                        </span>
+                        <span class="user-payment-option-check"><i class="fas fa-check-circle"></i></span>
+                    </label>
+                </div>
+
+                <div class="user-form-group" id="gcashReferenceGroup" style="display:none; margin-top:1rem;">
+                    <label for="gcashReferenceInput">GCash Reference Number</label>
+                    <input type="text" id="gcashReferenceInput" placeholder="e.g. 1234567890123" maxlength="50" oninput="updatePlaceOrderState()">
+                    <p class="user-field-hint">
+                        Send payment to our GCash number, then enter the reference number from your receipt.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closePaymentModal()">Cancel</button>
+            <button class="user-btn-primary" id="confirmPaymentBtn" onclick="confirmCheckout()" disabled>
+                <i class="fas fa-check"></i> Place Order
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<script>
+// ============================================
+// PRODUCT DATA - Generated from Server
+// ============================================
+
+const productData = {
+    {% for product in products %}
+    "{{ product.id }}": {
+        id: {{ product.id }},
+        name: "{{ product.name|escape }}",
+        price: {{ product.price }},
+        priceDisplay: "₱{{ "%.2f"|format(product.price) }}",
+        description: "{{ product.description|escape }}",
+        compatibility: "{{ product.compatibility or 'Universal' }}",
+        stock: {{ product.stock_quantity }},
+        category: "{{ product.category }}"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+};
+
+// ============================================
+// STATE
+// ============================================
+
+let currentProductId = null;
+let cartItems = [];
+let cartTotal = 0;
+let cartCount = 0;
+let isCartOpen = false;
+let isAddingToCart = false;
+let isProcessingCheckout = false;
+let unreadNotifications = 0;
+let notificationCheckInterval = null;
+
+// ============================================
+// TOAST NOTIFICATION
+// ============================================
+
+function showUserToast(message, type = 'info', duration = 4000) {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 400px;
+            width: 100%;
+            pointer-events: none;
+        `;
+        document.body.appendChild(container);
+    }
+    
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        pointer-events: auto;
+        background: white;
+        padding: 12px 20px;
+        border-radius: 12px;
+        border-left: 4px solid ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#2563eb'};
+        box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #0f172a;
+        transform: translateX(120%);
+        transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        width: 100%;
+    `;
+    
+    const icons = {
+        'success': 'fa-check-circle',
+        'error': 'fa-exclamation-circle',
+        'warning': 'fa-exclamation-triangle',
+        'info': 'fa-info-circle'
+    };
+    
+    const colors = {
+        'success': '#22c55e',
+        'error': '#ef4444',
+        'warning': '#f59e0b',
+        'info': '#2563eb'
+    };
+    
+    toast.innerHTML = `
+        <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
+        <span style="flex:1;">${message}</span>
+        <button onclick="this.parentElement.remove()" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+    `;
+    
+    container.appendChild(toast);
+    
+    requestAnimationFrame(() => {
+        toast.style.transform = 'translateX(0)';
+    });
+    
+    setTimeout(() => {
+        toast.style.transform = 'translateX(120%)';
+        setTimeout(() => {
+            if (toast.parentElement) toast.remove();
+        }, 400);
+    }, duration);
+}
+
+// ============================================
+// NOTIFICATION FUNCTIONS
+// ============================================
+
+function updateNotificationBadge(count) {
+    const badge = document.getElementById('notifBadge');
+    if (badge) {
+        if (count > 0) {
+            badge.textContent = count;
+            badge.style.display = '';
+            badge.style.background = '#ef4444';
+        } else {
+            badge.textContent = '0';
+            badge.style.display = 'none';
+        }
+    }
+    unreadNotifications = count;
+}
+
+function checkNotifications() {
+    fetch('/api/notifications/unread-count')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.count !== undefined) {
+                updateNotificationBadge(data.count);
+            }
+        })
+        .catch(error => {
+            console.error('Error checking notifications:', error);
+        });
+}
+
+// ============================================
+// PRODUCT FILTERING
+// ============================================
+
+function filterProducts() {
+    const category = document.getElementById('categoryFilter').value;
+    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const sort = document.getElementById('sortFilter').value;
+    const cards = document.querySelectorAll('.user-product-card');
+
+    let visibleCards = Array.from(cards);
+
+    if (category !== 'all') {
+        visibleCards = visibleCards.filter(card => card.dataset.category === category);
+    }
+
+    if (search) {
+        visibleCards = visibleCards.filter(card => {
+            const name = card.dataset.name.toLowerCase();
+            return name.includes(search);
+        });
+    }
+
+    if (sort === 'price-low') {
+        visibleCards.sort((a, b) => parseFloat(a.dataset.price) - parseFloat(b.dataset.price));
+    } else if (sort === 'price-high') {
+        visibleCards.sort((a, b) => parseFloat(b.dataset.price) - parseFloat(a.dataset.price));
+    }
+
+    cards.forEach(card => card.style.display = 'none');
+    visibleCards.forEach(card => card.style.display = '');
+}
+
+// ============================================
+// CART FUNCTIONS
+// ============================================
+
+function toggleCart() {
+    isCartOpen = !isCartOpen;
+    const sidebar = document.getElementById('cartSidebar');
+    const overlay = document.getElementById('cartOverlay');
+    
+    if (isCartOpen) {
+        sidebar.classList.add('open');
+        overlay.classList.add('show');
+        document.body.style.overflow = 'hidden';
+        loadCart();
+    } else {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('show');
+        document.body.style.overflow = '';
+    }
+}
+
+function loadCart() {
+    fetch('/api/cart')
+        .then(response => response.json())
+        .then(data => {
+            cartItems = data.items || [];
+            cartTotal = data.total || 0;
+            cartCount = data.count || 0;
+            renderCart();
+        })
+        .catch(error => {
+            console.error('Error loading cart:', error);
+        });
+}
+
+function renderCart() {
+    const empty = document.getElementById('cartEmpty');
+    const items = document.getElementById('cartItems');
+    const footer = document.getElementById('cartFooter');
+    const total = document.getElementById('cartTotal');
+    const grandTotal = document.getElementById('cartGrandTotal');
+    const badge = document.getElementById('cartBadge');
+    const countDisplay = document.getElementById('cartCountDisplay');
+
+    if (badge) {
+        badge.textContent = cartCount;
+        if (cartCount > 0) {
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+    if (countDisplay) {
+        countDisplay.textContent = cartCount;
+    }
+
+    if (!cartItems || cartItems.length === 0) {
+        empty.style.display = 'block';
+        items.style.display = 'none';
+        footer.style.display = 'none';
+        return;
+    }
+
+    empty.style.display = 'none';
+    items.style.display = 'block';
+    footer.style.display = 'block';
+
+    let html = '';
+    cartItems.forEach(item => {
+        html += `
+            <div class="user-cart-item" data-id="${item.id}" data-product-id="${item.product_id}">
+                <div class="user-cart-item-info">
+                    <h4>${escapeHtml(item.product_name)}</h4>
+                    <div class="user-cart-item-price">₱${parseFloat(item.price || 0).toFixed(2)}</div>
+                </div>
+                <div class="user-cart-item-controls">
+                    <div class="user-cart-item-qty">
+                        <button class="user-qty-btn-sm" onclick="updateCartItem(${item.id}, -1)" ${item.quantity <= 1 ? 'disabled' : ''}>
+                            <i class="fas fa-minus"></i>
+                        </button>
+                        <span>${item.quantity}</span>
+                        <button class="user-qty-btn-sm" onclick="updateCartItem(${item.id}, 1)">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <button class="user-cart-remove" onclick="removeCartItem(${item.id})">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    });
+
+    items.innerHTML = html;
+    total.textContent = `₱${parseFloat(cartTotal).toFixed(2)}`;
+    grandTotal.textContent = `₱${parseFloat(cartTotal).toFixed(2)}`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ============================================
+// ADD TO CART
+// ============================================
+
+function addToCart(productId) {
+    if (isAddingToCart) return;
+    
+    const product = document.querySelector(`.user-product-card[data-id="${productId}"]`);
+    if (!product) {
+        showUserToast('Product not found', 'error');
+        return;
+    }
+    
+    const stock = parseInt(product.dataset.stock || 0);
+    const buyBtn = product.querySelector('.buy-btn');
+    const btnText = buyBtn?.querySelector('.btn-text');
+    const icon = buyBtn?.querySelector('i');
+    
+    if (stock <= 0) {
+        showUserToast('This product is out of stock!', 'error');
+        return;
+    }
+
+    isAddingToCart = true;
+    if (buyBtn) {
+        buyBtn.disabled = true;
+        if (icon) icon.className = 'fas fa-spinner fa-spin';
+        if (btnText) btnText.textContent = 'Adding';
+    }
+
+    fetch('/api/cart/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ product_id: parseInt(productId), quantity: 1 })
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.message || 'Failed to add to cart');
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            showUserToast(data.message || 'Added to cart!', 'success');
+            cartCount = data.cart_count || 0;
+            
+            const badge = document.getElementById('cartBadge');
+            if (badge) {
+                badge.textContent = cartCount;
+                if (cartCount > 0) {
+                    badge.style.display = '';
+                }
+                badge.classList.add('update');
+                setTimeout(() => badge.classList.remove('update'), 300);
+            }
+            const countDisplay = document.getElementById('cartCountDisplay');
+            if (countDisplay) {
+                countDisplay.textContent = cartCount;
+            }
+            
+            const newStock = stock - 1;
+            const stockDisplay = document.getElementById(`stock-${productId}`);
+            if (stockDisplay) {
+                stockDisplay.textContent = newStock;
+            }
+            if (product) {
+                product.dataset.stock = newStock;
+            }
+            
+            const badgeEl = product.querySelector('.user-product-badge');
+            if (newStock <= 0) {
+                if (badgeEl) {
+                    badgeEl.className = 'user-product-badge out';
+                    badgeEl.textContent = 'Out of Stock';
+                }
+                if (buyBtn) {
+                    buyBtn.disabled = true;
+                    if (icon) icon.className = 'fas fa-times-circle';
+                    if (btnText) btnText.textContent = 'Out of Stock';
+                }
+                isAddingToCart = false;
+            } else if (newStock <= 3) {
+                if (badgeEl) {
+                    badgeEl.className = 'user-product-badge sale';
+                    badgeEl.textContent = 'Low Stock';
+                }
+            }
+            
+            if (buyBtn && newStock > 0) {
+                if (icon) icon.className = 'fas fa-check';
+                if (btnText) btnText.textContent = 'Added';
+                buyBtn.classList.add('added');
+                
+                if (!isCartOpen) {
+                    toggleCart();
+                } else {
+                    loadCart();
+                }
+                
+                setTimeout(() => {
+                    if (buyBtn) {
+                        if (icon) icon.className = 'fas fa-cart-plus';
+                        if (btnText) btnText.textContent = 'Add to Cart';
+                        buyBtn.classList.remove('added');
+                        buyBtn.disabled = false;
+                    }
+                    isAddingToCart = false;
+                }, 1500);
+            }
+        } else {
+            showUserToast(data.message || 'Failed to add to cart', 'error');
+            if (buyBtn) {
+                buyBtn.disabled = false;
+                if (icon) icon.className = 'fas fa-cart-plus';
+                if (btnText) btnText.textContent = 'Add to Cart';
+            }
+            isAddingToCart = false;
+        }
+    })
+    .catch(error => {
+        showUserToast(error.message || 'Error adding to cart', 'error');
+        if (buyBtn) {
+            buyBtn.disabled = false;
+            if (icon) icon.className = 'fas fa-cart-plus';
+            if (btnText) btnText.textContent = 'Add to Cart';
+        }
+        isAddingToCart = false;
+    });
+}
+
+// ============================================
+// UPDATE CART ITEM
+// ============================================
+
+function updateCartItem(itemId, change) {
+    const item = cartItems.find(i => i.id === itemId);
+    if (!item) return;
+
+    const newQty = item.quantity + change;
+    if (newQty < 1) {
+        removeCartItem(itemId);
+        return;
+    }
+
+    fetch('/api/cart/update', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ item_id: itemId, quantity: newQty })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadCart();
+            showUserToast('Cart updated', 'success');
+        } else {
+            showUserToast(data.message || 'Error updating cart', 'error');
+        }
+    })
+    .catch(error => {
+        showUserToast('Error updating cart', 'error');
+    });
+}
+
+// ============================================
+// REMOVE CART ITEM - WITH STOCK RESTORATION
+// ============================================
+
+function removeCartItem(itemId) {
+    if (!confirm('Remove this item from cart?')) return;
+
+    const item = cartItems.find(i => i.id === itemId);
+    if (item) {
+        const productCard = document.querySelector(`.user-product-card[data-id="${item.product_id}"]`);
+        if (productCard) {
+            const currentStock = parseInt(productCard.dataset.stock) || 0;
+            const newStock = currentStock + item.quantity;
+            productCard.dataset.stock = newStock;
+            const stockDisplay = document.getElementById(`stock-${item.product_id}`);
+            if (stockDisplay) {
+                stockDisplay.textContent = newStock;
+            }
+            const badge = productCard.querySelector('.user-product-badge');
+            const buyBtn = productCard.querySelector('.buy-btn');
+            const btnText = buyBtn?.querySelector('.btn-text');
+            const icon = buyBtn?.querySelector('i');
+            
+            if (newStock > 0) {
+                if (badge) {
+                    if (newStock <= 3) {
+                        badge.className = 'user-product-badge sale';
+                        badge.textContent = 'Low Stock';
+                    } else {
+                        badge.remove();
+                    }
+                }
+                if (buyBtn) {
+                    buyBtn.disabled = false;
+                    if (icon) icon.className = 'fas fa-cart-plus';
+                    if (btnText) btnText.textContent = 'Add to Cart';
+                }
+            }
+        }
+    }
+
+    fetch(`/api/cart/remove/${itemId}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadCart();
+            showUserToast('Item removed from cart', 'info');
+        } else {
+            showUserToast(data.message || 'Error removing item', 'error');
+        }
+    })
+    .catch(error => {
+        showUserToast('Error removing item', 'error');
+    });
+}
+
+// ============================================
+// CLEAR CART - WITH STOCK RESTORATION
+// ============================================
+
+function clearCart() {
+    if (!confirm('Clear your entire cart?')) return;
+
+    cartItems.forEach(item => {
+        const productCard = document.querySelector(`.user-product-card[data-id="${item.product_id}"]`);
+        if (productCard) {
+            const currentStock = parseInt(productCard.dataset.stock) || 0;
+            productCard.dataset.stock = currentStock + item.quantity;
+            const stockDisplay = document.getElementById(`stock-${item.product_id}`);
+            if (stockDisplay) {
+                stockDisplay.textContent = currentStock + item.quantity;
+            }
+            const badge = productCard.querySelector('.user-product-badge');
+            const buyBtn = productCard.querySelector('.buy-btn');
+            const btnText = buyBtn?.querySelector('.btn-text');
+            const icon = buyBtn?.querySelector('i');
+            
+            if (currentStock + item.quantity > 0) {
+                if (badge) {
+                    if (currentStock + item.quantity <= 3) {
+                        badge.className = 'user-product-badge sale';
+                        badge.textContent = 'Low Stock';
+                    } else {
+                        badge.remove();
+                    }
+                }
+                if (buyBtn) {
+                    buyBtn.disabled = false;
+                    if (icon) icon.className = 'fas fa-cart-plus';
+                    if (btnText) btnText.textContent = 'Add to Cart';
+                }
+            }
+        }
+    });
+
+    fetch('/api/cart/clear', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadCart();
+            showUserToast('Cart cleared', 'info');
+        }
+    })
+    .catch(error => {
+        showUserToast('Error clearing cart', 'error');
+    });
+}
+
+// ============================================
+// CHECKOUT - WITH STOCK VALIDATION
+// ============================================
+
+let savedAddress = null;      // last known-good address on the user's account
+let addressConfirmed = false; // true once a complete address is ready to be used for this order
+
+function checkout() {
+    if (isProcessingCheckout) return;
+
+    if (!cartItems || cartItems.length === 0) {
+        showUserToast('Your cart is empty', 'error');
+        return;
+    }
+
+    document.getElementById('paymentModalTotal').textContent = document.getElementById('cartGrandTotal').textContent;
+
+    selectPaymentMethod('cod');
+    document.getElementById('gcashReferenceInput').value = '';
+
+    // Show the modal first so the address form (and its map container) has
+    // real dimensions before Leaflet initializes inside initCheckoutAddress().
+    document.getElementById('paymentModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    initCheckoutAddress();
+}
+
+function closePaymentModal() {
+    document.getElementById('paymentModal').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+// ============================================
+// CHECKOUT - DELIVERY ADDRESS
+// ============================================
+
+function initCheckoutAddress() {
+    let data = {};
+    try {
+        data = JSON.parse(document.getElementById('userAddressData').textContent || '{}');
+    } catch (e) {
+        data = {};
+    }
+    savedAddress = data;
+
+    const complete = !!(data.full_name && data.phone && data.address && data.city && data.province && data.postal_code);
+    addressConfirmed = complete;
+
+    const view = document.getElementById('addressView');
+    const missing = document.getElementById('addressMissingNotice');
+    const form = document.getElementById('addressEditForm');
+    const cancelBtn = document.getElementById('addressCancelBtn');
+
+    if (complete) {
+        renderAddressView(data);
+        view.style.display = 'flex';
+        missing.style.display = 'none';
+        form.style.display = 'none';
+    } else {
+        view.style.display = 'none';
+        missing.style.display = 'flex';
+        form.style.display = 'block';
+        cancelBtn.style.display = 'none';
+        fillAddressForm(data);
+        initAddressMap(data.latitude, data.longitude);
+    }
+
+    updatePlaceOrderState();
+}
+
+function renderAddressView(data) {
+    document.getElementById('addrViewName').textContent = data.full_name;
+    document.getElementById('addrViewLine').textContent =
+        [data.address, data.city, data.province].filter(Boolean).join(', ') +
+        (data.postal_code ? ' ' + data.postal_code : '');
+    document.getElementById('addrViewPhone').textContent = data.phone;
+
+    const pinNote = document.getElementById('addrViewPin');
+    const hasPin = typeof data.latitude === 'number' && typeof data.longitude === 'number';
+    if (pinNote) pinNote.style.display = hasPin ? 'flex' : 'none';
+}
+
+function fillAddressForm(data) {
+    document.getElementById('addrFullName').value = data.full_name || '';
+    document.getElementById('addrPhone').value = data.phone || '';
+    document.getElementById('addrLine').value = data.address || '';
+    document.getElementById('addrCity').value = data.city || '';
+    document.getElementById('addrProvince').value = data.province || '';
+    document.getElementById('addrPostal').value = data.postal_code || '';
+    pickedLat = (data.latitude !== undefined && data.latitude !== null) ? data.latitude : null;
+    pickedLng = (data.longitude !== undefined && data.longitude !== null) ? data.longitude : null;
+}
+
+function showAddressEditForm() {
+    fillAddressForm(savedAddress || {});
+    document.getElementById('addressView').style.display = 'none';
+    document.getElementById('addressEditForm').style.display = 'block';
+    // Only offer "Cancel" if there's an existing saved address to go back to
+    document.getElementById('addressCancelBtn').style.display =
+        (savedAddress && savedAddress.address) ? 'inline-flex' : 'none';
+    addressConfirmed = false;
+    initAddressMap(pickedLat, pickedLng); // defined in user.js
+    updatePlaceOrderState();
+}
+
+function cancelAddressEdit() {
+    if (!savedAddress || !savedAddress.address) return;
+    document.getElementById('addressEditForm').style.display = 'none';
+    document.getElementById('addressView').style.display = 'flex';
+    addressConfirmed = true;
+    updatePlaceOrderState();
+}
+
+function saveAddress() {
+    const full_name = document.getElementById('addrFullName').value.trim();
+    const phone = document.getElementById('addrPhone').value.trim();
+    const address = document.getElementById('addrLine').value.trim();
+    const city = document.getElementById('addrCity').value.trim();
+    const province = document.getElementById('addrProvince').value.trim();
+    const postal_code = document.getElementById('addrPostal').value.trim();
+
+    if (!full_name || !phone || !address || !city || !province || !postal_code) {
+        showUserToast('Please fill in all delivery address fields', 'error');
+        return;
+    }
+
+    const saveBtn = document.getElementById('addressSaveBtn');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+    fetch('/api/user/address', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            full_name, phone, address, city, province, postal_code,
+            latitude: pickedLat, longitude: pickedLng
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            savedAddress = data.address;
+            renderAddressView(savedAddress);
+            document.getElementById('addressEditForm').style.display = 'none';
+            document.getElementById('addressView').style.display = 'flex';
+            document.getElementById('addressMissingNotice').style.display = 'none';
+            document.getElementById('addressCancelBtn').style.display = 'inline-flex';
+            addressConfirmed = true;
+            showUserToast('Delivery address saved', 'success');
+        } else {
+            showUserToast(data.message || 'Could not save address', 'error');
+        }
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-check"></i> Save Address';
+        updatePlaceOrderState();
+    })
+    .catch(() => {
+        showUserToast('Error saving address', 'error');
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-check"></i> Save Address';
+    });
+}
+
+// ============================================
+// CHECKOUT - PAYMENT METHOD
+// ============================================
+
+function selectPaymentMethod(method) {
+    const input = document.querySelector(`input[name="paymentMethod"][value="${method}"]`);
+    if (input) input.checked = true;
+    document.getElementById('paymentOptionCod').classList.toggle('selected', method === 'cod');
+    document.getElementById('paymentOptionGcash').classList.toggle('selected', method === 'gcash');
+    document.getElementById('gcashReferenceGroup').style.display = (method === 'gcash') ? 'block' : 'none';
+    updatePlaceOrderState();
+}
+
+function updatePlaceOrderState() {
+    const btn = document.getElementById('confirmPaymentBtn');
+    if (!btn) return;
+    const checked = document.querySelector('input[name="paymentMethod"]:checked');
+    const method = checked ? checked.value : null;
+    const gcashRef = document.getElementById('gcashReferenceInput').value.trim();
+    const ready = addressConfirmed && !!method && (method !== 'gcash' || gcashRef.length > 0);
+    btn.disabled = !ready;
+}
+
+function confirmCheckout() {
+    if (isProcessingCheckout) return;
+
+    if (!addressConfirmed) {
+        showUserToast('Please add your delivery address to continue', 'error');
+        showAddressEditForm();
+        return;
+    }
+
+    const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked').value;
+    const gcashReference = document.getElementById('gcashReferenceInput').value.trim();
+
+    if (paymentMethod === 'gcash' && !gcashReference) {
+        showUserToast('Please enter your GCash reference number', 'error');
+        return;
+    }
+
+    isProcessingCheckout = true;
+    const confirmBtn = document.getElementById('confirmPaymentBtn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    }
+
+    fetch('/api/cart/checkout', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            payment_method: paymentMethod,
+            gcash_reference: gcashReference
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Cart is now empty server-side (checkout deleted the cart items
+            // and created the order) - reflect that immediately instead of
+            // leaving stale items showing in the sidebar.
+            cartItems = [];
+            cartTotal = 0;
+            cartCount = 0;
+            renderCart();
+
+            showUserToast(
+                data.order_number
+                    ? `Order ${data.order_number} placed! Taking you to My Orders...`
+                    : (data.message || 'Order placed successfully!'),
+                'success'
+            );
+            closePaymentModal();
+
+            setTimeout(() => {
+                if (isCartOpen) toggleCart();
+            }, 600);
+            setTimeout(() => {
+                const ordersUrl = "{{ url_for('user_orders') }}";
+                window.location.href = data.order_number
+                    ? `${ordersUrl}?placed=${encodeURIComponent(data.order_number)}`
+                    : ordersUrl;
+            }, 900);
+        } else {
+            if (data.error === 'address_required') {
+                showAddressEditForm();
+            }
+            showUserToast(data.message || 'Checkout failed', 'error');
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = '<i class="fas fa-check"></i> Place Order';
+            }
+            isProcessingCheckout = false;
+            updatePlaceOrderState();
+            return;
+        }
+        if (confirmBtn) {
+            confirmBtn.innerHTML = '<i class="fas fa-check"></i> Place Order';
+        }
+        isProcessingCheckout = false;
+    })
+    .catch(error => {
+        showUserToast('Error during checkout', 'error');
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="fas fa-check"></i> Place Order';
+        }
+        isProcessingCheckout = false;
+        updatePlaceOrderState();
+    });
+}
+
+// ============================================
+// PRODUCT MODAL
+// ============================================
+
+function showProductDetails(id) {
+    const product = productData[id];
+    if (!product) {
+        showUserToast('Product not found', 'error');
+        return;
+    }
+
+    currentProductId = id;
+
+    document.getElementById('modalTitle').textContent = product.name;
+    document.getElementById('modalName').textContent = product.name;
+    document.getElementById('modalPrice').textContent = product.priceDisplay;
+    document.getElementById('modalDesc').textContent = product.description || 'No description available';
+    document.getElementById('modalCompat').textContent = product.compatibility || 'Universal';
+    document.getElementById('modalStock').textContent = product.stock;
+    document.getElementById('modalQty').value = 1;
+
+    const iconMap = {
+        'memory': 'fa-memory',
+        'storage': 'fa-hdd',
+        'battery': 'fa-battery-three-quarters',
+        'accessory': 'fa-plug',
+        'cpu': 'fa-microchip',
+        'gpu': 'fa-gamepad'
+    };
+    document.getElementById('modalIcon').className = `fas ${iconMap[product.category] || 'fa-box'}`;
+
+    document.getElementById('productModal').classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeProductModal() {
+    document.getElementById('productModal').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+function changeModalQty(change) {
+    const input = document.getElementById('modalQty');
+    const product = productData[currentProductId];
+    if (!product) return;
+    
+    let val = parseInt(input.value) + change;
+    if (val < 1) val = 1;
+    if (val > product.stock) val = product.stock;
+    input.value = val;
+}
+
+function buyProductFromModal() {
+    if (!currentProductId) return;
+    if (isAddingToCart) return;
+    
+    const product = productData[currentProductId];
+    if (!product) return;
+    
+    const qty = parseInt(document.getElementById('modalQty').value) || 1;
+    const modalBtn = document.querySelector('.user-modal-actions .user-btn-primary');
+    const originalHtml = modalBtn ? modalBtn.innerHTML : '';
+    
+    if (qty > product.stock) {
+        showUserToast(`Only ${product.stock} units available`, 'error');
+        return;
+    }
+
+    isAddingToCart = true;
+    if (modalBtn) {
+        modalBtn.disabled = true;
+        modalBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding';
+    }
+
+    fetch('/api/cart/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ product_id: parseInt(currentProductId), quantity: qty })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showUserToast(data.message || 'Added to cart!', 'success');
+            cartCount = data.cart_count || 0;
+            
+            const badge = document.getElementById('cartBadge');
+            if (badge) {
+                badge.textContent = cartCount;
+                if (cartCount > 0) {
+                    badge.style.display = '';
+                }
+            }
+            const countDisplay = document.getElementById('cartCountDisplay');
+            if (countDisplay) {
+                countDisplay.textContent = cartCount;
+            }
+            
+            const newStock = product.stock - qty;
+            product.stock = newStock;
+            
+            const productCard = document.querySelector(`.user-product-card[data-id="${currentProductId}"]`);
+            const stockDisplay = document.getElementById(`stock-${currentProductId}`);
+            if (productCard && stockDisplay) {
+                productCard.dataset.stock = newStock;
+                stockDisplay.textContent = newStock;
+                
+                const badgeEl = productCard.querySelector('.user-product-badge');
+                const buyBtn = productCard.querySelector('.buy-btn');
+                const btnText = buyBtn?.querySelector('.btn-text');
+                const icon = buyBtn?.querySelector('i');
+                
+                if (newStock <= 0) {
+                    if (badgeEl) {
+                        badgeEl.className = 'user-product-badge out';
+                        badgeEl.textContent = 'Out of Stock';
+                    }
+                    if (buyBtn) {
+                        buyBtn.disabled = true;
+                        if (icon) icon.className = 'fas fa-times-circle';
+                        if (btnText) btnText.textContent = 'Out of Stock';
+                    }
+                } else if (newStock <= 3) {
+                    if (badgeEl) {
+                        badgeEl.className = 'user-product-badge sale';
+                        badgeEl.textContent = 'Low Stock';
+                    }
+                }
+            }
+            
+            document.getElementById('modalStock').textContent = newStock;
+            
+            if (modalBtn) {
+                modalBtn.innerHTML = '<i class="fas fa-check"></i> Added';
+                modalBtn.classList.add('added');
+                
+                if (!isCartOpen) {
+                    toggleCart();
+                } else {
+                    loadCart();
+                }
+                
+                setTimeout(() => {
+                    if (modalBtn) {
+                        modalBtn.innerHTML = originalHtml;
+                        modalBtn.disabled = false;
+                        modalBtn.classList.remove('added');
+                    }
+                    isAddingToCart = false;
+                }, 1500);
+            }
+            
+            closeProductModal();
+        } else {
+            showUserToast(data.message || 'Failed to add to cart', 'error');
+            if (modalBtn) {
+                modalBtn.innerHTML = originalHtml;
+                modalBtn.disabled = false;
+            }
+            isAddingToCart = false;
+        }
+    })
+    .catch(error => {
+        showUserToast('Error adding to cart', 'error');
+        if (modalBtn) {
+            modalBtn.innerHTML = originalHtml;
+            modalBtn.disabled = false;
+        }
+        isAddingToCart = false;
+    });
+}
+
+// ============================================
+// INITIALIZATION
+// ============================================
+
+document.addEventListener('DOMContentLoaded', function() {
+    filterProducts();
+    
+    // Hide notification badge if zero
+    const notifBadge = document.getElementById('notifBadge');
+    if (notifBadge && parseInt(notifBadge.textContent) === 0) {
+        notifBadge.style.display = 'none';
+    } else if (notifBadge) {
+        notifBadge.style.display = '';
+        notifBadge.style.background = '#ef4444';
+    }
+    
+    // Hide cart badge if zero
+    const cartBadge = document.getElementById('cartBadge');
+    if (cartBadge && parseInt(cartBadge.textContent) === 0) {
+        cartBadge.style.display = 'none';
+    }
+    
+    // Load cart count
+    fetch('/api/cart')
+        .then(response => response.json())
+        .then(data => {
+            cartCount = data.count || 0;
+            const badge = document.getElementById('cartBadge');
+            if (badge) {
+                badge.textContent = cartCount;
+                if (cartCount > 0) {
+                    badge.style.display = '';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+            const countDisplay = document.getElementById('cartCountDisplay');
+            if (countDisplay) {
+                countDisplay.textContent = cartCount;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading cart:', error);
+        });
+    
+    // Start notification checking
+    checkNotifications();
+    notificationCheckInterval = setInterval(checkNotifications, 30000);
+});
+
+// ============================================
+// EVENT LISTENERS
+// ============================================
+
+document.getElementById('cartOverlay').addEventListener('click', function() {
+    if (isCartOpen) toggleCart();
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        if (isCartOpen) toggleCart();
+        closeProductModal();
+        closePaymentModal();
+    }
+});
+
+document.querySelectorAll('.flash-close').forEach(btn => {
+    btn.addEventListener('click', function() {
+        this.parentElement.remove();
+    });
+});
+
+setTimeout(() => {
+    document.querySelectorAll('.flash-message').forEach(msg => {
+        msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+        msg.style.opacity = '0';
+        msg.style.transform = 'translateY(-20px)';
+        setTimeout(() => {
+            if (msg.parentElement) msg.remove();
+        }, 500);
+    });
+}, 5000);
+
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        window.location.href = '/admin/login';
+    }
+});
+
+console.log('✅ Shop system initialized');
+console.log('📬 Unread notifications:', unreadNotifications);
+</script>
+{% endblock %}

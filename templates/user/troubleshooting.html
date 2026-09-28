@@ -1,0 +1,347 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Troubleshooting{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Troubleshooting Assistant</h1>
+        <p>AI-Powered diagnostic system for your computer issues</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+        </a>
+        <a href="{{ url_for('support') }}" class="user-icon-btn" title="Get support">
+            <i class="fas fa-headset"></i>
+        </a>
+    </div>
+</div>
+
+<!-- Troubleshooting Flow -->
+<div class="user-ts-container">
+
+    <!-- Step 1: Device Type -->
+    <div class="user-ts-step" id="tsStep1">
+        <div class="user-ts-header">
+            <span class="user-ts-number">01</span>
+            <h3>Select Your Device Type</h3>
+            <p class="user-ts-sub">Choose the device you're having trouble with</p>
+        </div>
+        <div class="user-ts-device-grid">
+            <button class="user-ts-device" data-device="desktop" onclick="selectDevice(this)">
+                <i class="fas fa-desktop"></i>
+                <span>Desktop</span>
+            </button>
+            <button class="user-ts-device" data-device="laptop" onclick="selectDevice(this)">
+                <i class="fas fa-laptop"></i>
+                <span>Laptop</span>
+            </button>
+            <button class="user-ts-device" data-device="mac" onclick="selectDevice(this)">
+                <i class="fab fa-apple"></i>
+                <span>Mac</span>
+            </button>
+            <button class="user-ts-device" data-device="chromebook" onclick="selectDevice(this)">
+                <i class="fab fa-chrome"></i>
+                <span>Chromebook</span>
+            </button>
+            <button class="user-ts-device" data-device="tablet" onclick="selectDevice(this)">
+                <i class="fas fa-tablet-alt"></i>
+                <span>Tablet</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Step 2: Problem Category -->
+    <div class="user-ts-step" id="tsStep2" style="display:none;">
+        <div class="user-ts-header">
+            <span class="user-ts-number">02</span>
+            <h3>What seems to be the problem?</h3>
+            <p class="user-ts-sub">Select the category that best describes your issue</p>
+        </div>
+        <div class="user-ts-problem-grid">
+            <button class="user-ts-problem" data-problem="startup" onclick="selectProblem(this)">
+                <i class="fas fa-power-off"></i>
+                <span>Won't Start / Boot</span>
+            </button>
+            <button class="user-ts-problem" data-problem="slow" onclick="selectProblem(this)">
+                <i class="fas fa-tachometer-alt"></i>
+                <span>Slow Performance</span>
+            </button>
+            <button class="user-ts-problem" data-problem="virus" onclick="selectProblem(this)">
+                <i class="fas fa-shield-virus"></i>
+                <span>Virus / Malware</span>
+            </button>
+            <button class="user-ts-problem" data-problem="screen" onclick="selectProblem(this)">
+                <i class="fas fa-desktop"></i>
+                <span>Screen / Display</span>
+            </button>
+            <button class="user-ts-problem" data-problem="internet" onclick="selectProblem(this)">
+                <i class="fas fa-wifi"></i>
+                <span>Internet / Network</span>
+            </button>
+            <button class="user-ts-problem" data-problem="software" onclick="selectProblem(this)">
+                <i class="fas fa-code"></i>
+                <span>Software Crash</span>
+            </button>
+            <button class="user-ts-problem" data-problem="hardware" onclick="selectProblem(this)">
+                <i class="fas fa-microchip"></i>
+                <span>Hardware Failure</span>
+            </button>
+            <button class="user-ts-problem" data-problem="other" onclick="selectProblem(this)">
+                <i class="fas fa-question-circle"></i>
+                <span>Other / Not Sure</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Step 3: Detailed Description -->
+    <div class="user-ts-step" id="tsStep3" style="display:none;">
+        <div class="user-ts-header">
+            <span class="user-ts-number">03</span>
+            <h3>Describe Your Issue</h3>
+            <p class="user-ts-sub">Provide more details about the problem you're experiencing</p>
+        </div>
+        <div class="user-ts-description">
+            <div class="user-ts-selected">
+                <div class="user-ts-chip">
+                    <i class="fas fa-check-circle" style="color:var(--success);"></i>
+                    <span class="user-ts-chip-label">Device:</span>
+                    <span id="tsDeviceDisplay" class="user-ts-chip-value">-</span>
+                </div>
+                <div class="user-ts-chip">
+                    <i class="fas fa-check-circle" style="color:var(--success);"></i>
+                    <span class="user-ts-chip-label">Issue Type:</span>
+                    <span id="tsProblemDisplay" class="user-ts-chip-value">-</span>
+                </div>
+            </div>
+            <div class="user-form-group">
+                <label for="tsDescription">Describe your issue in detail</label>
+                <textarea id="tsDescription" placeholder="E.g., My laptop won't turn on at all, no lights, no sound..." rows="5" oninput="updateCharCount()"></textarea>
+                <div class="user-ts-char-counter">
+                    <span id="tsCharCount">0</span> / 500
+                </div>
+            </div>
+            <button class="user-ts-analyze" id="analyzeBtn" onclick="analyzeProblem()">
+                <i class="fas fa-robot"></i> Analyze Problem
+            </button>
+        </div>
+    </div>
+
+    <!-- Step 4: Results -->
+    <div class="user-ts-step" id="tsStep4" style="display:none;">
+        <div class="user-ts-header">
+            <span class="user-ts-number">04</span>
+            <h3>Diagnosis Results</h3>
+            <p class="user-ts-sub">Here's what our system found based on your inputs</p>
+        </div>
+        <div class="user-ts-results" id="tsResults">
+            <!-- Results will be inserted here -->
+        </div>
+        <div class="user-ts-actions">
+            <button class="user-btn-secondary" onclick="restartTroubleshooting()">
+                <i class="fas fa-undo"></i> Start Over
+            </button>
+            <button class="user-btn-primary" onclick="bookRepair()">
+                <i class="fas fa-calendar-check"></i> Book a Repair
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let userSelections = {
+        device: null,
+        problem: null,
+        description: ''
+    };
+
+    function selectDevice(el) {
+        document.querySelectorAll('.user-ts-device').forEach(b => b.classList.remove('selected'));
+        el.classList.add('selected');
+        userSelections.device = el.dataset.device;
+        document.getElementById('tsDeviceDisplay').textContent = el.querySelector('span').textContent;
+        document.getElementById('tsStep2').style.display = 'block';
+        document.getElementById('tsStep2').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function selectProblem(el) {
+        document.querySelectorAll('.user-ts-problem').forEach(b => b.classList.remove('selected'));
+        el.classList.add('selected');
+        userSelections.problem = el.dataset.problem;
+        document.getElementById('tsProblemDisplay').textContent = el.querySelector('span').textContent;
+        document.getElementById('tsStep3').style.display = 'block';
+        document.getElementById('tsStep3').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function updateCharCount() {
+        const text = document.getElementById('tsDescription').value;
+        const count = text.length;
+        document.getElementById('tsCharCount').textContent = count;
+        userSelections.description = text;
+    }
+
+    function analyzeProblem() {
+        const description = document.getElementById('tsDescription').value.trim();
+        if (description.length < 5) {
+            alert('Please provide a more detailed description of your issue (minimum 5 characters).');
+            return;
+        }
+
+        userSelections.description = description;
+
+        const diagnosis = performDiagnosis();
+        displayResults(diagnosis);
+        document.getElementById('tsStep4').style.display = 'block';
+        document.getElementById('tsStep4').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function performDiagnosis() {
+        const device = userSelections.device || 'Unknown';
+        const problem = userSelections.problem || 'Unknown';
+        const description = userSelections.description || '';
+
+        const diagnosisMap = {
+            'startup': {
+                possible: 'Power supply failure, motherboard issue, or boot configuration problem.',
+                solution: 'Check power connections. Try booting in Safe Mode. If issue persists, consult a technician.'
+            },
+            'slow': {
+                possible: 'Insufficient RAM, fragmented storage, too many startup programs, or malware.',
+                solution: 'Close unused programs. Run disk cleanup. Scan for malware. Consider hardware upgrades.'
+            },
+            'virus': {
+                possible: 'Malware infection, trojan, or ransomware.',
+                solution: 'Run a full system scan with updated antivirus. Boot into Safe Mode and run removal tools.'
+            },
+            'screen': {
+                possible: 'Display cable issue, graphics card failure, or physical damage.',
+                solution: 'Connect to external display. Update graphics drivers. If physically damaged, screen replacement needed.'
+            },
+            'internet': {
+                possible: 'Network adapter driver issue, router problem, or configuration error.',
+                solution: 'Restart router. Update network drivers. Run network troubleshooter.'
+            },
+            'software': {
+                possible: 'Corrupted system files, incompatible software, or driver conflicts.',
+                solution: 'Run System File Checker. Update drivers. Perform system restore.'
+            },
+            'hardware': {
+                possible: 'Failing hard drive, overheating, or faulty component.',
+                solution: 'Run hardware diagnostics. Check temperatures. Backup important data immediately.'
+            },
+            'other': {
+                possible: 'We need more information to diagnose the problem.',
+                solution: 'Please provide more details. A technician may need to inspect the device.'
+            }
+        };
+
+        let result = diagnosisMap[problem] || diagnosisMap['other'];
+        
+        // Check for keywords in description for better matching
+        const keywords = {
+            'crash': 'Software Crash',
+            'freeze': 'Software Crash',
+            'blue screen': 'Software Crash',
+            'no power': 'Startup',
+            'not charging': 'Startup',
+            'overheat': 'Hardware',
+            'noise': 'Hardware',
+            'display': 'Screen',
+            'keyboard': 'Hardware',
+            'trackpad': 'Hardware',
+            'wifi': 'Internet',
+            'bluetooth': 'Internet'
+        };
+
+        for (const [keyword, mappedProblem] of Object.entries(keywords)) {
+            if (description.toLowerCase().includes(keyword) && problem !== mappedProblem.toLowerCase().replace(' ', '')) {
+                const mappedResult = diagnosisMap[mappedProblem.toLowerCase().replace(' ', '')];
+                if (mappedResult) {
+                    result = {
+                        possible: `We also detected "${keyword}" in your description. ${mappedResult.possible}`,
+                        solution: mappedResult.solution
+                    };
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    function displayResults(diagnosis) {
+        const device = userSelections.device || 'Unknown';
+        const problem = userSelections.problem || 'Unknown';
+        const deviceName = device.charAt(0).toUpperCase() + device.slice(1);
+        const problemEl = document.querySelector(`.user-ts-problem[data-problem="${problem}"]`);
+        const problemName = problemEl ? problemEl.querySelector('span').textContent : 'Unknown Issue';
+
+        const isUnknown = problem === 'other';
+
+        const resultsHTML = `
+            <div class="user-ts-result-summary">
+                <div class="user-ts-result-item">
+                    <span class="user-ts-result-label">Device:</span>
+                    <span class="user-ts-result-value">${deviceName}</span>
+                </div>
+                <div class="user-ts-result-item">
+                    <span class="user-ts-result-label">Issue Category:</span>
+                    <span class="user-ts-result-value">${problemName}</span>
+                </div>
+                <div class="user-ts-result-item">
+                    <span class="user-ts-result-label">Issue Description:</span>
+                    <span class="user-ts-result-value">${userSelections.description}</span>
+                </div>
+            </div>
+            <div class="user-ts-diagnosis">
+                <div class="user-ts-diagnosis-section">
+                    <h4><i class="fas fa-search"></i> Possible Cause</h4>
+                    <p>${diagnosis.possible}</p>
+                </div>
+                <div class="user-ts-diagnosis-section">
+                    <h4><i class="fas fa-tools"></i> Recommended Solution</h4>
+                    <p>${diagnosis.solution}</p>
+                </div>
+                ${isUnknown ? `
+                <div class="user-ts-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>This issue may require professional assistance. We recommend booking a repair with our certified technicians.</p>
+                </div>` : ''}
+                <div class="user-ts-confidence ${isUnknown ? 'low' : ''}">
+                    <i class="fas ${isUnknown ? 'fa-exclamation-circle' : 'fa-check-circle'}"></i>
+                    <p>Confidence: <strong>${isUnknown ? 'Low' : 'High'}</strong> ${isUnknown ? '- Please consult a technician' : '- Based on our knowledge base'}</p>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('tsResults').innerHTML = resultsHTML;
+    }
+
+    function restartTroubleshooting() {
+        if (confirm('Are you sure you want to start over? All your inputs will be cleared.')) {
+            userSelections = { device: null, problem: null, description: '' };
+            document.querySelectorAll('.user-ts-device').forEach(b => b.classList.remove('selected'));
+            document.querySelectorAll('.user-ts-problem').forEach(b => b.classList.remove('selected'));
+            document.getElementById('tsDescription').value = '';
+            document.getElementById('tsCharCount').textContent = '0';
+            document.getElementById('tsDeviceDisplay').textContent = '-';
+            document.getElementById('tsProblemDisplay').textContent = '-';
+            document.getElementById('tsStep2').style.display = 'none';
+            document.getElementById('tsStep3').style.display = 'none';
+            document.getElementById('tsStep4').style.display = 'none';
+            document.getElementById('tsStep1').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
+    function bookRepair() {
+        const device = userSelections.device || 'Unknown';
+        const problem = userSelections.problem || 'Unknown';
+        const description = userSelections.description || 'No description provided';
+        alert(`Booking a repair with the following details:\n\nDevice: ${device}\nIssue: ${problem}\nDescription: ${description}\n\nYou will be redirected to the booking page.`);
+        window.location.href = "{{ url_for('request_service') }}";
+    }
+</script>
+{% endblock %}

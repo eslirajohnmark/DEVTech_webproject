@@ -1,0 +1,126 @@
+{% extends 'base/technician_base.html' %}
+{% set page_module = 'registration' %}
+
+{% block title %}Technician Registration{% endblock %}
+{% block meta_page %}registration{% endblock %}
+{% block meta_title %}Create Account{% endblock %}
+{% block body_class %}tech-login-page{% endblock %}
+
+{% block body %}
+<main class="tech-login-card tech-login-card--wide">
+    <div class="tech-login-brand">
+        <div class="tech-login-mark"><i class="fas fa-user-plus"></i></div>
+        <h1>DEV<span>Tech</span></h1>
+        <p>Create your technician account</p>
+    </div>
+
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}
+    <div class="tech-login-error is-shown">
+        <i class="fas fa-circle-exclamation"></i>
+        <span>{{ messages[0] }}</span>
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <div class="tech-login-error" id="formError">
+        <i class="fas fa-circle-exclamation"></i>
+        <span id="formErrorText"></span>
+    </div>
+    <div class="tech-login-success" id="formSuccess">
+        <i class="fas fa-circle-check"></i>
+        <span id="formSuccessText"></span>
+    </div>
+
+    <form id="registerForm" autocomplete="off" novalidate>
+        <div class="tech-field">
+            <label class="tech-label" for="regFullname">
+                Full Name <span class="req">*</span></label>
+            <input class="tech-input" id="regFullname" type="text"
+                   placeholder="e.g. Juan Dela Cruz" value="{{ form.fullname or '' }}" />
+            <p class="tech-error" id="errFullname">Enter your complete name.</p>
+        </div>
+
+        <div class="tech-field">
+            <label class="tech-label" for="regEmail">
+                Email Address <span class="req">*</span></label>
+            <input class="tech-input" id="regEmail" type="email"
+                   placeholder="juan@email.com" value="{{ form.email or '' }}" />
+            <p class="tech-error" id="errEmail">Enter a valid email address.</p>
+        </div>
+
+        <div class="tech-field">
+            <label class="tech-label" for="regStaffId">
+                Staff / Tech ID Number <span class="req">*</span></label>
+            <input class="tech-input tech-input--mono" id="regStaffId"
+                   type="text" placeholder="TECH-0002" maxlength="12"
+                   value="{{ form.staffId or '' }}" />
+            <p class="tech-hint">Format: <code>TECH-0001</code>.</p>
+            <p class="tech-error" id="errStaffId">Use the format TECH-0001.</p>
+        </div>
+
+        <div class="tech-grid-2">
+            <div class="tech-field">
+                <label class="tech-label" for="regGender">
+                    Gender <span class="req">*</span></label>
+                <select class="tech-select" id="regGender" style="width:100%;">
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                </select>
+                <p class="tech-error" id="errGender">Select a gender.</p>
+            </div>
+            <div class="tech-field">
+                <label class="tech-label" for="regDob">
+                    Date of Birth <span class="req">*</span></label>
+                <input class="tech-input" id="regDob" type="date" value="{{ form.dob or '' }}" />
+                <p class="tech-error" id="errDob">You must be at least 18 years old.</p>
+            </div>
+        </div>
+
+        <div class="tech-field">
+            <label class="tech-label" for="regPassword">
+                Password <span class="req">*</span></label>
+            <div class="tech-password-wrap">
+                <input class="tech-input" id="regPassword" type="password"
+                       placeholder="At least 8 characters" />
+                <button type="button" class="tech-password-toggle"
+                        data-target="regPassword"><i class="fas fa-eye"></i></button>
+            </div>
+            <div class="tech-pw-meter" id="pwMeter">
+                <div class="tech-pw-bar"><span></span></div>
+                <span class="tech-pw-label" id="pwLabel">Enter a password</span>
+            </div>
+            <p class="tech-error" id="errPassword">At least 8 chars with a letter and a number.</p>
+        </div>
+
+        <div class="tech-field">
+            <label class="tech-label" for="regPassword2">
+                Confirm Password <span class="req">*</span></label>
+            <div class="tech-password-wrap">
+                <input class="tech-input" id="regPassword2" type="password" />
+                <button type="button" class="tech-password-toggle"
+                        data-target="regPassword2"><i class="fas fa-eye"></i></button>
+            </div>
+            <p class="tech-error" id="errPassword2">Passwords do not match.</p>
+        </div>
+
+        <label class="tech-check" style="margin-bottom:1.1rem;">
+            <input type="checkbox" id="regTerms" />
+            <span>I confirm the information above is correct.</span>
+        </label>
+        <p class="tech-error" id="errTerms" style="margin-top:-0.8rem;margin-bottom:0.9rem;">
+            You must agree before creating an account.</p>
+
+        <button type="submit" class="tech-btn tech-btn--primary tech-btn--wide" id="createBtn">
+            <i class="fas fa-user-plus"></i> Create Account
+        </button>
+    </form>
+
+    <div class="tech-login-note">
+        Already have an account?
+        <a href="{{ url_for('technician.login') }}" style="color:var(--t-accent);font-weight:600;">Sign in here</a>
+    </div>
+</main>
+{% endblock %}

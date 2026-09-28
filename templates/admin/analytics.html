@@ -1,0 +1,933 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Analytics Dashboard{% endblock %}
+
+{% block extra_css %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Analytics Dashboard</h1>
+        <p>Comprehensive insights and performance metrics</p>
+    </div>
+    <div class="admin-top-actions">
+        <div class="admin-date-range">
+            <i class="fas fa-calendar-alt"></i>
+            <select id="dateRange" onchange="updateAnalytics()" class="admin-filter-select">
+                <option value="7d" {% if date_range == '7d' %}selected{% endif %}>Last 7 Days</option>
+                <option value="30d" {% if date_range == '30d' %}selected{% endif %}>Last 30 Days</option>
+                <option value="90d" {% if date_range == '90d' %}selected{% endif %}>Last 90 Days</option>
+                <option value="1y" {% if date_range == '1y' %}selected{% endif %}>Last Year</option>
+            </select>
+        </div>
+        <button class="admin-icon-btn" onclick="refreshAnalytics()" title="Refresh data">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Key Metrics -->
+<div class="admin-analytics-metrics">
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-dollar-sign"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">₱{{ "%.2f"|format(total_revenue) }}</span>
+            <span class="admin-metric-label">Total Revenue</span>
+        </div>
+        <span class="admin-metric-trend {% if revenue_growth_percent > 0 %}up{% elif revenue_growth_percent < 0 %}down{% else %}flat{% endif %}">
+            <i class="fas fa-arrow-{% if revenue_growth_percent > 0 %}up{% elif revenue_growth_percent < 0 %}down{% else %}minus{% endif %}"></i>
+            {{ revenue_growth_percent|abs }}%
+        </span>
+    </div>
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(59,130,246,0.08); color:#3b82f6;">
+            <i class="fas fa-clipboard-list"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">{{ total_bookings }}</span>
+            <span class="admin-metric-label">Total Services</span>
+        </div>
+        <span class="admin-metric-trend {% if bookings_growth_percent > 0 %}up{% elif bookings_growth_percent < 0 %}down{% else %}flat{% endif %}">
+            <i class="fas fa-arrow-{% if bookings_growth_percent > 0 %}up{% elif bookings_growth_percent < 0 %}down{% else %}minus{% endif %}"></i>
+            {{ bookings_growth_percent|abs }}%
+        </span>
+    </div>
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-users"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">{{ total_users }}</span>
+            <span class="admin-metric-label">Active Users</span>
+        </div>
+        <span class="admin-metric-trend {% if user_growth_percent > 0 %}up{% elif user_growth_percent < 0 %}down{% else %}flat{% endif %}">
+            <i class="fas fa-arrow-{% if user_growth_percent > 0 %}up{% elif user_growth_percent < 0 %}down{% else %}minus{% endif %}"></i>
+            {{ user_growth_percent|abs }}%
+        </span>
+    </div>
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-check-double"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">{{ completion_rate }}%</span>
+            <span class="admin-metric-label">Completion Rate</span>
+        </div>
+        <span class="admin-metric-trend {% if completion_rate >= 70 %}up{% elif completion_rate >= 50 %}flat{% else %}down{% endif %}">
+            <i class="fas fa-arrow-{% if completion_rate >= 70 %}up{% elif completion_rate >= 50 %}minus{% else %}down{% endif %}"></i>
+            {{ completion_rate }}%
+        </span>
+    </div>
+</div>
+
+<!-- Charts Grid -->
+<div class="admin-charts-grid">
+
+    <!-- Revenue Chart -->
+    <div class="admin-chart-card admin-chart-full">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-chart-area"></i> Revenue Overview</h3>
+            <span class="admin-chart-period">Monthly Revenue</span>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="revenueChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Daily Bookings -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-calendar-day"></i> Daily Bookings</h3>
+            <span class="admin-chart-period">Last {{ date_range }}</span>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="dailyBookingsChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Daily Revenue -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-coins"></i> Daily Revenue</h3>
+            <span class="admin-chart-period">Last {{ date_range }}</span>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="dailyRevenueChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Service Distribution -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-pie-chart"></i> Service Distribution</h3>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="serviceChart"></canvas>
+        </div>
+    </div>
+
+    <!-- User Growth -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-users"></i> User Growth</h3>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="userGrowthChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Status Overview -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-tasks"></i> Request Status</h3>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="statusChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Payment Methods -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-credit-card"></i> Payment Methods</h3>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="paymentChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Monthly Comparison -->
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-calendar-alt"></i> Monthly Comparison</h3>
+        </div>
+        <div class="admin-chart-container">
+            <canvas id="monthlyChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================
+     SHOP PERFORMANCE
+     ============================================ -->
+<div class="admin-panel-header" style="margin-top: 0.5rem;">
+    <h3 class="admin-panel-title"><i class="fas fa-store"></i> Shop Performance</h3>
+</div>
+<div class="admin-analytics-metrics">
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-shopping-cart"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">₱{{ "%.2f"|format(shop_revenue) }}</span>
+            <span class="admin-metric-label">Shop Revenue</span>
+        </div>
+    </div>
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(59,130,246,0.08); color:#3b82f6;">
+            <i class="fas fa-tools"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">₱{{ "%.2f"|format(booking_revenue_confirmed) }}</span>
+            <span class="admin-metric-label">Repair Service Revenue</span>
+        </div>
+    </div>
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
+            <i class="fas fa-box-open"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">{{ low_stock_products|length }}</span>
+            <span class="admin-metric-label">Low Stock Items (&le;{{ low_stock_threshold }})</span>
+        </div>
+    </div>
+</div>
+<div class="admin-charts-grid">
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-star"></i> Top-Selling Products</h3>
+            <span class="admin-chart-period">By units sold</span>
+        </div>
+        <div class="admin-chart-container">
+            {% if top_product_labels %}
+            <canvas id="topProductsChart"></canvas>
+            {% else %}
+            <div class="admin-empty-state"><i class="fas fa-box"></i><p style="color:var(--text-muted);">No orders yet</p></div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-exclamation-triangle"></i> Low Stock Alerts</h3>
+            <span class="admin-chart-period">Needs restocking</span>
+        </div>
+        {% if low_stock_products %}
+        <div style="max-height: 280px; overflow-y: auto;">
+            {% for p in low_stock_products %}
+            <div class="admin-user-item">
+                <div class="admin-user-avatar"><i class="fas fa-box"></i></div>
+                <div class="admin-user-info">
+                    <span class="admin-user-name">{{ p.name }}</span>
+                    <span class="admin-user-email">{{ p.category or 'Uncategorized' }}</span>
+                </div>
+                <span class="admin-request-status {% if p.stock_quantity == 0 %}cancelled{% else %}pending{% endif %}">
+                    {{ p.stock_quantity }} left
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="admin-empty-state">
+            <i class="fas fa-check-circle" style="color:var(--success);"></i>
+            <p style="color:var(--text-muted);">All products are well stocked</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ============================================
+     TECHNICIAN PERFORMANCE
+     ============================================ -->
+<div class="admin-panel-header" style="margin-top: 0.5rem;">
+    <h3 class="admin-panel-title"><i class="fas fa-user-cog"></i> Technician Performance</h3>
+</div>
+<div class="admin-analytics-metrics">
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-user-check"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">{{ verified_technicians }}/{{ total_technicians_all }}</span>
+            <span class="admin-metric-label">Verified Technicians</span>
+        </div>
+    </div>
+    <div class="admin-metric-card">
+        <div class="admin-metric-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-user-clock"></i>
+        </div>
+        <div class="admin-metric-info">
+            <span class="admin-metric-value">{{ unassigned_bookings }}</span>
+            <span class="admin-metric-label">Confirmed Jobs Awaiting Assignment</span>
+        </div>
+    </div>
+</div>
+<div class="admin-charts-grid">
+    <div class="admin-chart-card admin-chart-full">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-chart-bar"></i> Workload by Technician</h3>
+            <span class="admin-chart-period">Assigned vs. Completed</span>
+        </div>
+        <div class="admin-chart-container">
+            {% if technician_labels %}
+            <canvas id="technicianChart"></canvas>
+            {% else %}
+            <div class="admin-empty-state"><i class="fas fa-user-cog"></i><p style="color:var(--text-muted);">No bookings have been assigned to a technician yet</p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ============================================
+     CUSTOMER INSIGHTS
+     ============================================ -->
+<div class="admin-panel-header" style="margin-top: 0.5rem;">
+    <h3 class="admin-panel-title"><i class="fas fa-user-friends"></i> Customer Insights</h3>
+</div>
+<div class="admin-charts-grid">
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-user-plus"></i> New vs. Returning</h3>
+            <span class="admin-chart-period">By paying customers</span>
+        </div>
+        <div class="admin-chart-container">
+            {% if new_customers_count > 0 or returning_customers > 0 %}
+            <canvas id="customerTypeChart"></canvas>
+            {% else %}
+            <div class="admin-empty-state"><i class="fas fa-users"></i><p style="color:var(--text-muted);">No confirmed payments yet</p></div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="admin-chart-card">
+        <div class="admin-chart-header">
+            <h3><i class="fas fa-crown"></i> Top Customers</h3>
+            <span class="admin-chart-period">By total spend</span>
+        </div>
+        {% if top_customers %}
+        <div>
+            {% for c in top_customers %}
+            <div class="admin-user-item">
+                <div class="admin-user-avatar"><i class="fas fa-user-circle"></i></div>
+                <div class="admin-user-info">
+                    <span class="admin-user-name">{{ c.full_name }}</span>
+                    <span class="admin-user-email">{{ c.txn_count }} confirmed transaction{{ 's' if c.txn_count != 1 else '' }}</span>
+                </div>
+                <span style="font-weight:700; color:var(--primary);">₱{{ "%.2f"|format(c.total_spent) }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="admin-empty-state">
+            <i class="fas fa-users"></i>
+            <p style="color:var(--text-muted);">No confirmed payments yet</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="admin-grid-panel">
+    <div class="admin-panel-header">
+        <h3 class="admin-panel-title">
+            <i class="fas fa-clock"></i> Recent Transactions
+        </h3>
+        <a href="{{ url_for('admin_payments') }}" class="admin-panel-link">View All →</a>
+    </div>
+    <div class="admin-recent-activity">
+        {% if recent_transactions %}
+            {% for txn in recent_transactions %}
+            <div class="admin-activity-item">
+                <div class="admin-activity-icon {{ txn.payment_status }}">
+                    <i class="fas fa-{% if txn.payment_status == 'confirmed' %}check{% elif txn.payment_status == 'pending' %}clock{% elif txn.payment_status == 'rejected' %}times{% else %}info{% endif %}"></i>
+                </div>
+                <div class="admin-activity-text">
+                    <strong>{{ txn.user.full_name if txn.user else 'Unknown' }}</strong>
+                    {% if txn.booking %}
+                        booked <strong>{{ txn.booking.service.name if txn.booking.service else 'service' }}</strong>
+                    {% else %}
+                        placed an order
+                    {% endif %}
+                    · <span class="admin-activity-amount" style="color:var(--primary); font-weight:600;">₱{{ "%.2f"|format(txn.amount) }}</span>
+                    · <span class="admin-activity-status" style="text-transform:capitalize;">{{ txn.payment_status }}</span>
+                </div>
+                <span class="admin-activity-time">{{ txn.transaction_date.strftime('%b %d, %I:%M %p') if txn.transaction_date else 'N/A' }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="admin-empty-state">
+                <i class="fas fa-inbox"></i>
+                <p>No recent transactions</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    // ============================================
+    // CHART INSTANCES
+    // ============================================
+    
+    let chartInstances = {};
+    
+    // ============================================
+    // REVENUE CHART
+    // ============================================
+    
+    function initRevenueChart() {
+        const ctx = document.getElementById('revenueChart').getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(0, 255, 136, 0.25)');
+        gradient.addColorStop(1, 'rgba(0, 255, 136, 0.01)');
+        
+        const labels = {{ revenue_labels|tojson }};
+        const data = {{ revenue_data|tojson }};
+        
+        if (chartInstances.revenue) chartInstances.revenue.destroy();
+        
+        chartInstances.revenue = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Revenue (₱)',
+                    data: data,
+                    borderColor: '#00ff88',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: '#00ff88',
+                    pointBorderColor: '#0a0e17',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#94a3b8', font: { size: 12 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', maxTicksLimit: 12 }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', callback: function(value) { return '₱' + value.toLocaleString(); } }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // DAILY BOOKINGS CHART
+    // ============================================
+    
+    function initDailyBookingsChart() {
+        const ctx = document.getElementById('dailyBookingsChart').getContext('2d');
+        const labels = {{ day_labels|tojson }};
+        const data = {{ day_data|tojson }};
+        
+        if (chartInstances.dailyBookings) chartInstances.dailyBookings.destroy();
+        
+        chartInstances.dailyBookings = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Bookings',
+                    data: data,
+                    backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                    borderColor: '#3b82f6',
+                    borderWidth: 2,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#94a3b8', font: { size: 12 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', maxTicksLimit: 15 }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', stepSize: 1 }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // DAILY REVENUE CHART
+    // ============================================
+    
+    function initDailyRevenueChart() {
+        const ctx = document.getElementById('dailyRevenueChart').getContext('2d');
+        const labels = {{ revenue_day_labels|tojson }};
+        const data = {{ revenue_day_data|tojson }};
+        
+        if (chartInstances.dailyRevenue) chartInstances.dailyRevenue.destroy();
+        
+        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(0, 255, 136, 0.2)');
+        gradient.addColorStop(1, 'rgba(0, 255, 136, 0.01)');
+        
+        chartInstances.dailyRevenue = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Revenue (₱)',
+                    data: data,
+                    borderColor: '#22c55e',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: '#22c55e',
+                    pointBorderColor: '#0a0e17',
+                    pointBorderWidth: 2,
+                    pointRadius: 3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#94a3b8', font: { size: 12 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', maxTicksLimit: 15 }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', callback: function(value) { return '₱' + value.toLocaleString(); } }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // SERVICE DISTRIBUTION CHART
+    // ============================================
+    
+    function initServiceChart() {
+        const ctx = document.getElementById('serviceChart').getContext('2d');
+        const labels = {{ service_labels|tojson }};
+        const data = {{ service_data|tojson }};
+        const colors = {{ service_colors|tojson }};
+        
+        if (chartInstances.service) chartInstances.service.destroy();
+        
+        chartInstances.service = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: colors,
+                    borderColor: '#111827',
+                    borderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#94a3b8', font: { size: 11 }, padding: 12 }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // USER GROWTH CHART
+    // ============================================
+    
+    function initUserGrowthChart() {
+        const ctx = document.getElementById('userGrowthChart').getContext('2d');
+        const labels = {{ growth_labels|tojson }};
+        const data = {{ growth_data|tojson }};
+        
+        if (chartInstances.userGrowth) chartInstances.userGrowth.destroy();
+        
+        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.2)');
+        gradient.addColorStop(1, 'rgba(59, 130, 246, 0.01)');
+        
+        chartInstances.userGrowth = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'New Users',
+                    data: data,
+                    backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                    borderColor: '#3b82f6',
+                    borderWidth: 2,
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#94a3b8', font: { size: 12 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', stepSize: 1 }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // STATUS CHART
+    // ============================================
+    
+    function initStatusChart() {
+        const ctx = document.getElementById('statusChart').getContext('2d');
+        const labels = {{ status_labels|tojson }};
+        const data = {{ status_data|tojson }};
+        const colors = {{ status_color_list|tojson }};
+        
+        if (chartInstances.status) chartInstances.status.destroy();
+        
+        chartInstances.status = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Requests',
+                    data: data,
+                    backgroundColor: colors.map(function(c) { return c + '99'; }),
+                    borderColor: colors,
+                    borderWidth: 2,
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', stepSize: 1 }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // PAYMENT METHODS CHART
+    // ============================================
+    
+    function initPaymentChart() {
+        const ctx = document.getElementById('paymentChart').getContext('2d');
+        const labels = {{ payment_labels|tojson }};
+        const data = {{ payment_data|tojson }};
+        const colors = {{ payment_colors|tojson }};
+        
+        if (chartInstances.payment) chartInstances.payment.destroy();
+        
+        chartInstances.payment = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: colors,
+                    borderColor: '#111827',
+                    borderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#94a3b8', font: { size: 11 }, padding: 12 }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // MONTHLY COMPARISON CHART
+    // ============================================
+    
+    function initMonthlyChart() {
+        const ctx = document.getElementById('monthlyChart').getContext('2d');
+        const labels = {{ revenue_labels|tojson }};
+        const revenueData = {{ revenue_data|tojson }};
+        const bookingData = {{ status_data|tojson }};
+        
+        if (chartInstances.monthly) chartInstances.monthly.destroy();
+        
+        chartInstances.monthly = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Revenue (₱)',
+                        data: revenueData,
+                        borderColor: '#00ff88',
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        pointBackgroundColor: '#00ff88',
+                        pointRadius: 3,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'Bookings',
+                        data: {{ status_data|tojson }},
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        pointBackgroundColor: '#3b82f6',
+                        pointRadius: 3,
+                        yAxisID: 'y1',
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#94a3b8', font: { size: 12 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', maxTicksLimit: 12 }
+                    },
+                    y: {
+                        type: 'linear',
+                        position: 'left',
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', callback: function(value) { return '₱' + value.toLocaleString(); } }
+                    },
+                    y1: {
+                        type: 'linear',
+                        position: 'right',
+                        grid: { display: false },
+                        ticks: { color: '#64748b', stepSize: 1 }
+                    }
+                }
+            }
+        });
+    }
+
+    function initTopProductsChart() {
+        const canvas = document.getElementById('topProductsChart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        chartInstances.topProducts = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: {{ top_product_labels|tojson }},
+                datasets: [{
+                    label: 'Units Sold',
+                    data: {{ top_product_data|tojson }},
+                    backgroundColor: '#00ff88',
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', precision: 0 }
+                    },
+                    y: {
+                        grid: { display: false },
+                        ticks: { color: '#94a3b8' }
+                    }
+                }
+            }
+        });
+    }
+
+    function initTechnicianChart() {
+        const canvas = document.getElementById('technicianChart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        chartInstances.technician = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: {{ technician_labels|tojson }},
+                datasets: [
+                    {
+                        label: 'Assigned',
+                        data: {{ technician_assigned_data|tojson }},
+                        backgroundColor: '#3b82f6',
+                        borderRadius: 6
+                    },
+                    {
+                        label: 'Completed',
+                        data: {{ technician_completed_data|tojson }},
+                        backgroundColor: '#22c55e',
+                        borderRadius: 6
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#94a3b8', font: { size: 12 } } }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#94a3b8' }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        ticks: { color: '#64748b', precision: 0 }
+                    }
+                }
+            }
+        });
+    }
+
+    function initCustomerTypeChart() {
+        const canvas = document.getElementById('customerTypeChart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        chartInstances.customerType = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['New Customers', 'Returning Customers'],
+                datasets: [{
+                    data: [{{ new_customers_count }}, {{ returning_customers }}],
+                    backgroundColor: ['#3b82f6', '#00ff88'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 12 }, padding: 16 } }
+                }
+            }
+        });
+    }
+
+    // ============================================
+    // UPDATE / REFRESH FUNCTIONS
+    // ============================================
+    
+    function updateAnalytics() {
+        const range = document.getElementById('dateRange').value;
+        const url = new URL(window.location.href);
+        url.searchParams.set('range', range);
+        window.location.href = url.toString();
+    }
+    
+    function refreshAnalytics() {
+        const btn = document.querySelector('.admin-icon-btn');
+        const icon = btn?.querySelector('i');
+        if (icon) {
+            icon.classList.add('fa-spin');
+        }
+        
+        // Show loading state on charts
+        document.querySelectorAll('.admin-chart-card').forEach(function(card) {
+            card.classList.add('loading');
+        });
+        
+        setTimeout(function() {
+            window.location.reload();
+        }, 500);
+    }
+    
+    // ============================================
+    // INITIALIZE ALL CHARTS
+    // ============================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        initRevenueChart();
+        initDailyBookingsChart();
+        initDailyRevenueChart();
+        initServiceChart();
+        initUserGrowthChart();
+        initStatusChart();
+        initPaymentChart();
+        initMonthlyChart();
+        initTopProductsChart();
+        initTechnicianChart();
+        initCustomerTypeChart();
+        
+        // Remove loading states
+        document.querySelectorAll('.admin-chart-card').forEach(function(card) {
+            card.classList.remove('loading');
+        });
+    });
+</script>
+{% endblock %}

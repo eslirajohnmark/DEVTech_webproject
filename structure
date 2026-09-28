@@ -1,0 +1,110 @@
+DEVTech_Webproject/
+│
+├── app.py                                        ← PATCHED
+├── wsgi.py                                       ← NEW
+├── commands.py                                   ← NEW (admin CLI)
+├── requirements.txt                              ← PATCHED
+├── .env                                          ← NEW
+├── .env.example                                  ← NEW
+├── .gitignore                                    ← NEW
+├── README.md                                     ← NEW
+├── DEPLOY.md                                     ← NEW
+├── check_admin.py                                EXISTING
+│
+├── database/
+│   ├── schema.sql                                ← PATCHED
+│   ├── migrate_existing_database.sql             EXISTING
+│   ├── migrate_service_categories.sql            ← NEW
+│   └── migrate_ratings.sql                       ← NEW
+│
+├── blueprints/                                   ← NEW
+│   ├── __init__.py
+│   ├── technician.py
+│   └── technician_api.py
+│
+├── models/                                       ← NEW
+│   ├── __init__.py
+│   └── technician_models.py
+│
+├── services/                                     ← NEW
+│   ├── __init__.py
+│   ├── technician_service.py
+│   ├── upload_service.py
+│   └── csrf_helpers.py
+│
+├── scripts/                                      ← NEW
+│   ├── __init__.py
+│   ├── seed_technician.py
+│   └── seed_service_categories.py
+│
+├── static/
+│   ├── css/
+│   │   ├── style.css                             EXISTING
+│   │   ├── admin.css                             EXISTING
+│   │   ├── user.css                              ← PATCHED
+│   │   ├── home.css                              EXISTING
+│   │   └── technician/                           ← NEW (9 files)
+│   │       ├── main.css
+│   │       ├── tokens.css
+│   │       ├── base.css
+│   │       ├── layout.css
+│   │       ├── components.css
+│   │       ├── pages.css
+│   │       ├── theme-light.css
+│   │       ├── responsive.css
+│   │       └── utilities.css
+│   │
+│   ├── js/
+│   │   ├── admin.js                              ← PATCHED
+│   │   ├── user.js                               ← PATCHED
+│   │   ├── home.js                               ← PATCHED
+│   │   ├── user-monitor.js                       ← NEW
+│   │   └── technician/                           ← NEW (33 files)
+│   │       ├── bootstrap.js
+│   │       ├── router.js
+│   │       ├── theme.js
+│   │       ├── core/                             (8 files)
+│   │       ├── data/                             (11 files)
+│   │       ├── shell/                            (5 files)
+│   │       └── pages/                            (10 files)
+│   │
+│   ├── images/
+│   │   ├── logo.png                              EXISTING
+│   │   └── favicon.svg                           ← NEW
+│   │
+│   └── data/
+│       └── tacloban_boundary.geojson             EXISTING
+│
+├── templates/
+│   ├── home.html                                 ← PATCHED
+│   ├── setup_first_admin.html                    ← NEW
+│   ├── base/
+│   │   ├── admin_base.html                       EXISTING
+│   │   ├──admin_base.html                       EXISTING
+│   │   └── technician_base.html                  ← NEW
+│   ├── auth/                                     (3 files, existing)
+│   ├── admin/                                    (6 files, existing)
+│   ├── user/
+│   │   ├── service_catalog.html                  ← NEW
+│   │   ├── book_appointment.html                 ← NEW
+│   │   ├── monitor_device.html                   ← NEW
+│   │   ├── _booking_form_script.html             ← NEW
+│   │   └── (14 existing unchanged)
+│   ├── technician/                               ← NEW (11 files)
+│   └── errors/                                   (2 files, existing)
+│
+├── tests/                                        ← NEW (9 files)
+│   ├── __init__.py
+│   ├── conftest.py
+│   ├── test_technician_auth.py
+│   ├── test_technician_ownership.py
+│   ├── test_technician_csrf.py
+│   ├── test_technician_uploads.py
+│   ├── test_technician_rate_limit.py
+│   ├── test_technician_config.py
+│   └── test_technician_workflow.py
+│
+├── instance/
+│   └── uploads/tech/.gitkeep
+│
+└── logs/.gitkeep

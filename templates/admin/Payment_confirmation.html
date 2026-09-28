@@ -1,0 +1,350 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Payment Confirmation{% endblock %}
+
+{% block content %}
+
+<!-- Top Bar -->
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Payment Confirmation</h1>
+        <p>Review and confirm GCash payments from users</p>
+    </div>
+    <div class="admin-top-actions">
+        <button class="admin-icon-btn" onclick="showAdminToast('Notifications')">
+            <i class="fas fa-bell"></i>
+            {% if unread_notifications_count is defined and unread_notifications_count %}
+            <span class="admin-badge">{{ unread_notifications_count }}</span>
+            {% endif %}
+        </button>
+        <button class="admin-icon-btn" onclick="window.location.reload()">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="admin-stats-grid">
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-credit-card"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ transactions|length }}</span>
+            <span class="admin-stat-label">Total Payments</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-clock"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'pending')|list|length }}</span>
+            <span class="admin-stat-label">Pending Confirmation</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length }}</span>
+            <span class="admin-stat-label">Confirmed</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
+            <i class="fas fa-times-circle"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length }}</span>
+            <span class="admin-stat-label">Rejected</span>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="admin-payment-filters">
+    <div class="admin-search-wrapper">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="Search by user, ID, or reference..." id="paymentSearch" oninput="filterPayments()" />
+    </div>
+    <div class="admin-filter-group">
+        <select id="paymentStatusFilter" onchange="filterPayments()" class="admin-filter-select">
+            <option value="all">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="rejected">Rejected</option>
+        </select>
+        <button class="admin-btn admin-btn-secondary" onclick="resetPaymentFilters()">
+            <i class="fas fa-undo"></i> Reset
+        </button>
+    </div>
+</div>
+
+<!-- Payment List -->
+<div class="admin-payment-list" id="paymentList">
+    {% for transaction in transactions %}
+    {% set has_proof = transaction.receipt_image and transaction.receipt_image|trim != '' %}
+    <div class="admin-payment-card"
+         data-status="{{ transaction.payment_status }}"
+         data-search="{{ transaction.user.full_name }} {{ transaction.transaction_number }} {{ transaction.gcash_reference or transaction.reference_number or '' }}"
+         data-payment='{{ {
+            "id": transaction.id,
+            "transactionNumber": transaction.transaction_number,
+            "userName": transaction.user.full_name,
+            "userEmail": transaction.user.email if transaction.user.email else "",
+            "userPhone": transaction.user.phone if transaction.user.phone else "",
+            "amount": "%.2f"|format(transaction.amount),
+            "method": (transaction.payment_method if transaction.payment_method in ['GCash', 'COD'] else 'Not yet chosen'),
+            "reference": transaction.gcash_reference or transaction.reference_number or "N/A",
+            "booking": transaction.booking.booking_number if transaction.booking else "N/A",
+            "date": transaction.transaction_date.strftime("%b %d, %Y %I:%M %p"),
+            "status": transaction.payment_status,
+            "rejectionReason": transaction.rejection_reason or "",
+            "receiptUrl": (transaction.receipt_image if has_proof else ""),
+            "confirmUrl": url_for('admin_payment_confirm', transaction_id=transaction.id),
+            "rejectUrl": url_for('admin_payment_reject', transaction_id=transaction.id)
+         }|tojson }}'>
+        <div class="admin-payment-card-header">
+            <div class="admin-payment-card-user">
+                <i class="fas fa-user-circle"></i>
+                <div>
+                    <span class="admin-payment-card-name">{{ transaction.user.full_name }}</span>
+                    <span class="admin-payment-card-id">{{ transaction.transaction_number }}</span>
+                </div>
+            </div>
+            <span class="admin-payment-card-status {{ transaction.payment_status }}">{{ transaction.payment_status }}</span>
+        </div>
+        <div class="admin-payment-card-body">
+            <div class="admin-payment-card-info">
+                <span class="admin-payment-card-amount">₱{{ "%.2f"|format(transaction.amount) }}</span>
+                <span class="admin-payment-card-method">
+                    {% if transaction.payment_method == 'GCash' %}<i class="fas fa-mobile-alt"></i> GCASH
+                    {% elif transaction.payment_method == 'COD' %}<i class="fas fa-money-bill-wave"></i> COD
+                    {% else %}<i class="fas fa-hourglass-half"></i> Not yet chosen
+                    {% endif %}
+                </span>
+                <span class="admin-payment-card-ref">Ref: {{ transaction.gcash_reference or transaction.reference_number or 'N/A' }}</span>
+            </div>
+            <div class="admin-payment-card-meta">
+                <span>Booking: {{ transaction.booking.booking_number if transaction.booking else 'N/A' }}</span>
+                <span>{{ transaction.transaction_date.strftime('%b %d, %Y %H:%M') }}</span>
+            </div>
+            {% if transaction.rejection_reason %}
+            <div class="admin-payment-card-proof missing" style="border-color:var(--danger); color:var(--danger);">
+                <i class="fas fa-exclamation-circle"></i> Rejected: {{ transaction.rejection_reason }}
+            </div>
+            {% elif has_proof %}
+            <div class="admin-payment-card-proof clickable" onclick="viewPaymentDetails(this.closest('.admin-payment-card'))">
+                <i class="fas fa-image"></i> Payment proof attached &middot; click to view
+            </div>
+            {% else %}
+            <div class="admin-payment-card-proof missing">
+                <i class="fas fa-triangle-exclamation"></i> No proof image on file
+            </div>
+            {% endif %}
+        </div>
+        <div class="admin-payment-card-actions">
+            <button class="admin-btn admin-btn-sm admin-btn-info" onclick="viewPaymentDetails(this.closest('.admin-payment-card'))">
+                <i class="fas fa-eye"></i> View Details
+            </button>
+            {% if transaction.payment_status == 'pending' %}
+                <form method="POST" action="{{ url_for('admin_payment_confirm', transaction_id=transaction.id) }}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="admin-btn admin-btn-sm admin-btn-confirm">
+                        <i class="fas fa-check"></i> Confirm
+                    </button>
+                </form>
+                <button class="admin-btn admin-btn-sm admin-btn-reject" onclick="rejectPayment('{{ transaction.id }}', '{{ transaction.user.full_name }}')">
+                    <i class="fas fa-times"></i> Reject
+                </button>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="admin-empty-state">
+        <i class="fas fa-receipt"></i>
+        <p>No payments to review yet</p>
+        <p>GCash payments submitted by customers will show up here for confirmation.</p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Payment Details Modal -->
+<div class="admin-modal" id="paymentDetailsModal">
+    <div class="admin-modal-content admin-modal-wide">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-receipt"></i> Payment Details</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('paymentDetailsModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body" id="paymentDetailsBody">
+            <!-- Populated by viewPaymentDetails() -->
+        </div>
+        <div class="admin-modal-footer" id="paymentDetailsFooter">
+            <!-- Confirm/Reject buttons injected here when the payment is still pending -->
+        </div>
+    </div>
+</div>
+
+<script>
+    function filterPayments() {
+        const search = document.getElementById('paymentSearch').value.toLowerCase();
+        const status = document.getElementById('paymentStatusFilter').value;
+        const cards = document.querySelectorAll('.admin-payment-card');
+
+        cards.forEach(card => {
+            const searchText = card.dataset.search.toLowerCase();
+            const cardStatus = card.dataset.status;
+            const matchesSearch = searchText.includes(search);
+            const matchesStatus = status === 'all' || cardStatus === status;
+            card.style.display = (matchesSearch && matchesStatus) ? '' : 'none';
+        });
+    }
+
+    function resetPaymentFilters() {
+        document.getElementById('paymentSearch').value = '';
+        document.getElementById('paymentStatusFilter').value = 'all';
+        filterPayments();
+    }
+
+    function rejectPayment(transactionId, userName) {
+        if (confirm(`Reject payment from ${userName}?`)) {
+            const reason = prompt('Please provide a reason for rejecting this payment:');
+            if (reason !== null && reason.trim() !== '') {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = "{{ url_for('admin_payment_reject', transaction_id=0) }}".replace('0', transactionId);
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'reason';
+                input.value = reason.trim();
+                form.appendChild(input);
+                document.body.appendChild(form);
+                form.submit();
+            } else if (reason !== null) {
+                alert('Please provide a reason for rejection.');
+            }
+        }
+    }
+
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    /**
+     * Opens the payment details modal for the given .admin-payment-card,
+     * reading its data-payment JSON blob (rendered server-side, so this
+     * needs no extra API round trip) and - most importantly - showing the
+     * actual uploaded GCash proof screenshot so the admin can verify the
+     * reference number and amount before confirming.
+     */
+    function viewPaymentDetails(cardEl) {
+        if (!cardEl) return;
+        let payment;
+        try {
+            payment = JSON.parse(cardEl.dataset.payment);
+        } catch (e) {
+            showAdminToast('Could not load payment details', 'error');
+            return;
+        }
+
+        const body = document.getElementById('paymentDetailsBody');
+        const footer = document.getElementById('paymentDetailsFooter');
+
+        const statusPillClass = payment.status === 'confirmed' ? 'confirmed' : (payment.status === 'rejected' ? 'rejected' : 'pending');
+
+        body.innerHTML = `
+            <div class="admin-payment-detail-grid">
+                <div class="admin-payment-detail-item">
+                    <span>Customer</span>
+                    <p>${escapeHtml(payment.userName)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Transaction #</span>
+                    <p>${escapeHtml(payment.transactionNumber)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Amount</span>
+                    <p>₱${escapeHtml(payment.amount)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Payment Method</span>
+                    <p>${escapeHtml(payment.method)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Reference Number</span>
+                    <p>${escapeHtml(payment.reference)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Booking</span>
+                    <p>${escapeHtml(payment.booking)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Date Submitted</span>
+                    <p>${escapeHtml(payment.date)}</p>
+                </div>
+                <div class="admin-payment-detail-item">
+                    <span>Status</span>
+                    <p><span class="admin-payment-card-status ${statusPillClass}">${escapeHtml(payment.status)}</span></p>
+                </div>
+                ${payment.userEmail || payment.userPhone ? `
+                <div class="admin-payment-detail-item" style="grid-column:1 / -1;">
+                    <span>Contact</span>
+                    <p>${escapeHtml(payment.userEmail)}${payment.userEmail && payment.userPhone ? ' &middot; ' : ''}${escapeHtml(payment.userPhone)}</p>
+                </div>` : ''}
+                ${payment.rejectionReason ? `
+                <div class="admin-payment-detail-item" style="grid-column:1 / -1;">
+                    <span style="color:var(--danger);">Rejection Reason</span>
+                    <p style="color:var(--danger);">${escapeHtml(payment.rejectionReason)}</p>
+                </div>` : ''}
+            </div>
+
+            <div class="admin-receipt-viewer">
+                ${payment.receiptUrl ? (
+                    payment.receiptUrl.toLowerCase().endsWith('.pdf') ? `
+                    <a href="${payment.receiptUrl}" target="_blank" rel="noopener" class="admin-btn admin-btn-info">
+                        <i class="fas fa-file-pdf"></i> Open PDF Receipt
+                    </a>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">This proof was uploaded as a PDF file and opens in a new tab.</span>
+                    ` : `
+                    <a href="${payment.receiptUrl}" target="_blank" rel="noopener">
+                        <img src="${payment.receiptUrl}" alt="Payment proof for ${escapeHtml(payment.transactionNumber)}">
+                    </a>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">Click the image to open it full size in a new tab</span>
+                    `
+                ) : `
+                    <div class="admin-receipt-viewer-empty">
+                        <i class="fas fa-image-slash"></i>
+                        <p>No proof-of-payment screenshot was uploaded for this transaction.</p>
+                    </div>
+                `}
+            </div>
+        `;
+
+        if (payment.status === 'pending') {
+            footer.innerHTML = `
+                <button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('paymentDetailsModal')">Close</button>
+                <button class="admin-btn admin-btn-reject" onclick="closeAdminModal('paymentDetailsModal'); rejectPayment('${payment.id}', '${escapeHtml(payment.userName)}');">
+                    <i class="fas fa-times"></i> Reject
+                </button>
+                <form method="POST" action="${payment.confirmUrl}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="admin-btn admin-btn-confirm">
+                        <i class="fas fa-check"></i> Confirm Payment
+                    </button>
+                </form>
+            `;
+        } else {
+            footer.innerHTML = `
+                <button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('paymentDetailsModal')">Close</button>
+            `;
+        }
+
+        openAdminModal('paymentDetailsModal');
+    }
+</script>
+{% endblock %}

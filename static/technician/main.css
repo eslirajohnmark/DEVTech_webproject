@@ -1,0 +1,25 @@
+/* ============================================================================
+ * DEVTech Technician Portal — main stylesheet
+ * ----------------------------------------------------------------------------
+ * Single import entry. Pages load only this file; the eight imported
+ * stylesheets resolve automatically via CSS @import.
+ *
+ * Order matters:
+ *   1. tokens        — CSS variables (colors, radii, motion)
+ *   2. base          — reset, typography, scrollbar
+ *   3. layout        — shell grid, sidebar, topbar
+ *   4. components    — buttons, cards, pills, forms, tables
+ *   5. pages         — login split, messaging, repair track
+ *   6. theme-light   — [data-theme="light"] overrides
+ *   7. responsive    — media queries
+ *   8. utilities     — small single-purpose helpers
+ * ==========================================================================*/
+
+@import url("tokens.css");
+@import url("base.css");
+@import url("layout.css");
+@import url("components.css");
+@import url("pages.css");
+@import url("theme-light.css");
+@import url("responsive.css");
+@import url("utilities.css");

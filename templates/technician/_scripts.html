@@ -1,0 +1,8 @@
+{# ===================================================================
+   Single module entry. Every technician page sets `page_module` before
+   including this, then this renders exactly one <script type="module">
+   tag with the CSP nonce from the request.
+   =================================================================== #}
+<script type="module"
+        nonce="{{ tech_nonce }}"
+        src="{{ url_for('static', filename='js/technician/pages/' + page_module + '.js') }}"></script>

@@ -1,0 +1,1291 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Book a Repair{% endblock %}
+
+{% block extra_css %}
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Book a New Repair</h1>
+        <p>Schedule your computer repair service</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+        </a>
+        <a href="{{ url_for('support') }}" class="user-icon-btn" title="Get support">
+            <i class="fas fa-headset"></i>
+        </a>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Booking Grid -->
+<div class="user-booking-grid">
+    <!-- Form Panel -->
+    <section class="user-grid-panel user-booking-form-panel">
+        <div class="user-panel-header">
+            <h3 class="user-panel-title">
+                <i class="fas fa-pen"></i> Repair Request Form
+            </h3>
+            <span class="user-required-badge">* Required</span>
+        </div>
+
+        <form class="user-booking-form" method="POST" action="{{ url_for('request_service') }}" id="bookingForm" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <!-- Step 1: Service Category -->
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">01</span>
+                    <h4 class="user-step-title">Service Category <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-device-grid">
+                    <label class="user-device-card" for="device-desktop">
+                        <input type="radio" name="device_type" id="device-desktop" value="Desktop" checked />
+                        <div class="user-device-content">
+                            <i class="fas fa-desktop"></i>
+                            <span>Desktop</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-laptop">
+                        <input type="radio" name="device_type" id="device-laptop" value="Laptop" />
+                        <div class="user-device-content">
+                            <i class="fas fa-laptop"></i>
+                            <span>Laptop</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-mac">
+                        <input type="radio" name="device_type" id="device-mac" value="Mac" />
+                        <div class="user-device-content">
+                            <i class="fab fa-apple"></i>
+                            <span>Mac</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-chromebook">
+                        <input type="radio" name="device_type" id="device-chromebook" value="Chromebook" />
+                        <div class="user-device-content">
+                            <i class="fab fa-chrome"></i>
+                            <span>Chromebook</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-tablet">
+                        <input type="radio" name="device_type" id="device-tablet" value="Tablet" />
+                        <div class="user-device-content">
+                            <i class="fas fa-tablet-alt"></i>
+                            <span>Tablet</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-other">
+                        <input type="radio" name="device_type" id="device-other" value="Other" />
+                        <div class="user-device-content">
+                            <i class="fas fa-question-circle"></i>
+                            <span>Other</span>
+                        </div>
+                    </label>
+                </div>
+                <!-- Custom Device Input -->
+                <div class="user-form-group" id="customDeviceGroup" style="display:none; margin-top:0.5rem;">
+                    <label for="custom_device">Please specify your device <span class="user-required-star">*</span></label>
+                    <input type="text" id="custom_device" name="custom_device" class="user-form-input" placeholder="Enter your device type...">
+                    <small class="user-field-hint"><i class="fas fa-info-circle"></i> Please specify your device model and type</small>
+                </div>
+            </div>
+
+            <!-- Step 2: Service Selection -->
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">02</span>
+                    <h4 class="user-step-title">Select Service <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-input-group">
+                    <label for="service_id">Choose a service</label>
+                    <select class="user-form-input" name="service_id" id="service_id" required>
+                        <option value="">-- Select a service --</option>
+                        {% for service in services %}
+                            {% if service.name != 'Custom Service' and not service.name.startswith('Custom:') and not service.name.startswith('Building Pc') %}
+                            <option value="{{ service.id }}" data-price="{{ service.price }}" data-hours="{{ service.estimated_hours }}">
+                                {{ service.name }} - ₱{{ "%.2f"|format(service.price) }}
+                            </option>
+                            {% endif %}
+                        {% endfor %}
+                        <option value="other">Other Service (Custom)</option>
+                    </select>
+                </div>
+                <!-- Custom Service Input -->
+                <div class="user-form-group" id="customServiceGroup" style="display:none; margin-top:0.5rem;">
+                    <label for="custom_service">Please specify your service requirement <span class="user-required-star">*</span></label>
+                    <input type="text" id="custom_service" name="custom_service" class="user-form-input" placeholder="Enter your specific service request...">
+                    <small class="user-field-hint"><i class="fas fa-info-circle"></i> Please describe the service you need</small>
+                </div>
+            </div>
+
+            <!-- Step 3: Issue Description -->
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">03</span>
+                    <h4 class="user-step-title">Issue Description <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-input-group">
+                    <label for="problemDesc">What seems to be the problem?</label>
+                    <textarea class="user-form-textarea" name="problem_description" id="problemDesc" placeholder="Describe your issue in detail... e.g., 'My laptop won't turn on after a power surge' or 'Screen is cracked and display flickers'" required></textarea>
+                    <div class="user-field-footer">
+                        <span class="user-char-count"><span id="charCount">0</span> / 500</span>
+                        <span class="user-field-hint"><i class="fas fa-info-circle"></i> Be as specific as possible</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: Service Location with Map -->
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">04</span>
+                    <h4 class="user-step-title">Service Location <span class="user-required-star">*</span></h4>
+                </div>
+
+                <!-- Address Input -->
+                <div class="user-input-group">
+                    <label for="serviceAddress">Delivery Address <span style="font-weight:400;color:var(--user-text-muted);font-size:0.75rem;">(Tacloban City only)</span></label>
+                    <div class="user-input-with-icon">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <input type="text" name="service_address" id="serviceAddress" class="user-form-input" placeholder="Enter your complete delivery address in Tacloban City" required>
+                    </div>
+                    <div class="user-location-toggle">
+                        <label class="user-checkbox-label">
+                            <input type="checkbox" id="inShopCheck" name="in_shop" onchange="toggleAddress()" checked>
+                            <span><i class="fas fa-store"></i> In-shop repair at DEVTech center</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Map Section -->
+                <div class="user-input-group map-section" id="mapSection" style="margin-top: 0.8rem; display: none;">
+                    <label>Pin Your Location on Map <span style="font-weight:400;color:var(--user-text-muted);font-size:0.75rem;">(Tacloban City only)</span></label>
+
+                    <!-- Search Bar -->
+                    <div class="map-search-container">
+                        <div class="map-search-wrapper">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="mapSearchInput" placeholder="Search for a location..." class="map-search-input" />
+                            <button type="button" class="map-search-btn" onclick="searchLocation()">
+                                <i class="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Map -->
+                    <div id="locationMap"></div>
+
+                    <!-- Pin Result -->
+                    <div class="map-pin-result" id="mapPinResult">
+                        <i class="fas fa-map-pin"></i>
+                        <span id="pinResultText">📍 Click on the map to pin your location</span>
+                    </div>
+
+                    <!-- Boundary Warning -->
+                    <div class="boundary-warning" id="boundaryWarning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>⚠️ This location is outside Tacloban City. Please select a location within Tacloban City.</span>
+                    </div>
+
+                    <!-- Location Valid Indicator -->
+                    <div class="location-valid" id="locationValid">
+                        <i class="fas fa-check-circle"></i>
+                        <span>✅ Location is within Tacloban City</span>
+                    </div>
+
+                    <!-- Map Controls -->
+                    <div class="map-controls">
+                        <button type="button" class="map-btn primary" id="getLocationBtn" onclick="getUserLocation()">
+                            <i class="fas fa-crosshairs"></i> Use My Location
+                        </button>
+                        <button type="button" class="map-btn" onclick="resetMap()">
+                            <i class="fas fa-undo"></i> Reset Map
+                        </button>
+                    </div>
+
+                    <p class="map-hint"><i class="fas fa-info-circle"></i> Click anywhere on the map to pin your location, or use "Use My Location" to auto-detect. <strong>Only Tacloban City locations are accepted.</strong></p>
+
+                    <!-- Hidden inputs for map data -->
+                    <input type="hidden" name="pinned_lat" id="pinnedLat" value="" />
+                    <input type="hidden" name="pinned_lng" id="pinnedLng" value="" />
+                    <input type="hidden" name="is_valid_location" id="isValidLocation" value="0" />
+                </div>
+            </div>
+
+            <!-- Step 5: Schedule -->
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">05</span>
+                    <h4 class="user-step-title">Preferred Schedule <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-schedule-row">
+                    <div class="user-input-group">
+                        <label for="bookingDate">Select Date</label>
+                        <div class="user-input-with-icon">
+                            <i class="fas fa-calendar-day"></i>
+                            <input type="date" name="booking_date" id="bookingDate" class="user-form-input" required>
+                        </div>
+                        <div id="availabilityStatus" class="user-availability-text default">
+                            <i class="fas fa-info-circle"></i> Select a date to check availability
+                        </div>
+                    </div>
+                    <div class="user-input-group">
+                        <label>Available Time Slots <span style="font-weight:400;color:var(--user-text-muted);font-size:0.75rem;">(Max 5 per slot)</span></label>
+                        <div class="user-time-slots" id="timeSlots">
+                            <!-- Morning Slots -->
+                            <div class="user-time-slot available" data-time="08:00">
+                                <span>8:00 AM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="09:00">
+                                <span>9:00 AM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="10:00">
+                                <span>10:00 AM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="11:00">
+                                <span>11:00 AM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <!-- Lunch Break -->
+                            <div class="user-time-slot lunch" data-time="12:00">
+                                <span>12:00 PM</span>
+                                <span class="user-slot-badge lunch-badge">🍽️ Lunch Break</span>
+                            </div>
+                            <!-- Afternoon Slots -->
+                            <div class="user-time-slot available" data-time="13:00">
+                                <span>1:00 PM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="14:00">
+                                <span>2:00 PM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="15:00">
+                                <span>3:00 PM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="16:00">
+                                <span>4:00 PM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                            <div class="user-time-slot available" data-time="17:00">
+                                <span>5:00 PM</span>
+                                <span class="user-slot-badge available-badge">Available</span>
+                            </div>
+                        </div>
+                        <input type="hidden" name="booking_time" id="bookingTime" value="">
+                        <div class="user-time-legend">
+                            <span><span class="legend-dot available-dot"></span> Available</span>
+                            <span><span class="legend-dot booked-dot"></span> Booked (Max 5)</span>
+                            <span><span class="legend-dot lunch-dot"></span> Lunch Break</span>
+                            <span><span class="legend-dot selected-dot"></span> Selected</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 6: Payment Method -->
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">06</span>
+                    <h4 class="user-step-title">Payment Method <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-payment-options">
+                    <label class="user-payment-option" for="payment-gcash">
+                        <input type="radio" name="payment_method" id="payment-gcash" value="GCash" checked>
+                        <div class="user-payment-option-content">
+                            <i class="fas fa-mobile-alt" style="color:#0073e6;"></i>
+                            <span>GCash</span>
+                        </div>
+                    </label>
+                    <label class="user-payment-option" for="payment-car">
+                        <input type="radio" name="payment_method" id="payment-car" value="C.A.R">
+                        <div class="user-payment-option-content">
+                            <i class="fas fa-money-bill-wave" style="color:#22c55e;"></i>
+                            <span>C.A.R (Cash After Repair)</span>
+                        </div>
+                    </label>
+                </div>
+                <div id="paymentInfo" style="margin-top:0.8rem; padding:0.8rem 1rem; background:var(--user-bg); border-radius:var(--user-radius-sm); border:1px solid var(--user-border);">
+                    <p id="paymentDetails" style="font-size:0.85rem; color:var(--user-text-secondary);">
+                        <i class="fas fa-info-circle"></i> 
+                        <span id="paymentInfoText">You will receive a GCash payment link via email after booking.</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Form Actions -->
+            <div class="user-form-actions">
+                <button type="reset" class="user-btn-secondary" onclick="resetForm()">
+                    <i class="fas fa-undo"></i> Clear All
+                </button>
+                <button type="submit" class="user-btn-primary" id="submitBtn" disabled>
+                    <i class="fas fa-check"></i> Submit Request
+                </button>
+            </div>
+            <div id="submitWarning" style="display:none; margin-top:0.5rem; padding:0.5rem 1rem; background:#fee2e2; border:1px solid #fecaca; border-radius:var(--user-radius-sm); color:#991b1b; font-size:0.85rem;">
+                <i class="fas fa-exclamation-circle"></i> 
+                <span>Please pin a valid location within Tacloban City before submitting.</span>
+            </div>
+        </form>
+    </section>
+
+    <!-- Summary Panel -->
+    <aside class="user-grid-panel user-summary-panel">
+        <h3 class="user-panel-title">
+            <i class="fas fa-file-invoice"></i> Booking Summary
+        </h3>
+
+        <div class="user-summary-content" id="summaryBox">
+            <div class="user-summary-item">
+                <label>Device</label>
+                <p id="summaryDevice">Desktop</p>
+            </div>
+            <div class="user-summary-item">
+                <label>Service</label>
+                <p id="summaryService">Not selected</p>
+            </div>
+            <div class="user-summary-item">
+                <label>Issue</label>
+                <p id="summaryIssue" class="user-summary-placeholder">Not described yet</p>
+            </div>
+            <div class="user-summary-item">
+                <label>Location</label>
+                <p id="summaryAddress">In-shop repair</p>
+            </div>
+            <div class="user-summary-item">
+                <label>Schedule</label>
+                <p id="summarySchedule" class="user-summary-placeholder">Not set</p>
+            </div>
+            <div class="user-summary-item">
+                <label>Payment</label>
+                <p id="summaryPayment">GCash</p>
+            </div>
+        </div>
+
+        <div class="user-summary-divider"></div>
+
+        <div class="user-summary-total">
+            <span>Estimated Duration</span>
+            <span class="user-total-value" id="summaryHours">1-2 hours</span>
+        </div>
+        <div class="user-summary-total">
+            <span>Service Fee</span>
+            <span class="user-total-value" id="summaryPrice">₱0.00</span>
+        </div>
+
+        <div class="user-summary-actions">
+            <button class="user-btn-primary full" onclick="submitBooking()" id="summarySubmitBtn" disabled>
+                <i class="fas fa-calendar-plus"></i> Book Now
+            </button>
+        </div>
+    </aside>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // ============================================
+    // TIME SLOT BOOKING SYSTEM
+    // Max 5 bookings per time slot
+    // ============================================
+
+    let bookedSlots = {};
+    let bookedCounts = {};
+    let currentSelectedDate = '';
+    let map = null;
+    let marker = null;
+    let isMapInitialized = false;
+    let isLocationValid = false;
+
+    // Tacloban City boundary and isInsideTacloban(lat, lng) are provided
+    // by user.js (loaded via the base template) - real 138-barangay data
+    // instead of the hand-drawn rectangle/polygon this page used to
+    // define locally. That old copy was actually only checking a crude
+    // rectangular bounding box, not even the polygon it drew on the map,
+    // which could wrongly accept points well outside the actual city
+    // shape or reject legitimate ones near its edges.
+
+    // ============================================
+    // SUBMIT BUTTON CONTROLS
+    // ============================================
+
+    function updateSubmitButtons() {
+        const inShop = document.getElementById('inShopCheck').checked;
+        const isValid = document.getElementById('isValidLocation').value === '1';
+        const submitBtn = document.getElementById('submitBtn');
+        const summarySubmitBtn = document.getElementById('summarySubmitBtn');
+        const submitWarning = document.getElementById('submitWarning');
+        
+        // For in-shop repair, always allow submission
+        if (inShop) {
+            submitBtn.disabled = false;
+            summarySubmitBtn.disabled = false;
+            submitWarning.style.display = 'none';
+            return;
+        }
+        
+        // For home service, check if location is valid
+        if (isValid) {
+            submitBtn.disabled = false;
+            summarySubmitBtn.disabled = false;
+            submitWarning.style.display = 'none';
+        } else {
+            submitBtn.disabled = true;
+            summarySubmitBtn.disabled = true;
+            submitWarning.style.display = 'block';
+        }
+    }
+
+    // ============================================
+    // TOAST NOTIFICATION
+    // ============================================
+
+    function showUserToast(message, type = 'info', duration = 4000) {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 10000;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                max-width: 400px;
+                width: 100%;
+                pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+        
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            pointer-events: auto;
+            background: white;
+            padding: 12px 20px;
+            border-radius: 12px;
+            border-left: 4px solid ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#2563eb'};
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #0f172a;
+            transform: translateX(120%);
+            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            width: 100%;
+        `;
+        
+        const icons = {
+            'success': 'fa-check-circle',
+            'error': 'fa-exclamation-circle',
+            'warning': 'fa-exclamation-triangle',
+            'info': 'fa-info-circle'
+        };
+        
+        const colors = {
+            'success': '#22c55e',
+            'error': '#ef4444',
+            'warning': '#f59e0b',
+            'info': '#2563eb'
+        };
+        
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
+            <span style="flex:1;">${message}</span>
+            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+        `;
+        
+        container.appendChild(toast);
+        
+        requestAnimationFrame(() => {
+            toast.style.transform = 'translateX(0)';
+        });
+        
+        setTimeout(() => {
+            toast.style.transform = 'translateX(120%)';
+            setTimeout(() => {
+                if (toast.parentElement) toast.remove();
+            }, 400);
+        }, duration);
+    }
+
+    // ============================================
+    // GEOFENCING - TACLOBAN CITY CHECK
+    // isInsideTacloban(lat, lng) is defined in user.js, backed by real
+    // barangay boundary data.
+    // ============================================
+
+    function updateLocationStatus(isValid) {
+        const pinResult = document.getElementById('mapPinResult');
+        const pinText = document.getElementById('pinResultText');
+        const boundaryWarning = document.getElementById('boundaryWarning');
+        const locationValid = document.getElementById('locationValid');
+        
+        if (isValid) {
+            pinResult.classList.add('show', 'valid');
+            pinResult.classList.remove('invalid');
+            boundaryWarning.classList.remove('show');
+            locationValid.classList.add('show');
+            document.getElementById('isValidLocation').value = '1';
+            isLocationValid = true;
+            showUserToast('✅ Location is within Tacloban City!', 'success');
+        } else {
+            pinResult.classList.add('show', 'invalid');
+            pinResult.classList.remove('valid');
+            boundaryWarning.classList.add('show');
+            locationValid.classList.remove('show');
+            document.getElementById('isValidLocation').value = '0';
+            isLocationValid = false;
+            showUserToast('❌ Location is outside Tacloban City. Please select a location within the city boundary.', 'error');
+        }
+        
+        // Update submit buttons
+        updateSubmitButtons();
+    }
+
+    // ============================================
+    // FETCH BOOKED SLOTS
+    // ============================================
+
+    function fetchBookedSlots(date) {
+        return fetch(`/api/booked-slots?date=${date}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.booked_slots) {
+                    bookedSlots[date] = data.booked_slots;
+                    bookedCounts[date] = {};
+                    data.booked_slots.forEach(time => {
+                        bookedCounts[date][time] = (bookedCounts[date][time] || 0) + 1;
+                    });
+                }
+                return data;
+            })
+            .catch(error => {
+                console.error('Error fetching booked slots:', error);
+                bookedSlots[date] = [];
+                bookedCounts[date] = {};
+                return { booked_slots: [] };
+            });
+    }
+
+    function getBookedCount(date, time) {
+        if (!date || !time) return 0;
+        if (bookedCounts[date] && bookedCounts[date][time]) {
+            return bookedCounts[date][time];
+        }
+        return 0;
+    }
+
+    function isSlotBooked(date, time) {
+        return getBookedCount(date, time) >= 5;
+    }
+
+    function isSlotPast(date, time) {
+        const now = new Date();
+        const slotDate = new Date(date + 'T' + time + ':00');
+        return slotDate < now;
+    }
+
+    // ============================================
+    // UPDATE TIME SLOTS
+    // ============================================
+
+    function updateTimeSlots(date) {
+        if (!date) {
+            resetTimeSlotsToDefault();
+            return;
+        }
+
+        currentSelectedDate = date;
+        const timeSlots = document.querySelectorAll('.user-time-slot');
+        let hasAvailableSlot = false;
+        let totalSlots = 0;
+        let fullyBookedCount = 0;
+
+        timeSlots.forEach(slot => {
+            if (slot.classList.contains('lunch')) {
+                return;
+            }
+
+            totalSlots++;
+            const time = slot.dataset.time;
+            const count = getBookedCount(date, time);
+            const isFull = count >= 5;
+            const isPast = isSlotPast(date, time);
+
+            slot.classList.remove('booked', 'available', 'selected', 'past');
+
+            if (isPast) {
+                slot.classList.add('past');
+                slot.innerHTML = `
+                    <span>${slot.querySelector('span:first-child')?.textContent || time}</span>
+                    <span class="user-slot-badge past-badge">⏰ Passed</span>
+                `;
+            } else if (isFull) {
+                slot.classList.add('booked');
+                slot.innerHTML = `
+                    <span>${slot.querySelector('span:first-child')?.textContent || time}</span>
+                    <span class="user-slot-badge booked-badge">Full (${count}/5)</span>
+                `;
+                fullyBookedCount++;
+            } else {
+                slot.classList.add('available');
+                slot.innerHTML = `
+                    <span>${slot.querySelector('span:first-child')?.textContent || time}</span>
+                    <span class="user-slot-badge available-badge">${count}/5 booked</span>
+                `;
+                hasAvailableSlot = true;
+            }
+
+            if (slot.classList.contains('selected') && (isFull || isPast)) {
+                slot.classList.remove('selected');
+                document.getElementById('bookingTime').value = '';
+            }
+        });
+
+        updateAvailabilityStatus(date, hasAvailableSlot, totalSlots, fullyBookedCount);
+    }
+
+    function resetTimeSlotsToDefault() {
+        const timeSlots = document.querySelectorAll('.user-time-slot');
+        const availabilityStatus = document.getElementById('availabilityStatus');
+
+        timeSlots.forEach(slot => {
+            if (slot.classList.contains('lunch')) {
+                return;
+            }
+            const time = slot.dataset.time;
+            slot.classList.remove('booked', 'available', 'selected', 'past');
+            slot.classList.add('available');
+            slot.innerHTML = `
+                <span>${slot.querySelector('span:first-child')?.textContent || time}</span>
+                <span class="user-slot-badge available-badge">Available</span>
+            `;
+        });
+
+        availabilityStatus.className = 'user-availability-text default';
+        availabilityStatus.innerHTML = `<i class="fas fa-info-circle"></i> Select a date to check availability`;
+    }
+
+    function updateAvailabilityStatus(date, hasAvailable, totalSlots, fullyBookedCount) {
+        const availabilityStatus = document.getElementById('availabilityStatus');
+        const availableSlots = totalSlots - fullyBookedCount;
+
+        if (hasAvailable) {
+            availabilityStatus.className = 'user-availability-text has-slots';
+            availabilityStatus.innerHTML = `
+                <i class="fas fa-check-circle"></i> 
+                <strong>${availableSlots}</strong> slot(s) available for ${formatDate(date)}
+                ${fullyBookedCount > 0 ? ` (${fullyBookedCount} fully booked)` : ''}
+            `;
+        } else {
+            availabilityStatus.className = 'user-availability-text no-slots';
+            availabilityStatus.innerHTML = `
+                <i class="fas fa-exclamation-circle"></i> 
+                All slots are fully booked for ${formatDate(date)}. Please select another date.
+            `;
+        }
+    }
+
+    function formatDate(dateStr) {
+        const date = new Date(dateStr + 'T00:00:00');
+        return date.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+        });
+    }
+
+    // ============================================
+    // PAYMENT METHOD
+    // ============================================
+
+    function updatePaymentInfo() {
+        const gcashRadio = document.getElementById('payment-gcash');
+        const paymentInfoText = document.getElementById('paymentInfoText');
+        const paymentSummary = document.getElementById('summaryPayment');
+        
+        if (gcashRadio.checked) {
+            paymentInfoText.textContent = 'You will receive a GCash payment link via email after booking. Please complete the payment within 24 hours.';
+            paymentSummary.textContent = 'GCash';
+        } else {
+            paymentInfoText.textContent = 'C.A.R (Cash After Repair) - You pay after the repair is completed and you are satisfied with the service.';
+            paymentSummary.textContent = 'C.A.R';
+        }
+    }
+
+    // ============================================
+    // MAP FUNCTIONALITY WITH GEOFENCING
+    // ============================================
+
+    function initMap() {
+        if (isMapInitialized) return;
+        
+        const defaultLat = 11.2444;
+        const defaultLng = 125.0039;
+        
+        map = L.map('locationMap').setView([defaultLat, defaultLng], 13);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        
+        // Draw the real Tacloban City boundary (138 barangays), loaded
+        // from user.js's shared boundary data - replaces the old 9-point
+        // hand-drawn approximation.
+        loadTaclobanBoundary().then(function() {
+            if (TACLOBAN_BOUNDARY_GEOJSON && map) {
+                L.geoJSON(TACLOBAN_BOUNDARY_GEOJSON, {
+                    style: {
+                        color: '#2563eb',
+                        weight: 1.5,
+                        opacity: 0.7,
+                        fillColor: '#2563eb',
+                        fillOpacity: 0.06,
+                        smoothFactor: 1
+                    }
+                }).bindTooltip('📍 Tacloban City Boundary', {
+                    sticky: true
+                }).addTo(map);
+            }
+        });
+        
+        map.on('click', function(e) {
+            const lat = e.latlng.lat;
+            const lng = e.latlng.lng;
+            
+            if (isInsideTacloban(lat, lng)) {
+                placeMarker(lat, lng);
+            } else {
+                // Show invalid location
+                const pinResult = document.getElementById('mapPinResult');
+                const pinText = document.getElementById('pinResultText');
+                pinResult.classList.add('show', 'invalid');
+                pinResult.classList.remove('valid');
+                pinText.textContent = '❌ Location is outside Tacloban City';
+                document.getElementById('boundaryWarning').classList.add('show');
+                document.getElementById('isValidLocation').value = '0';
+                isLocationValid = false;
+                updateSubmitButtons();
+                showUserToast('❌ Location is outside Tacloban City. Please select a location within the city boundary.', 'error');
+            }
+        });
+        
+        isMapInitialized = true;
+    }
+
+    function placeMarker(lat, lng) {
+        const isValid = isInsideTacloban(lat, lng);
+        
+        if (!isValid) {
+            updateLocationStatus(false);
+            return;
+        }
+        
+        if (marker) {
+            map.removeLayer(marker);
+        }
+        
+        // Custom marker with Tacloban city style
+        const icon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="background:#22c55e; width:24px; height:24px; border-radius:50%; border:3px solid white; box-shadow: 0 2px 10px rgba(0,0,0,0.3);"></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+        
+        marker = L.marker([lat, lng], { icon: icon }).addTo(map);
+        document.getElementById('pinnedLat').value = lat;
+        document.getElementById('pinnedLng').value = lng;
+        
+        // Update status
+        updateLocationStatus(true);
+        
+        // Update pin result text
+        const pinText = document.getElementById('pinResultText');
+        pinText.textContent = `📍 Location pinned at ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        
+        // Reverse geocode
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data && data.display_name) {
+                    document.getElementById('serviceAddress').value = data.display_name;
+                    pinText.textContent = `📍 ${data.display_name.substring(0, 60)}...`;
+                }
+            })
+            .catch(error => {
+                console.error('Error getting address:', error);
+            });
+        
+        showUserToast('✅ Location pinned successfully within Tacloban City!', 'success');
+        updateSummary();
+    }
+
+    function getUserLocation() {
+        if (navigator.geolocation) {
+            showUserToast('📍 Getting your location...', 'info');
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    
+                    if (isInsideTacloban(lat, lng)) {
+                        map.setView([lat, lng], 15);
+                        placeMarker(lat, lng);
+                    } else {
+                        updateLocationStatus(false);
+                        showUserToast('❌ Your location is outside Tacloban City. Please select a location within the city.', 'error');
+                    }
+                },
+                function(error) {
+                    showUserToast('Unable to get your location. Please click on the map.', 'error');
+                }
+            );
+        } else {
+            showUserToast('Geolocation is not supported by your browser.', 'error');
+        }
+    }
+
+    function searchLocation() {
+        const address = document.getElementById('mapSearchInput').value;
+        if (!address) {
+            showUserToast('Please enter an address to search.', 'warning');
+            return;
+        }
+        
+        showUserToast('Searching for address...', 'info');
+        
+        // Add "Tacloban City" to the search query to prioritize local results
+        const searchQuery = `${address}, Tacloban City, Philippines`;
+        
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`)
+            .then(response => response.json())
+            .then(data => {
+                if (data && data.length > 0) {
+                    const lat = parseFloat(data[0].lat);
+                    const lng = parseFloat(data[0].lon);
+                    
+                    if (isInsideTacloban(lat, lng)) {
+                        map.setView([lat, lng], 15);
+                        placeMarker(lat, lng);
+                        document.getElementById('serviceAddress').value = data[0].display_name;
+                    } else {
+                        updateLocationStatus(false);
+                        showUserToast('❌ This address is outside Tacloban City. Please search within the city boundary.', 'error');
+                    }
+                } else {
+                    showUserToast('Address not found in Tacloban City. Please try again.', 'error');
+                }
+            })
+            .catch(error => {
+                showUserToast('Error searching address.', 'error');
+            });
+    }
+
+    function resetMap() {
+        if (marker) {
+            map.removeLayer(marker);
+            marker = null;
+        }
+        document.getElementById('pinnedLat').value = '';
+        document.getElementById('pinnedLng').value = '';
+        document.getElementById('isValidLocation').value = '0';
+        document.getElementById('mapPinResult').classList.remove('show', 'valid', 'invalid');
+        document.getElementById('boundaryWarning').classList.remove('show');
+        document.getElementById('locationValid').classList.remove('show');
+        isLocationValid = false;
+        updateSubmitButtons();
+        showUserToast('🗺️ Map reset', 'info');
+    }
+
+    function toggleAddress() {
+        const inShop = document.getElementById('inShopCheck').checked;
+        const addressInput = document.getElementById('serviceAddress');
+        const mapSection = document.getElementById('mapSection');
+        
+        if (inShop) {
+            mapSection.style.display = 'none';
+            addressInput.removeAttribute('required');
+            addressInput.value = 'In-shop repair at DEVTech center';
+            // Enable submit buttons for in-shop repair
+            document.getElementById('isValidLocation').value = '1';
+            isLocationValid = true;
+            showUserToast('🏪 In-shop repair selected', 'info');
+        } else {
+            mapSection.style.display = 'block';
+            addressInput.setAttribute('required', 'required');
+            addressInput.value = '';
+            document.getElementById('isValidLocation').value = '0';
+            isLocationValid = false;
+            setTimeout(() => {
+                if (map) {
+                    map.invalidateSize();
+                } else {
+                    initMap();
+                }
+            }, 300);
+        }
+        updateSubmitButtons();
+        updateSummary();
+    }
+
+    // ============================================
+    // SUMMARY UPDATE
+    // ============================================
+
+    function updateSummary() {
+        // Device
+        const deviceRadios = document.querySelectorAll('input[name="device_type"]');
+        let device = 'Desktop';
+        let customDevice = '';
+        deviceRadios.forEach(radio => {
+            if (radio.checked) {
+                device = radio.value;
+                if (device === 'Other') {
+                    customDevice = document.getElementById('custom_device')?.value || 'Not specified';
+                }
+            }
+        });
+        document.getElementById('summaryDevice').textContent = device === 'Other' ? `Other: ${customDevice}` : device;
+
+        // Service
+        const serviceSelect = document.getElementById('service_id');
+        const selectedOption = serviceSelect.options[serviceSelect.selectedIndex];
+        if (selectedOption && selectedOption.value) {
+            let serviceName = selectedOption.text;
+            const price = selectedOption.dataset.price || '0';
+            document.getElementById('summaryService').textContent = serviceName;
+            document.getElementById('summaryPrice').textContent = `₱${parseFloat(price).toFixed(2)}`;
+        } else {
+            document.getElementById('summaryService').textContent = 'Not selected';
+            document.getElementById('summaryPrice').textContent = '₱0.00';
+        }
+
+        // Issue
+        const issueText = document.getElementById('problemDesc').value;
+        document.getElementById('summaryIssue').textContent = issueText || 'Not described yet';
+        document.getElementById('summaryIssue').className = issueText ? '' : 'user-summary-placeholder';
+
+        // Location
+        const inShop = document.getElementById('inShopCheck').checked;
+        const address = document.getElementById('serviceAddress').value;
+        document.getElementById('summaryAddress').textContent = inShop ? '🏪 In-shop repair' : (address || 'Not set');
+
+        // Schedule
+        const date = document.getElementById('bookingDate').value;
+        const time = document.getElementById('bookingTime').value;
+        if (date && time) {
+            const formattedDate = formatDate(date);
+            document.getElementById('summarySchedule').textContent = `${formattedDate} at ${time}`;
+            document.getElementById('summarySchedule').className = '';
+        } else {
+            document.getElementById('summarySchedule').textContent = 'Not set';
+            document.getElementById('summarySchedule').className = 'user-summary-placeholder';
+        }
+
+        // Payment
+        updatePaymentInfo();
+    }
+
+    // ============================================
+    // CHARACTER COUNT
+    // ============================================
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const textarea = document.getElementById('problemDesc');
+        if (textarea) {
+            textarea.addEventListener('input', function() {
+                const count = this.value.length;
+                document.getElementById('charCount').textContent = count;
+                if (count > 500) {
+                    this.value = this.value.substring(0, 500);
+                    document.getElementById('charCount').textContent = 500;
+                }
+                updateSummary();
+            });
+        }
+
+        // Service selection change
+        const serviceSelect = document.getElementById('service_id');
+        if (serviceSelect) {
+            serviceSelect.addEventListener('change', function() {
+                const customGroup = document.getElementById('customServiceGroup');
+                if (this.value === 'other') {
+                    customGroup.style.display = 'block';
+                    document.getElementById('custom_service').setAttribute('required', 'required');
+                } else {
+                    customGroup.style.display = 'none';
+                    document.getElementById('custom_service').removeAttribute('required');
+                }
+                updateSummary();
+            });
+        }
+
+        // Device radio change
+        document.querySelectorAll('input[name="device_type"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const customGroup = document.getElementById('customDeviceGroup');
+                if (this.value === 'Other') {
+                    customGroup.style.display = 'block';
+                    document.getElementById('custom_device').setAttribute('required', 'required');
+                } else {
+                    customGroup.style.display = 'none';
+                    document.getElementById('custom_device').removeAttribute('required');
+                }
+                updateSummary();
+            });
+        });
+
+        // Custom device input
+        const customDevice = document.getElementById('custom_device');
+        if (customDevice) {
+            customDevice.addEventListener('input', updateSummary);
+        }
+
+        // Custom service input
+        const customService = document.getElementById('custom_service');
+        if (customService) {
+            customService.addEventListener('input', updateSummary);
+        }
+
+        // Date change
+        const bookingDate = document.getElementById('bookingDate');
+        if (bookingDate) {
+            bookingDate.addEventListener('change', function() {
+                const date = this.value;
+                if (date) {
+                    fetchBookedSlots(date).then(() => {
+                        updateTimeSlots(date);
+                    });
+                } else {
+                    resetTimeSlotsToDefault();
+                }
+                updateSummary();
+            });
+        }
+
+        // Time slot clicks
+        document.querySelectorAll('.user-time-slot').forEach(slot => {
+            slot.addEventListener('click', function(e) {
+                if (this.classList.contains('lunch')) {
+                    showUserToast('🍽️ This is lunch break. Please select another time.', 'warning');
+                    e.stopPropagation();
+                    return;
+                }
+
+                if (this.classList.contains('past')) {
+                    showUserToast('⏰ This time slot has already passed. Please select another time.', 'warning');
+                    e.stopPropagation();
+                    return;
+                }
+
+                if (this.classList.contains('booked')) {
+                    showUserToast('❌ This time slot is fully booked (5/5). Please select another time.', 'error');
+                    e.stopPropagation();
+                    return;
+                }
+
+                const date = document.getElementById('bookingDate').value;
+                if (!date) {
+                    showUserToast('📅 Please select a date first.', 'warning');
+                    e.stopPropagation();
+                    return;
+                }
+
+                const time = this.dataset.time;
+                document.querySelectorAll('.user-time-slot').forEach(s => s.classList.remove('selected'));
+                this.classList.add('selected');
+                document.getElementById('bookingTime').value = time;
+                const count = getBookedCount(date, time);
+                showUserToast(`⏰ Selected: ${this.querySelector('span:first-child')?.textContent || time} (${count}/5 booked)`, 'success');
+                updateSummary();
+            });
+        });
+
+        // Address input
+        const addressInput = document.getElementById('serviceAddress');
+        if (addressInput) {
+            addressInput.addEventListener('input', updateSummary);
+        }
+
+        // Payment method change
+        document.querySelectorAll('input[name="payment_method"]').forEach(radio => {
+            radio.addEventListener('change', updateSummary);
+        });
+
+        // Initialize map if not in-shop
+        const inShopCheck = document.getElementById('inShopCheck');
+        if (inShopCheck && !inShopCheck.checked) {
+            setTimeout(() => {
+                initMap();
+            }, 500);
+        }
+        
+        // Initial submit button state
+        updateSubmitButtons();
+    });
+
+    // ============================================
+    // RESET FORM
+    // ============================================
+
+    function resetForm() {
+        if (!confirm('Are you sure you want to clear all form fields?')) return;
+        
+        document.getElementById('bookingForm').reset();
+        document.getElementById('customServiceGroup').style.display = 'none';
+        document.getElementById('customDeviceGroup').style.display = 'none';
+        document.getElementById('custom_service').value = '';
+        document.getElementById('custom_device').value = '';
+        document.getElementById('bookingTime').value = '';
+        document.getElementById('charCount').textContent = '0';
+        
+        resetTimeSlotsToDefault();
+        
+        if (marker) {
+            map.removeLayer(marker);
+            marker = null;
+        }
+        document.getElementById('pinnedLat').value = '';
+        document.getElementById('pinnedLng').value = '';
+        document.getElementById('isValidLocation').value = '0';
+        document.getElementById('mapPinResult').classList.remove('show', 'valid', 'invalid');
+        document.getElementById('boundaryWarning').classList.remove('show');
+        document.getElementById('locationValid').classList.remove('show');
+        isLocationValid = false;
+        
+        updateSubmitButtons();
+        updateSummary();
+        showUserToast('🗑️ Form has been cleared', 'info');
+    }
+
+    // ============================================
+    // SUBMIT BOOKING
+    // ============================================
+
+    function submitBooking() {
+        const form = document.getElementById('bookingForm');
+        const date = document.getElementById('bookingDate').value;
+        const time = document.getElementById('bookingTime').value;
+        const service = document.getElementById('service_id').value;
+        const issue = document.getElementById('problemDesc').value;
+        const inShop = document.getElementById('inShopCheck').checked;
+        const address = document.getElementById('serviceAddress').value;
+        const isValidLocation = document.getElementById('isValidLocation').value;
+        
+        if (!service || service === '') {
+            showUserToast('Please select a service.', 'error');
+            return;
+        }
+        
+        if (!date) {
+            showUserToast('Please select a date.', 'error');
+            return;
+        }
+        
+        if (!time) {
+            showUserToast('Please select a time slot.', 'error');
+            return;
+        }
+        
+        if (!issue.trim()) {
+            showUserToast('Please describe the issue.', 'error');
+            return;
+        }
+        
+        if (!inShop && !address) {
+            showUserToast('Please enter your address or select in-shop repair.', 'error');
+            return;
+        }
+        
+        // Check if location is valid for home service
+        if (!inShop && isValidLocation !== '1') {
+            showUserToast('❌ Please pin a valid location within Tacloban City on the map.', 'error');
+            document.getElementById('mapSection').scrollIntoView({ behavior: 'smooth' });
+            return;
+        }
+        
+        // Check if time slot is full
+        if (isSlotBooked(date, time)) {
+            showUserToast('❌ This time slot is fully booked (5/5). Please select another time.', 'error');
+            fetchBookedSlots(date).then(() => {
+                updateTimeSlots(date);
+            });
+            return;
+        }
+        
+        // Check if time slot is past
+        if (isSlotPast(date, time)) {
+            showUserToast('⏰ This time slot has already passed. Please select another time.', 'error');
+            updateTimeSlots(date);
+            return;
+        }
+        
+        // Submit form
+        form.submit();
+    }
+
+    // ============================================
+    // FLASH MESSAGE CLOSE
+    // ============================================
+    
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+
+    setTimeout(() => {
+        document.querySelectorAll('.flash-message').forEach(msg => {
+            msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            msg.style.opacity = '0';
+            msg.style.transform = 'translateY(-20px)';
+            setTimeout(() => {
+                if (msg.parentElement) msg.remove();
+            }, 500);
+        });
+    }, 5000);
+
+    // ============================================
+    // KEYBOARD SHORTCUT: Ctrl + Shift + L
+    // ============================================
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+            e.preventDefault();
+            window.location.href = '/admin/login';
+        }
+    });
+
+    console.log('✅ Booking system initialized with Tacloban City geofencing');
+</script>
+{% endblock %}

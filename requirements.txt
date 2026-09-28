@@ -1,0 +1,70 @@
+# ============================================================
+# DEVTech — Python dependencies
+# ============================================================
+# Pinned to versions that ship prebuilt wheels for Python 3.14
+# as of late 2025. If any of these fail to install with a build
+# error, drop down to Python 3.12 — see DEPLOY.md for why.
+# ============================================================
+
+
+# ---- Core Flask stack ----
+Flask==3.1.0
+Werkzeug==3.1.3
+Jinja2==3.1.5
+itsdangerous==2.2.0
+click==8.1.8
+MarkupSafe==3.0.2
+blinker==1.9.0
+
+
+# ---- Database ----
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.41
+PyMySQL==1.1.1
+cryptography==44.0.0
+
+
+# ---- Auth & password hashing ----
+Flask-Bcrypt==1.0.1
+bcrypt==4.2.1
+
+
+# ---- Forms, CSRF ----
+Flask-WTF==1.2.2
+WTForms==3.2.1
+
+
+# ---- OAuth ----
+Authlib==1.4.0
+requests==2.32.3
+
+
+# ---- Rate limiting ----
+Flask-Limiter==3.10.1
+limits==4.0.1
+
+
+# ---- Caching ----
+Flask-Caching==2.3.0
+
+
+# ---- Security headers ----
+flask-talisman==1.1.0
+
+
+# ---- Environment ----
+python-dotenv==1.0.1
+
+
+# ---- Local HTTPS ----
+pyopenssl==25.0.0
+
+
+# ---- Production servers ----
+gunicorn==23.0.0
+waitress==3.0.2
+
+
+# ---- Testing ----
+pytest==8.3.4
+pytest-flask==1.3.0

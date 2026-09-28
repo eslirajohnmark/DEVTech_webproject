@@ -1,0 +1,8 @@
+{% extends 'base/technician_base.html' %}
+{% set page_module = 'service-report' %}
+
+{% block title %}Service Report{% endblock %}
+{% block meta_page %}reports{% endblock %}
+{% block meta_title %}Service Report{% endblock %}
+{% block meta_subtitle %}Record and submit service details{% endblock %}
+{% block meta_job_id %}{{ current or 0 }}{% endblock %}

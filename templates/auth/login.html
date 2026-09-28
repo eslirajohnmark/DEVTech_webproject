@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEVTech - Login</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+</head>
+<body>
+    <div class="login-container">
+        <div class="left">
+            <h1 class="welcome">Welcome Back</h1>
+            <p class="subtitle">Login to your <span>DEVtech</span> account</p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash-message {{ category }}">
+                                <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                                {{ message }}
+                                <button class="flash-close">&times;</button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST" action="{{ url_for('login') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="input-group">
+                    <label>Email Address</label>
+                    <div class="input-box">
+                        <i class="fa-regular fa-envelope"></i>
+                        <input type="email" name="email" placeholder="Enter your email" required>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label>Password</label>
+                    <div class="input-box">
+                        <i class="fa-solid fa-lock"></i>
+                        <input type="password" name="password" placeholder="Enter your password" required>
+                    </div>
+                </div>
+
+                <div class="options-row">
+                    <label class="remember-me">
+                        <input type="checkbox" name="remember" checked>
+                        Remember me
+                    </label>
+                    <a href="#" class="forgot-link">Forgot Password?</a>
+                </div>
+
+                <button type="submit" class="login-btn neon-btn">Log In</button>
+            </form>
+
+            <div class="divider">or login with</div>
+
+            <div class="social-buttons">
+                <a href="{{ url_for('google_login') }}" class="social-btn google">
+                    <i class="fab fa-google"></i>
+                    Google
+                </a>
+                <a href="{{ url_for('facebook_login') }}" class="social-btn facebook">
+                    <i class="fab fa-facebook"></i>
+                    Facebook
+                </a>
+            </div>
+
+            <p class="signup-link">
+                Don't have an account? <a href="{{ url_for('register') }}">Sign up here</a>
+            </p>
+        </div>
+
+        <div class="right">
+            <div class="brand">
+                <h1>DEVtech</h1>
+                <p class="tagline">Computer Service</p>
+                <div class="service-tag">
+                    <i class="fa-solid fa-laptop-code"></i>
+                    Professional IT Solutions
+                </div>
+
+                <div class="register-section">
+                    <div class="register-divider">
+                        <span>New Here?</span>
+                    </div>
+                    <h2>Create Account</h2>
+                    <p class="register-text">Join our community and get access to premium IT services</p>
+                    
+                    <div class="register-features">
+                        <div class="feature">
+                            <i class="fa-solid fa-shield-halved"></i>
+                            <span>Secure Access</span>
+                        </div>
+                        <div class="feature">
+                            <i class="fa-solid fa-clock"></i>
+                            <span>24/7 Support</span>
+                        </div>
+                        <div class="feature">
+                            <i class="fa-solid fa-rocket"></i>
+                            <span>Fast Solutions</span>
+                        </div>
+                    </div>
+
+                    <a href="{{ url_for('register') }}" class="register-btn">
+                        <i class="fa-solid fa-user-plus"></i>
+                        Sign Up Now
+                    </a>
+                    
+                    <p class="login-link">
+                        Already have an account? <a href="{{ url_for('login') }}">Log In</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.querySelectorAll('.flash-close').forEach(btn => {
+            btn.addEventListener('click', function() {
+                this.parentElement.remove();
+            });
+        });
+    </script>
+</body>
+</html>

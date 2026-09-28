@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>DEVTech Admin - {% block title %}Dashboard{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body data-user-role="{{ session.get('role', '') }}">
+    <div class="admin-dashboard-wrapper">
+        <!-- Sidebar -->
+        <aside class="admin-sidebar">
+            <div class="admin-sidebar-brand">
+                <div class="admin-logo-icon">
+                    <i class="fas fa-laptop-code"></i>
+                </div>
+                <div>
+                    <div class="admin-brand-name">DEV<span>Tech</span></div>
+                    <div class="admin-brand-sub">Admin Panel</div>
+                </div>
+            </div>
+
+            <!-- Mobile Menu Toggle -->
+            <button class="admin-menu-toggle" onclick="toggleMobileMenu()" aria-label="Toggle menu">
+                <i class="fas fa-bars"></i>
+            </button>
+
+            <div class="admin-user-mini">
+                <div class="admin-avatar-mini">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <div>
+                    <div class="admin-user-mini-name">{{ session.get('username', 'Admin') }}</div>
+                    <div class="admin-user-mini-role">{{ session.get('role', 'Administrator')|capitalize }}</div>
+                </div>
+            </div>
+
+            <nav class="admin-nav-menu" id="adminMobileNavMenu">
+                <a href="{{ url_for('admin_dashboard') }}" class="admin-nav-item {% if request.endpoint == 'admin_dashboard' %}admin-active{% endif %}">
+                    <i class="fas fa-chart-pie"></i> Dashboard
+                </a>
+                <a href="{{ url_for('admin_users') }}" class="admin-nav-item {% if request.endpoint == 'admin_users' %}admin-active{% endif %}">
+                    <i class="fas fa-users"></i> User Management
+                </a>
+                <a href="{{ url_for('admin_requests') }}" class="admin-nav-item {% if request.endpoint == 'admin_requests' %}admin-active{% endif %}">
+                    <i class="fas fa-clipboard-list"></i> Service Requests
+                </a>
+                <a href="{{ url_for('admin_payments') }}" class="admin-nav-item {% if request.endpoint == 'admin_payments' %}admin-active{% endif %}">
+                    <i class="fas fa-credit-card"></i> Payment Confirmation
+                </a>
+                <a href="{{ url_for('admin_analytics') }}" class="admin-nav-item {% if request.endpoint == 'admin_analytics' %}admin-active{% endif %}">
+                    <i class="fas fa-chart-line"></i> Analytics
+                </a>
+                <a href="{{ url_for('admin_settings') }}" class="admin-nav-item {% if request.endpoint == 'admin_settings' %}admin-active{% endif %}">
+                    <i class="fas fa-cog"></i> Settings
+                </a>
+                <a href="{{ url_for('logout') }}" class="admin-nav-item" style="margin-top: auto; color: var(--danger);">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="admin-main-content">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash-message {{ category }}">
+                                <span>{{ message }}</span>
+                                <button class="flash-close">&times;</button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="adminToast" class="admin-toast">
+        <i class="fas fa-info-circle"></i>
+        <span id="toastMessage"></span>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

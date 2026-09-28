@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEVTech - Register</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+</head>
+<body>
+    <div class="card">
+        <h2 class="form-title">Create Account</h2>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash-message {{ category }}">
+                            <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                            {{ message }}
+                            <button class="flash-close">&times;</button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('register') }}" id="registrationForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="input-group">
+                <label for="fullName">Fullname</label>
+                <input type="text" id="fullName" name="fullName" placeholder="Full name" required>
+            </div>
+
+            <div class="input-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="you@example.com" required>
+            </div>
+
+            <div class="input-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Create a strong password" required>
+            </div>
+
+            <div class="input-group">
+                <label for="rePassword">Re-Password</label>
+                <input type="password" id="rePassword" name="rePassword" placeholder="Confirm your password" required>
+            </div>
+
+            <div class="input-group">
+                <label for="phone">Phonenumber</label>
+                <input type="tel" id="phone" name="phone" placeholder="+63 912 345 6789" required>
+            </div>
+
+            <div class="terms-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="saveDetails" checked>
+                    <span class="terms-text">Save your details and start creating your account. You can also create an account using your existing Facebook or Instagram account.</span>
+                </label>
+            </div>
+
+            <button type="submit" class="btn-primary">CREATE ACCOUNT</button>
+
+            <div class="signin-row">
+                <span>Already have an account?</span>
+                <a href="{{ url_for('login') }}" class="signin-link">Sign in</a>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        document.querySelectorAll('.flash-close').forEach(btn => {
+            btn.addEventListener('click', function() {
+                this.parentElement.remove();
+            });
+        });
+
+        // Password match validation
+        document.getElementById('registrationForm').addEventListener('submit', function(e) {
+            const password = document.getElementById('password').value;
+            const rePassword = document.getElementById('rePassword').value;
+            if (password !== rePassword) {
+                e.preventDefault();
+                alert('Passwords do not match!');
+            }
+        });
+    </script>
+</body>
+</html>

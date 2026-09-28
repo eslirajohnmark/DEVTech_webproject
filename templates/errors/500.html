@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>500 - Server Error | DEVTech</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f8fafc;
+            color: #0b1a2f;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .error-container {
+            text-align: center;
+            padding: 2rem;
+            max-width: 600px;
+        }
+        .error-icon {
+            font-size: 6rem;
+            color: #ef4444;
+            margin-bottom: 1.5rem;
+        }
+        .error-code {
+            font-size: 8rem;
+            font-weight: 900;
+            color: #0b1a2f;
+            line-height: 1;
+        }
+        .error-title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0.5rem 0 1rem;
+            color: #0b1a2f;
+        }
+        .error-message {
+            color: #64748b;
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+        .error-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.8rem 2rem;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+        .btn-primary {
+            background: #2563eb;
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+        }
+        .btn-primary:hover {
+            background: #1d4ed8;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.4);
+        }
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #0b1a2f;
+        }
+        .btn-secondary:hover {
+            background: #e2e8f0;
+            transform: translateY(-2px);
+        }
+        .error-footer {
+            margin-top: 2rem;
+            color: #94a3b8;
+            font-size: 0.85rem;
+        }
+        .error-footer a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .error-footer a:hover {
+            text-decoration: underline;
+        }
+        .error-refresh {
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #94a3b8;
+        }
+        .error-refresh button {
+            background: none;
+            border: none;
+            color: #2563eb;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-family: inherit;
+        }
+        .error-refresh button:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-icon">
+            <i class="fas fa-exclamation-triangle"></i>
+        </div>
+        <div class="error-code">500</div>
+        <h1 class="error-title">Server Error</h1>
+        <p class="error-message">
+            Something went wrong on our end. We're working to fix the issue.
+            Please try again in a few moments.
+        </p>
+        <div class="error-actions">
+            <a href="{{ url_for('home') }}" class="btn btn-primary">
+                <i class="fas fa-home"></i> Go Home
+            </a>
+            <button onclick="window.location.reload()" class="btn btn-secondary">
+                <i class="fas fa-sync-alt"></i> Try Again
+            </button>
+        </div>
+        <div class="error-footer">
+            <p>If the problem persists, <a href="#">Contact Support</a></p>
+            <div class="error-refresh">
+                <span>Error Reference: </span>
+                <span id="errorRef">{{ error_id or 'ERR-' + range(100000, 999999)|random|string }}</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

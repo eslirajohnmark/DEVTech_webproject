@@ -1,0 +1,947 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}User Management{% endblock %}
+
+{% block body_attrs %} data-live-refresh="true"{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>User Management</h1>
+        <p>View and manage all registered users</p>
+    </div>
+    <div class="admin-top-actions">
+        <button class="admin-icon-btn" onclick="showAdminToast('Notifications')">
+            <i class="fas fa-bell"></i>
+            <span class="admin-badge">5</span>
+        </button>
+        <button class="admin-icon-btn" id="refreshUsersBtn" onclick="fetchUsers()" title="Refresh now">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+        <button class="admin-btn admin-btn-primary" onclick="openAddUserModal()">
+            <i class="fas fa-user-plus"></i> Add User
+        </button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="admin-stats-grid">
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-users"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number" id="statTotalUsers">{{ users|length }}</span>
+            <span class="admin-stat-label">Total Users</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-circle-dot"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number" id="statOnlineUsers">0</span>
+            <span class="admin-stat-label">Online Now</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-user-check"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number" id="statActiveUsers">{{ users|selectattr('is_active', 'equalto', True)|list|length }}</span>
+            <span class="admin-stat-label">Active Accounts</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-user-clock"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number" id="statInactiveUsers">{{ users|selectattr('is_active', 'equalto', False)|list|length }}</span>
+            <span class="admin-stat-label">Inactive</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(59,130,246,0.08); color:#3b82f6;">
+            <i class="fas fa-user-shield"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number" id="statAdmins">{{ users|selectattr('role', 'equalto', 'admin')|list|length }}</span>
+            <span class="admin-stat-label">Admins</span>
+        </div>
+    </div>
+</div>
+
+<!-- Search & Filter -->
+<div class="admin-user-filters">
+    <div class="admin-search-wrapper">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="Search users by name, email, or ID..." id="userSearch" oninput="filterUsers()" />
+    </div>
+    <div class="admin-filter-group">
+        <select id="roleFilter" onchange="filterUsers()" class="admin-filter-select">
+            <option value="all">All Roles</option>
+            <option value="customer">Customer</option>
+            <option value="technician">Technician</option>
+            <option value="admin">Admin</option>
+        </select>
+        <select id="statusFilter" onchange="filterUsers()" class="admin-filter-select">
+            <option value="all">All Status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+        </select>
+        <select id="presenceFilter" onchange="filterUsers()" class="admin-filter-select">
+            <option value="all">Online + Offline</option>
+            <option value="online">Online Now</option>
+            <option value="offline">Offline</option>
+        </select>
+        <button class="admin-btn admin-btn-secondary" onclick="resetFilters()">
+            <i class="fas fa-undo"></i> Reset
+        </button>
+    </div>
+</div>
+
+<!-- User Table -->
+<div class="admin-table-container" style="overflow-x:auto;">
+    <table class="admin-table" id="userTable">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Role</th>
+                <th>Last Seen</th>
+                <th>Status</th>
+                <th>Joined</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="userTableBody">
+            <tr><td colspan="8" style="text-align:center; padding:2rem; opacity:0.6;">Loading users...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<div class="admin-pagination">
+    <button class="admin-page-btn" onclick="changePage('prev')"><i class="fas fa-chevron-left"></i></button>
+    <span class="admin-page-info">Page <span id="currentPage">1</span> of <span id="totalPages">1</span></span>
+    <button class="admin-page-btn" onclick="changePage('next')"><i class="fas fa-chevron-right"></i></button>
+</div>
+
+<!-- ============================================ -->
+<!-- VERIFY TECHNICIAN IDENTITY MODAL              -->
+<!-- ============================================ -->
+<div class="admin-modal" id="verifyIdModal">
+    <div class="admin-modal-content" style="max-width:460px;">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-id-card"></i> Verify Identity</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('verifyIdModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body">
+            <p style="color:var(--text-secondary); margin-bottom:1rem;">
+                Verifying <strong id="verifyIdUserName">this technician</strong>. Record the document checked below -
+                only the verified status is ever shown elsewhere in the app; the ID number itself stays admin-only.
+            </p>
+            <div class="admin-form-group">
+                <label for="verifyIdType">ID Type</label>
+                <select id="verifyIdType">
+                    <option value="National ID">National ID (PhilSys)</option>
+                    <option value="Driver's License">Driver's License</option>
+                    <option value="Passport">Passport</option>
+                    <option value="UMID">UMID</option>
+                    <option value="Other">Other Government ID</option>
+                </select>
+            </div>
+            <div class="admin-form-group">
+                <label for="verifyIdNumber">ID Number</label>
+                <input type="text" id="verifyIdNumber" placeholder="Enter the ID number exactly as shown">
+                <small style="color:var(--text-muted); display:block; margin-top:0.4rem;">
+                    <i class="fas fa-lock"></i> Stored for your internal records only - never displayed to customers or elsewhere in the admin panel.
+                </small>
+            </div>
+            <div class="admin-modal-actions" style="margin-top:1.5rem;">
+                <button type="button" class="admin-btn admin-btn-secondary" onclick="closeAdminModal('verifyIdModal')">Cancel</button>
+                <button type="button" class="admin-btn admin-btn-approve" id="confirmVerifyIdBtn" onclick="submitVerifyId()">
+                    <i class="fas fa-check"></i> Confirm Verification
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- USER DETAIL MODAL (eye icon)                  -->
+<!-- ============================================ -->
+<div class="admin-modal" id="userDetailModal">
+    <div class="admin-modal-content" style="max-width:560px;">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-id-card"></i> User Details</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('userDetailModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body" id="userDetailBody">
+            <div style="text-align:center; padding:2rem; opacity:0.6;">
+                <i class="fas fa-spinner fa-spin"></i> Loading...
+            </div>
+        </div>
+        <div class="admin-modal-footer">
+            <button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('userDetailModal')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- ADD / EDIT USER MODAL                         -->
+<!-- ============================================ -->
+<div class="admin-modal" id="userFormModal">
+    <div class="admin-modal-content" style="max-width:480px;">
+        <div class="admin-modal-header">
+            <h2 id="userFormTitle"><i class="fas fa-user-plus"></i> Add User</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('userFormModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body">
+            <input type="hidden" id="userFormId" value="">
+
+            <div class="admin-form-row">
+                <div class="admin-form-group" id="userFormUsernameGroup">
+                    <label for="userFormUsername">Username</label>
+                    <input type="text" id="userFormUsername" placeholder="username">
+                </div>
+                <div class="admin-form-group">
+                    <label for="userFormRole">Role</label>
+                    <select id="userFormRole">
+                        <option value="customer">Customer</option>
+                        <option value="technician">Technician</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="admin-form-group">
+                <label for="userFormFullName">Full Name</label>
+                <input type="text" id="userFormFullName" placeholder="Full name">
+            </div>
+
+            <div class="admin-form-row">
+                <div class="admin-form-group">
+                    <label for="userFormEmail">Email</label>
+                    <input type="email" id="userFormEmail" placeholder="name@example.com">
+                </div>
+                <div class="admin-form-group">
+                    <label for="userFormPhone">Phone</label>
+                    <input type="text" id="userFormPhone" placeholder="09XXXXXXXXX">
+                </div>
+            </div>
+
+            <div class="admin-form-group" id="userFormPasswordGroup">
+                <label for="userFormPassword">Password</label>
+                <input type="password" id="userFormPassword" placeholder="At least 6 characters">
+            </div>
+
+            <div class="admin-form-group" id="userFormAddressGroup" style="display:none;">
+                <label for="userFormAddress">Street Address</label>
+                <input type="text" id="userFormAddress" placeholder="Street address">
+            </div>
+            <div class="admin-form-row" id="userFormCityRowGroup" style="display:none;">
+                <div class="admin-form-group">
+                    <label for="userFormCity">City</label>
+                    <input type="text" id="userFormCity" placeholder="City">
+                </div>
+                <div class="admin-form-group">
+                    <label for="userFormProvince">Province</label>
+                    <input type="text" id="userFormProvince" placeholder="Province">
+                </div>
+                <div class="admin-form-group">
+                    <label for="userFormPostal">Postal Code</label>
+                    <input type="text" id="userFormPostal" placeholder="Postal code">
+                </div>
+            </div>
+        </div>
+        <div class="admin-modal-footer">
+            <button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('userFormModal')">Cancel</button>
+            <button class="admin-btn admin-btn-primary" id="userFormSubmitBtn" onclick="submitUserForm()">
+                <i class="fas fa-check"></i> Save
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Presence (online/offline) styling - self-contained so it doesn't
+       depend on admin.css having these classes already. */
+    .presence-cell {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.82rem;
+        white-space: nowrap;
+    }
+    .presence-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: inline-block;
+    }
+    .presence-cell.online .presence-dot {
+        background: #22c55e;
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+        animation: presencePulse 1.8s infinite;
+    }
+    .presence-cell.online {
+        color: #16a34a;
+        font-weight: 600;
+    }
+    .presence-cell.offline .presence-dot {
+        background: #94a3b8;
+    }
+    .presence-cell.offline {
+        color: #64748b;
+    }
+    @keyframes presencePulse {
+        0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.35); }
+        70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+    }
+    .admin-user-avatar-wrap {
+        position: relative;
+        display: inline-flex;
+    }
+    .admin-user-avatar-wrap .avatar-presence-dot {
+        position: absolute;
+        bottom: -1px;
+        right: -1px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 2px solid var(--admin-card, #10151c);
+        background: #94a3b8;
+    }
+    .admin-user-avatar-wrap .avatar-presence-dot.online {
+        background: #22c55e;
+    }
+    .admin-form-row {
+        display: flex;
+        gap: 0.7rem;
+    }
+    .admin-form-row .admin-form-group {
+        flex: 1;
+        min-width: 0;
+    }
+    .admin-form-group {
+        margin-bottom: 0.9rem;
+    }
+    .admin-form-group label {
+        display: block;
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin-bottom: 0.35rem;
+        opacity: 0.85;
+    }
+    .admin-form-group input,
+    .admin-form-group select {
+        width: 100%;
+        padding: 0.55rem 0.7rem;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(255, 255, 255, 0.03);
+        color: inherit;
+        font-size: 0.9rem;
+        font-family: inherit;
+    }
+    .detail-stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.6rem;
+        margin: 1rem 0;
+    }
+    .detail-stat-box {
+        text-align: center;
+        padding: 0.8rem 0.5rem;
+        border-radius: 10px;
+        background: rgba(148, 163, 184, 0.08);
+    }
+    .detail-stat-box strong {
+        display: block;
+        font-size: 1.15rem;
+    }
+    .detail-stat-box span {
+        font-size: 0.75rem;
+        opacity: 0.7;
+    }
+    .detail-section-title {
+        font-size: 0.8rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        opacity: 0.6;
+        margin: 1.1rem 0 0.5rem;
+    }
+    .detail-row-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+    .detail-row-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0.7rem;
+        border-radius: 8px;
+        background: rgba(148, 163, 184, 0.06);
+        font-size: 0.85rem;
+    }
+</style>
+
+<script>
+    // ============================================
+    // STATE
+    // ============================================
+    let allUsers = {{ users_json | tojson | safe }};
+    let filteredUsers = [];
+    let currentPage = 1;
+    const rowsPerPage = 10;
+    const currentAdminId = {{ session.get('user_id') | tojson }};
+    let pollTimer = null;
+
+    // ============================================
+    // RENDERING
+    // ============================================
+
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function presenceCellHtml(user) {
+        if (user.is_online) {
+            return `<span class="presence-cell online"><span class="presence-dot"></span> Online now</span>`;
+        }
+        return `<span class="presence-cell offline"><span class="presence-dot"></span> ${escapeHtml(user.last_active_display || 'Never logged in')}</span>`;
+    }
+
+    function userRowHtml(user) {
+        const initials = (user.full_name || '?').trim().charAt(0).toUpperCase();
+        const isSelf = user.id === currentAdminId;
+        const roleCell = isSelf
+            ? `<span class="admin-role-badge ${user.role}" style="background:rgba(0,255,136,0.1); color:var(--primary); display:inline-block; padding:0.3rem 0.6rem; border-radius:6px;" title="You can't change your own role while logged in.">
+                   ${escapeHtml(user.role.charAt(0).toUpperCase() + user.role.slice(1))} (you)
+               </span>`
+            : `<select class="admin-role-badge ${user.role}" style="background:rgba(0,255,136,0.1); color:var(--primary);"
+                       onchange="changeUserRole(${user.id}, this.value)">
+                   <option value="customer" ${user.role === 'customer' ? 'selected' : ''}>Customer</option>
+                   <option value="technician" ${user.role === 'technician' ? 'selected' : ''}>Technician</option>
+                   <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+               </select>`;
+
+        // Technicians need identity verification before they can be
+        // assigned to a booking in Requests Management - this badge is the
+        // at-a-glance status, and the ID number itself is never sent to
+        // this page at all (the API response for the user list never
+        // includes it - see build_admin_user_summary in app.py).
+        let verificationBadge = '';
+        if (user.role === 'technician') {
+            verificationBadge = user.id_verified
+                ? `<br><span style="font-size:0.72rem; color:var(--success); margin-top:0.2rem; display:inline-block;"><i class="fas fa-check-circle"></i> ID Verified</span>`
+                : `<br><span style="font-size:0.72rem; color:var(--warning); margin-top:0.2rem; display:inline-block;"><i class="fas fa-exclamation-triangle"></i> Not Verified</span>`;
+        }
+
+        const verifyActionButton = user.role === 'technician'
+            ? (user.id_verified
+                ? `<button class="admin-btn-sm admin-btn-secondary" onclick="revokeVerification(${user.id}, '${escapeHtml(user.full_name)}')" title="Revoke ID Verification">
+                       <i class="fas fa-user-slash"></i>
+                   </button>`
+                : `<button class="admin-btn-sm admin-btn-approve" onclick="openVerifyIdModal(${user.id}, '${escapeHtml(user.full_name)}')" title="Verify Identity">
+                       <i class="fas fa-id-card"></i>
+                   </button>`)
+            : '';
+
+        return `
+            <tr data-user-id="${user.id}">
+                <td>
+                    <div class="admin-user-cell">
+                        <div class="admin-user-avatar-wrap">
+                            <div class="admin-user-avatar-sm"><i class="fas fa-user-circle"></i></div>
+                            <span class="avatar-presence-dot ${user.is_online ? 'online' : ''}"></span>
+                        </div>
+                        <div>
+                            <span class="admin-user-name">${escapeHtml(user.full_name)}</span>
+                            <span class="admin-user-id">#${String(user.id).padStart(4, '0')}</span>
+                        </div>
+                    </div>
+                </td>
+                <td>${escapeHtml(user.email)}</td>
+                <td>${escapeHtml(user.phone || 'N/A')}</td>
+                <td>${roleCell}${verificationBadge}</td>
+                <td>${presenceCellHtml(user)}</td>
+                <td>
+                    <button type="button" class="admin-status-badge ${user.is_active ? 'active' : 'inactive'}"
+                            style="border:none; cursor:pointer;" onclick="toggleUserStatus(${user.id})">
+                        ${user.is_active ? 'Active' : 'Inactive'}
+                    </button>
+                </td>
+                <td>${escapeHtml(user.created_at || 'N/A')}</td>
+                <td>
+                    <div class="admin-action-buttons">
+                        <button class="admin-btn-sm admin-btn-info" onclick="viewUserDetails(${user.id})" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="admin-btn-sm admin-btn-edit" onclick="openEditUserModal(${user.id})" title="Edit User">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        ${verifyActionButton}
+                        <button class="admin-btn-sm admin-btn-danger" onclick="deleteUser(${user.id})" title="Delete User">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function renderPage() {
+        const start = (currentPage - 1) * rowsPerPage;
+        const pageUsers = filteredUsers.slice(start, start + rowsPerPage);
+
+        const tbody = document.getElementById('userTableBody');
+        if (pageUsers.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:2rem; opacity:0.6;">No users match your filters.</td></tr>`;
+        } else {
+            tbody.innerHTML = pageUsers.map(userRowHtml).join('');
+        }
+
+        const totalPages = Math.ceil(filteredUsers.length / rowsPerPage) || 1;
+        document.getElementById('currentPage').textContent = currentPage;
+        document.getElementById('totalPages').textContent = totalPages;
+    }
+
+    function renderStats() {
+        document.getElementById('statTotalUsers').textContent = allUsers.length;
+        document.getElementById('statOnlineUsers').textContent = allUsers.filter(u => u.is_online).length;
+        document.getElementById('statActiveUsers').textContent = allUsers.filter(u => u.is_active).length;
+        document.getElementById('statInactiveUsers').textContent = allUsers.filter(u => !u.is_active).length;
+        document.getElementById('statAdmins').textContent = allUsers.filter(u => u.role === 'admin').length;
+    }
+
+    // ============================================
+    // FILTERING / PAGINATION
+    // ============================================
+
+    function filterUsers() {
+        const search = document.getElementById('userSearch').value.toLowerCase();
+        const role = document.getElementById('roleFilter').value;
+        const status = document.getElementById('statusFilter').value;
+        const presence = document.getElementById('presenceFilter').value;
+
+        filteredUsers = allUsers.filter(u => {
+            const text = `${u.full_name} ${u.email} ${u.phone || ''} #${u.id}`.toLowerCase();
+            const matchesSearch = text.includes(search);
+            const matchesRole = role === 'all' || u.role === role;
+            const matchesStatus = status === 'all' || (status === 'active' ? u.is_active : !u.is_active);
+            const matchesPresence = presence === 'all' || (presence === 'online' ? u.is_online : !u.is_online);
+            return matchesSearch && matchesRole && matchesStatus && matchesPresence;
+        });
+
+        currentPage = 1;
+        renderPage();
+    }
+
+    function changePage(direction) {
+        const totalPages = Math.ceil(filteredUsers.length / rowsPerPage) || 1;
+        if (direction === 'prev' && currentPage > 1) currentPage--;
+        else if (direction === 'next' && currentPage < totalPages) currentPage++;
+        renderPage();
+    }
+
+    function resetFilters() {
+        document.getElementById('userSearch').value = '';
+        document.getElementById('roleFilter').value = 'all';
+        document.getElementById('statusFilter').value = 'all';
+        document.getElementById('presenceFilter').value = 'all';
+        filterUsers();
+    }
+
+    // ============================================
+    // LIVE POLLING (no page refresh needed)
+    // ============================================
+
+    function fetchUsers() {
+        const btn = document.getElementById('refreshUsersBtn');
+        if (btn) btn.querySelector('i').classList.add('fa-spin');
+
+        fetch('/api/admin/users')
+            .then(response => {
+                // admin_required redirects (not a JSON 401) when this tab's
+                // session stopped being an admin session - e.g. logged in/out
+                // as a different account in another tab of the same browser.
+                // fetch() follows that redirect silently, so detect it here
+                // instead of letting response.json() fail on the HTML page.
+                if (response.redirected || !response.ok) {
+                    if (pollTimer) clearInterval(pollTimer);
+                    showSessionEndedBanner();
+                    return null;
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data && data.users) {
+                    allUsers = data.users;
+                    renderStats();
+                    filterUsers();
+                }
+            })
+            .catch(() => {})
+            .finally(() => {
+                if (btn) btn.querySelector('i').classList.remove('fa-spin');
+            });
+    }
+
+    function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(fetchUsers, 3000);
+    }
+
+    // ============================================
+    // ROLE / STATUS - AJAX, no page reload
+    // ============================================
+
+    function changeUserRole(userId, role) {
+        adminAjax(`/api/admin/users/${userId}/role`, 'POST', { role: role })
+            .then(data => {
+                if (data.success) {
+                    const u = allUsers.find(x => x.id === userId);
+                    if (u) u.role = data.role;
+                    renderStats();
+                    showAdminToast('Role updated', 'success');
+                } else {
+                    showAdminToast(data.message || 'Could not update role', 'error');
+                    fetchUsers();
+                }
+            });
+    }
+
+    let pendingVerifyUserId = null;
+
+    function openVerifyIdModal(userId, userName) {
+        pendingVerifyUserId = userId;
+        document.getElementById('verifyIdUserName').textContent = userName;
+        document.getElementById('verifyIdType').value = 'National ID';
+        document.getElementById('verifyIdNumber').value = '';
+        openAdminModal('verifyIdModal');
+    }
+
+    function submitVerifyId() {
+        const idType = document.getElementById('verifyIdType').value;
+        const idNumber = document.getElementById('verifyIdNumber').value.trim();
+
+        if (!idNumber) {
+            showAdminToast('Please enter the ID number', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('confirmVerifyIdBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
+
+        adminAjax(`/api/admin/users/${pendingVerifyUserId}/verify-id`, 'POST', { id_type: idType, id_number: idNumber })
+            .then(data => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-check"></i> Confirm Verification';
+                if (data.success) {
+                    showAdminToast(data.message, 'success');
+                    closeAdminModal('verifyIdModal');
+                    fetchUsers();
+                } else {
+                    showAdminToast(data.message || 'Verification failed', 'error');
+                }
+            });
+    }
+
+    function revokeVerification(userId, userName) {
+        if (!confirm(`Revoke identity verification for ${userName}? They won't be assignable to new bookings until re-verified.`)) return;
+
+        fetch(`/api/admin/users/${userId}/verify-id`, { method: 'DELETE' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAdminToast(data.message, 'success');
+                    fetchUsers();
+                } else {
+                    showAdminToast(data.message || 'Could not revoke verification', 'error');
+                }
+            });
+    }
+
+    function toggleUserStatus(userId) {
+        if (userId === currentAdminId) {
+            showAdminToast("You can't deactivate your own account while logged in.", 'error');
+            return;
+        }
+        adminAjax(`/api/admin/users/${userId}/status`, 'POST', {})
+            .then(data => {
+                if (data.success) {
+                    const u = allUsers.find(x => x.id === userId);
+                    if (u) u.is_active = data.is_active;
+                    renderStats();
+                    filterUsers();
+                    showAdminToast(`User is now ${data.is_active ? 'active' : 'inactive'}`, 'success');
+                } else {
+                    showAdminToast(data.message || 'Could not update status', 'error');
+                }
+            });
+    }
+
+    // ============================================
+    // VIEW DETAILS (eye icon)
+    // ============================================
+
+    function viewUserDetails(userId) {
+        openAdminModal('userDetailModal');
+        const body = document.getElementById('userDetailBody');
+        body.innerHTML = `<div style="text-align:center; padding:2rem; opacity:0.6;"><i class="fas fa-spinner fa-spin"></i> Loading...</div>`;
+
+        fetch(`/api/admin/users/${userId}`)
+            .then(response => response.json())
+            .then(data => {
+                const u = data.user;
+                const presence = u.is_online
+                    ? `<span class="presence-cell online"><span class="presence-dot"></span> Online now</span>`
+                    : `<span class="presence-cell offline"><span class="presence-dot"></span> ${escapeHtml(u.last_active_display || 'Never logged in')}</span>`;
+
+                const addressLine = [u.address, u.city, u.province].filter(Boolean).join(', ') + (u.postal_code ? ' ' + u.postal_code : '');
+
+                body.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:0.9rem; margin-bottom:1rem;">
+                        <div class="admin-user-avatar-sm" style="width:48px; height:48px; font-size:1.6rem;"><i class="fas fa-user-circle"></i></div>
+                        <div>
+                            <div style="font-weight:700; font-size:1.05rem;">${escapeHtml(u.full_name)}</div>
+                            <div style="opacity:0.7; font-size:0.85rem;">@${escapeHtml(u.username)} &middot; #${String(u.id).padStart(4, '0')}</div>
+                        </div>
+                    </div>
+
+                    <div class="detail-row-list">
+                        <div class="detail-row-item"><span>Email</span><strong>${escapeHtml(u.email)}</strong></div>
+                        <div class="detail-row-item"><span>Phone</span><strong>${escapeHtml(u.phone || 'N/A')}</strong></div>
+                        <div class="detail-row-item"><span>Address</span><strong style="text-align:right;">${escapeHtml(addressLine || 'Not provided')}</strong></div>
+                        <div class="detail-row-item"><span>Birth Date</span><strong>${escapeHtml(u.birth_date || 'N/A')}</strong></div>
+                        <div class="detail-row-item"><span>Role</span><strong style="text-transform:capitalize;">${escapeHtml(u.role)}</strong></div>
+                        ${u.role === 'technician' ? `
+                        <div class="detail-row-item"><span>Identity Verification</span><strong>${u.id_verified ? '<span style="color:var(--success);"><i class="fas fa-check-circle"></i> Verified' + (u.id_type ? ' (' + escapeHtml(u.id_type) + ')' : '') + '</span>' : '<span style="color:var(--warning);"><i class="fas fa-exclamation-triangle"></i> Not Verified</span>'}</strong></div>
+                        ` : ''}
+                        <div class="detail-row-item"><span>Account Status</span><strong>${u.is_active ? 'Active' : 'Inactive'}</strong></div>
+                        <div class="detail-row-item"><span>Presence</span>${presence}</div>
+                        <div class="detail-row-item"><span>Joined</span><strong>${escapeHtml(u.created_at)}</strong></div>
+                    </div>
+
+                    <div class="detail-stat-grid">
+                        <div class="detail-stat-box"><strong>${u.stats.orders_count}</strong><span>Shop Orders</span></div>
+                        <div class="detail-stat-box"><strong>${u.stats.bookings_count}</strong><span>Bookings</span></div>
+                        <div class="detail-stat-box"><strong>₱${u.stats.total_spent.toFixed(2)}</strong><span>Total Spent</span></div>
+                    </div>
+
+                    ${u.recent_orders.length ? `
+                        <div class="detail-section-title">Recent Orders</div>
+                        <div class="detail-row-list">
+                            ${u.recent_orders.map(o => `
+                                <div class="detail-row-item">
+                                    <span>${escapeHtml(o.order_number)} &middot; ${escapeHtml(o.created_at)}</span>
+                                    <strong>₱${o.total_amount.toFixed(2)} &middot; <span style="text-transform:capitalize;">${escapeHtml(o.status)}</span></strong>
+                                </div>
+                            `).join('')}
+                        </div>` : ''}
+
+                    ${u.recent_bookings.length ? `
+                        <div class="detail-section-title">Recent Bookings</div>
+                        <div class="detail-row-list">
+                            ${u.recent_bookings.map(b => `
+                                <div class="detail-row-item">
+                                    <span>${escapeHtml(b.booking_number)} &middot; ${escapeHtml(b.device_type)}</span>
+                                    <strong style="text-transform:capitalize;">${escapeHtml(b.status)}</strong>
+                                </div>
+                            `).join('')}
+                        </div>` : ''}
+                `;
+            })
+            .catch(() => {
+                body.innerHTML = `<p style="color:var(--danger);">Could not load user details.</p>`;
+            });
+    }
+
+    // ============================================
+    // ADD / EDIT USER FORM
+    // ============================================
+
+    function resetUserForm() {
+        document.getElementById('userFormId').value = '';
+        document.getElementById('userFormUsername').value = '';
+        document.getElementById('userFormFullName').value = '';
+        document.getElementById('userFormEmail').value = '';
+        document.getElementById('userFormPhone').value = '';
+        document.getElementById('userFormPassword').value = '';
+        document.getElementById('userFormRole').value = 'customer';
+        document.getElementById('userFormAddress').value = '';
+        document.getElementById('userFormCity').value = '';
+        document.getElementById('userFormProvince').value = '';
+        document.getElementById('userFormPostal').value = '';
+    }
+
+    function openAddUserModal() {
+        resetUserForm();
+        document.getElementById('userFormTitle').innerHTML = '<i class="fas fa-user-plus"></i> Add User';
+        document.getElementById('userFormUsernameGroup').style.display = 'block';
+        document.getElementById('userFormPasswordGroup').style.display = 'block';
+        document.getElementById('userFormAddressGroup').style.display = 'none';
+        document.getElementById('userFormCityRowGroup').style.display = 'none';
+        const roleSelect = document.getElementById('userFormRole');
+        roleSelect.disabled = false;
+        roleSelect.title = '';
+        openAdminModal('userFormModal');
+    }
+
+    function openEditUserModal(userId) {
+        const u = allUsers.find(x => x.id === userId);
+        if (!u) return;
+
+        resetUserForm();
+        document.getElementById('userFormTitle').innerHTML = '<i class="fas fa-user-edit"></i> Edit User';
+        document.getElementById('userFormId').value = u.id;
+        document.getElementById('userFormFullName').value = u.full_name || '';
+        document.getElementById('userFormEmail').value = u.email || '';
+        document.getElementById('userFormPhone').value = u.phone || '';
+        document.getElementById('userFormRole').value = u.role;
+        document.getElementById('userFormUsernameGroup').style.display = 'none';
+        document.getElementById('userFormPasswordGroup').style.display = 'none';
+        document.getElementById('userFormAddressGroup').style.display = 'block';
+        document.getElementById('userFormCityRowGroup').style.display = 'flex';
+
+        const roleSelect = document.getElementById('userFormRole');
+        const isSelf = userId === currentAdminId;
+        roleSelect.disabled = isSelf;
+        roleSelect.title = isSelf ? "You can't change your own role while logged in." : '';
+
+        // Full detail (address etc.) isn't in the row summary - fetch it.
+        fetch(`/api/admin/users/${userId}`)
+            .then(response => response.json())
+            .then(data => {
+                const detail = data.user;
+                document.getElementById('userFormAddress').value = detail.address || '';
+                document.getElementById('userFormCity').value = detail.city || '';
+                document.getElementById('userFormProvince').value = detail.province || '';
+                document.getElementById('userFormPostal').value = detail.postal_code || '';
+            })
+            .catch(() => {});
+
+        openAdminModal('userFormModal');
+    }
+
+    function submitUserForm() {
+        const id = document.getElementById('userFormId').value;
+        const isEdit = !!id;
+        const btn = document.getElementById('userFormSubmitBtn');
+
+        const full_name = document.getElementById('userFormFullName').value.trim();
+        const email = document.getElementById('userFormEmail').value.trim();
+        const phone = document.getElementById('userFormPhone').value.trim();
+        const role = document.getElementById('userFormRole').value;
+
+        if (!full_name || !email) {
+            showAdminToast('Full name and email are required.', 'error');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+        if (isEdit) {
+            const payload = {
+                full_name, email, phone, role,
+                address: document.getElementById('userFormAddress').value.trim(),
+                city: document.getElementById('userFormCity').value.trim(),
+                province: document.getElementById('userFormProvince').value.trim(),
+                postal_code: document.getElementById('userFormPostal').value.trim()
+            };
+            adminAjax(`/api/admin/users/${id}`, 'PUT', payload)
+                .then(data => {
+                    if (data.success) {
+                        const idx = allUsers.findIndex(x => x.id === Number(id));
+                        if (idx !== -1) allUsers[idx] = data.user;
+                        renderStats();
+                        filterUsers();
+                        closeAdminModal('userFormModal');
+                        showAdminToast('User updated', 'success');
+                    } else {
+                        showAdminToast(data.message || 'Could not update user', 'error');
+                    }
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-check"></i> Save';
+                });
+        } else {
+            const username = document.getElementById('userFormUsername').value.trim();
+            const password = document.getElementById('userFormPassword').value;
+            adminAjax('/api/admin/users', 'POST', { username, email, password, full_name, phone, role })
+                .then(data => {
+                    if (data.success) {
+                        allUsers.unshift(data.user);
+                        renderStats();
+                        filterUsers();
+                        closeAdminModal('userFormModal');
+                        showAdminToast('User added', 'success');
+                    } else {
+                        showAdminToast(data.message || 'Could not add user', 'error');
+                    }
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-check"></i> Save';
+                });
+        }
+    }
+
+    // ============================================
+    // DELETE USER
+    // ============================================
+
+    function deleteUser(userId) {
+        const u = allUsers.find(x => x.id === userId);
+        if (!u) return;
+        if (userId === currentAdminId) {
+            showAdminToast("You can't delete your own account while logged in.", 'error');
+            return;
+        }
+        if (!confirm(`Delete ${u.full_name}? This cannot be undone.`)) return;
+
+        fetch(`/api/admin/users/${userId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                allUsers = allUsers.filter(x => x.id !== userId);
+                renderStats();
+                filterUsers();
+                showAdminToast(data.message || 'User deleted', 'success');
+            } else {
+                showAdminToast(data.message || 'Could not delete user', 'error');
+            }
+        })
+        .catch(() => showAdminToast('An error occurred while deleting', 'error'));
+    }
+
+    // ============================================
+    // INIT
+    // ============================================
+
+    document.addEventListener('DOMContentLoaded', function() {
+        renderStats();
+        filterUsers();
+        startPolling();
+    });
+</script>
+{% endblock %}

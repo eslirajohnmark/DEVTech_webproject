@@ -1,0 +1,509 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Service Requests{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Service Requests</h1>
+        <p>Manage and review all service requests</p>
+    </div>
+    <div class="admin-top-actions">
+        <button class="admin-icon-btn" onclick="showAdminToast('Notifications')">
+            <i class="fas fa-bell"></i>
+            {% if unread_notifications_count is defined and unread_notifications_count %}
+            <span class="admin-badge">{{ unread_notifications_count }}</span>
+            {% endif %}
+        </button>
+        <button class="admin-icon-btn" onclick="window.location.reload()">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="admin-stats-grid">
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+            <i class="fas fa-clipboard-list"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ bookings|length }}</span>
+            <span class="admin-stat-label">Total Requests</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-clock"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ bookings|selectattr('status', 'equalto', 'pending')|list|length }}</span>
+            <span class="admin-stat-label">Pending</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ bookings|selectattr('status', 'in', ['confirmed', 'completed'])|list|length }}</span>
+            <span class="admin-stat-label">Approved</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
+            <i class="fas fa-times-circle"></i>
+        </div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ bookings|selectattr('status', 'equalto', 'cancelled')|list|length }}</span>
+            <span class="admin-stat-label">Rejected</span>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="admin-request-filters">
+    <div class="admin-search-wrapper">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="Search by name, ID, or service..." id="requestSearch" oninput="filterRequests()" />
+    </div>
+    <div class="admin-filter-group">
+        <select id="statusFilter" onchange="filterRequests()" class="admin-filter-select">
+            <option value="all">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+        </select>
+        <button class="admin-btn admin-btn-secondary" onclick="resetFilters()">
+            <i class="fas fa-undo"></i> Reset
+        </button>
+    </div>
+</div>
+
+<!-- Request List -->
+<div class="admin-request-list" id="requestList">
+    {% if bookings %}
+        {% for booking in bookings %}
+        <div class="admin-request-card" data-status="{{ booking.status }}" data-search="{{ booking.user.full_name }} {{ booking.booking_number }} {{ booking.service.name }}">
+            <div class="admin-request-card-header">
+                <div class="admin-request-card-user">
+                    <i class="fas fa-user-circle"></i>
+                    <div>
+                        <span class="admin-request-card-name">{{ booking.user.full_name }}</span>
+                        <span class="admin-request-card-id">{{ booking.booking_number }}</span>
+                    </div>
+                </div>
+                <span class="admin-request-card-date">{{ booking.created_at.strftime('%b %d, %Y') if booking.created_at else 'N/A' }}</span>
+            </div>
+            <div class="admin-request-card-body">
+                <p class="admin-request-card-desc">{{ booking.description[:80] if booking.description else 'No description' }}{% if booking.description and booking.description|length > 80 %}...{% endif %}</p>
+                <div class="admin-request-card-meta">
+                    <span class="admin-request-card-service">{{ booking.service.name if booking.service else 'N/A' }}</span>
+                    <span class="admin-request-card-status {{ booking.status }}">{{ booking.status|capitalize }}</span>
+                </div>
+            </div>
+            <div class="admin-request-card-actions">
+                <button class="admin-btn admin-btn-sm admin-btn-info" onclick="viewRequestDetails('{{ booking.id }}')">
+                    <i class="fas fa-eye"></i> View Details
+                </button>
+                {% if booking.status == 'pending' %}
+                    <button class="admin-btn admin-btn-sm admin-btn-approve" onclick="openAssignTechnicianModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
+                        <i class="fas fa-user-check"></i> Approve &amp; Assign
+                    </button>
+                    <button class="admin-btn admin-btn-sm admin-btn-reject" onclick="openRejectModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
+                        <i class="fas fa-times"></i> Reject
+                    </button>
+                {% elif booking.status == 'confirmed' %}
+                    <form method="POST" action="{{ url_for('admin_request_status', booking_id=booking.id) }}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="status" value="in_progress">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Start</button>
+                    </form>
+                {% elif booking.status == 'in_progress' %}
+                    <form method="POST" action="{{ url_for('admin_request_status', booking_id=booking.id) }}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="status" value="completed">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-success">Complete</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="admin-empty-state">
+            <i class="fas fa-inbox"></i>
+            <p>No service requests found</p>
+            <p>All requests will appear here once submitted</p>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Pagination -->
+<div class="admin-pagination">
+    <button class="admin-page-btn" onclick="changePage('prev')"><i class="fas fa-chevron-left"></i></button>
+    <span class="admin-page-info">Page <span id="currentPage">1</span> of <span id="totalPages">1</span></span>
+    <button class="admin-page-btn" onclick="changePage('next')"><i class="fas fa-chevron-right"></i></button>
+</div>
+
+<!-- Reject Modal - Updated with reason field -->
+<div class="admin-modal" id="rejectModal">
+    <div class="admin-modal-content">
+        <div class="admin-modal-header">
+            <div class="admin-modal-icon-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <button class="admin-modal-close" onclick="closeAdminModal('rejectModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body" style="text-align:center;">
+            <h3 style="font-size:1.2rem; font-weight:700; color:var(--text-primary);">Reject Request</h3>
+            <p style="color:var(--text-secondary); margin:0.5rem 0;" id="rejectMessage">
+                Are you sure you want to reject request from <strong id="rejectUserName">User</strong>?
+            </p>
+            <form id="rejectForm" method="POST" action="">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="status" value="cancelled">
+                <div class="admin-form-group" style="margin-top:1rem; text-align:left;">
+                    <label for="rejectReason" style="color:var(--text-secondary); display:block; margin-bottom:0.3rem; font-weight:600;">
+                        Reason for rejection: <span style="color:var(--danger);">*</span>
+                    </label>
+                    <textarea id="rejectReason" name="reason" rows="3" 
+                              placeholder="Provide a reason for rejecting this request..." 
+                              required style="width:100%; padding:0.6rem 1rem; border:1.5px solid var(--dark-border); border-radius:var(--radius-sm); background:var(--dark-input); color:var(--text-primary); font-family:inherit; resize:vertical; font-size:0.9rem; transition:var(--transition);"></textarea>
+                    <small style="color:var(--text-muted); font-size:0.75rem;">
+                        <i class="fas fa-info-circle"></i> This reason will be sent to the user.
+                    </small>
+                </div>
+                <div class="admin-modal-actions" style="margin-top:1.5rem; display:flex; gap:0.8rem; justify-content:center;">
+                    <button type="button" class="admin-btn admin-btn-secondary" onclick="closeAdminModal('rejectModal')">Cancel</button>
+                    <button type="submit" class="admin-btn admin-btn-reject" id="confirmRejectBtn">
+                        <i class="fas fa-times"></i> Confirm Rejection
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Assign Technician Modal - shown when approving a pending request -->
+<div class="admin-modal" id="assignTechnicianModal">
+    <div class="admin-modal-content">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-user-check"></i> Assign Technician</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('assignTechnicianModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body">
+            <p style="color:var(--text-secondary); margin-bottom:1rem;">
+                Approving the request from <strong id="assignCustomerName">this customer</strong> requires assigning
+                a technician. Only <strong>identity-verified</strong> technicians can be assigned.
+            </p>
+            <form id="assignTechnicianForm" method="POST" action="">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="status" value="confirmed">
+                <div class="admin-form-group">
+                    <label for="assignTechnicianSelect">Technician</label>
+                    <select name="technician_id" id="assignTechnicianSelect" required>
+                        <option value="" disabled selected>Select a technician...</option>
+                        {% for tech in technicians %}
+                        <option value="{{ tech.id }}" {% if not tech.id_verified %}disabled{% endif %}>
+                            {{ tech.full_name }}{% if tech.id_verified %} - Verified ✓{% else %} - Not Verified (cannot assign){% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    {% if not technicians %}
+                    <small style="color:var(--warning); display:block; margin-top:0.5rem;">
+                        <i class="fas fa-exclamation-triangle"></i> No technician accounts exist yet. Create one in User Management first.
+                    </small>
+                    {% elif technicians|selectattr('id_verified')|list|length == 0 %}
+                    <small style="color:var(--warning); display:block; margin-top:0.5rem;">
+                        <i class="fas fa-exclamation-triangle"></i> No technicians have completed identity verification yet. Verify one in User Management before approving requests.
+                    </small>
+                    {% endif %}
+                </div>
+                <div class="admin-modal-actions" style="margin-top:1.5rem;">
+                    <button type="button" class="admin-btn admin-btn-secondary" onclick="closeAdminModal('assignTechnicianModal')">Cancel</button>
+                    <button type="submit" class="admin-btn admin-btn-approve">
+                        <i class="fas fa-check"></i> Approve &amp; Notify Customer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Booking Details Modal -->
+<div class="admin-modal" id="requestDetailsModal">
+    <div class="admin-modal-content admin-modal-wide">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-clipboard-list"></i> Request Details</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('requestDetailsModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body" id="requestDetailsBody">
+            <div class="admin-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading request details...</p>
+            </div>
+        </div>
+        <div class="admin-modal-footer" id="requestDetailsFooter">
+            <button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('requestDetailsModal')">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentPage = 1;
+    const rowsPerPage = 5;
+    let filteredCards = [];
+
+    function getVisibleCards() {
+        const cards = document.querySelectorAll('.admin-request-card');
+        const search = document.getElementById('requestSearch').value.toLowerCase();
+        const status = document.getElementById('statusFilter').value;
+
+        return Array.from(cards).filter(card => {
+            const searchText = card.dataset.search.toLowerCase();
+            const cardStatus = card.dataset.status;
+            const matchesSearch = searchText.includes(search);
+            const matchesStatus = status === 'all' || cardStatus === status;
+            return matchesSearch && matchesStatus;
+        });
+    }
+
+    function filterRequests() {
+        filteredCards = getVisibleCards();
+        currentPage = 1;
+        renderPage();
+    }
+
+    function renderPage() {
+        const start = (currentPage - 1) * rowsPerPage;
+        const end = start + rowsPerPage;
+        const pageCards = filteredCards.slice(start, end);
+
+        document.querySelectorAll('.admin-request-card').forEach(card => card.style.display = 'none');
+        pageCards.forEach(card => card.style.display = '');
+
+        const totalPages = Math.ceil(filteredCards.length / rowsPerPage) || 1;
+        document.getElementById('currentPage').textContent = currentPage;
+        document.getElementById('totalPages').textContent = totalPages;
+    }
+
+    function changePage(direction) {
+        const totalPages = Math.ceil(filteredCards.length / rowsPerPage) || 1;
+        if (direction === 'prev' && currentPage > 1) {
+            currentPage--;
+        } else if (direction === 'next' && currentPage < totalPages) {
+            currentPage++;
+        }
+        renderPage();
+    }
+
+    function resetFilters() {
+        document.getElementById('requestSearch').value = '';
+        document.getElementById('statusFilter').value = 'all';
+        filterRequests();
+    }
+
+    function openRejectModal(bookingId, userName) {
+        document.getElementById('rejectUserName').textContent = userName;
+        document.getElementById('rejectForm').action = "{{ url_for('admin_request_status', booking_id=0) }}".replace('0', bookingId);
+        document.getElementById('rejectReason').value = '';
+        openAdminModal('rejectModal');
+    }
+
+    function openAssignTechnicianModal(bookingId, userName) {
+        document.getElementById('assignCustomerName').textContent = userName;
+        document.getElementById('assignTechnicianForm').action = "{{ url_for('admin_request_status', booking_id=0) }}".replace('0', bookingId);
+        document.getElementById('assignTechnicianSelect').value = '';
+        openAdminModal('assignTechnicianModal');
+    }
+
+    function viewRequestDetails(bookingId) {
+        const body = document.getElementById('requestDetailsBody');
+        const footer = document.getElementById('requestDetailsFooter');
+        body.innerHTML = `
+            <div class="admin-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading request details...</p>
+            </div>
+        `;
+        footer.innerHTML = `<button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('requestDetailsModal')">Close</button>`;
+        openAdminModal('requestDetailsModal');
+
+        fetch(`/api/admin/booking/${bookingId}`)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to load booking');
+                return response.json();
+            })
+            .then(b => {
+                const statusLabel = b.status.charAt(0).toUpperCase() + b.status.slice(1);
+                const paymentHtml = b.transaction ? `
+                    <div class="admin-detail-section-title">Payment</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Transaction No.</label>
+                            <span>${b.transaction.transaction_number}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Amount</label>
+                            <span>₱${b.transaction.amount.toFixed(2)}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Method</label>
+                            <span style="text-transform:uppercase;">${b.transaction.payment_method || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Payment Status</label>
+                            <span style="text-transform:capitalize;">${b.transaction.payment_status}</span>
+                        </div>
+                        ${b.transaction.gcash_reference ? `
+                        <div class="admin-detail-item">
+                            <label>GCash Reference</label>
+                            <span>${b.transaction.gcash_reference}</span>
+                        </div>` : ''}
+                    </div>
+                ` : `
+                    <div class="admin-detail-section-title">Payment</div>
+                    <p style="color:var(--text-muted); font-size:0.85rem;">No payment recorded for this booking yet.</p>
+                `;
+
+                body.innerHTML = `
+                    <div class="admin-detail-section-title">Booking Info</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Booking Number</label>
+                            <span>${b.booking_number}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Status</label>
+                            <span style="text-transform:capitalize;">${statusLabel}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Date</label>
+                            <span>${b.booking_date || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Time</label>
+                            <span>${b.booking_time || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Device Type</label>
+                            <span>${b.device_type}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Service Location</label>
+                            <span>${b.is_in_shop ? 'In-shop drop-off' : 'On-site / pickup'}</span>
+                        </div>
+                        <div class="admin-detail-item" style="grid-column: 1 / -1;">
+                            <label>Description</label>
+                            <p>${b.description || 'No description provided.'}</p>
+                        </div>
+                        ${b.address ? `
+                        <div class="admin-detail-item" style="grid-column: 1 / -1;">
+                            <label>Address</label>
+                            <p>${b.address}</p>
+                        </div>` : ''}
+                    </div>
+
+                    <div class="admin-detail-section-title">Customer</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Full Name</label>
+                            <span>${b.customer.full_name}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Email</label>
+                            <span>${b.customer.email || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Phone</label>
+                            <span>${b.customer.phone || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Address on File</label>
+                            <span>${b.customer.address || 'N/A'}</span>
+                        </div>
+                    </div>
+
+                    <div class="admin-detail-section-title">Service</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Service Name</label>
+                            <span>${b.service.name}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Price</label>
+                            <span>₱${b.service.price.toFixed(2)}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Est. Duration</label>
+                            <span>${b.service.estimated_hours ? b.service.estimated_hours + ' hr(s)' : 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Requested On</label>
+                            <span>${b.created_at || 'N/A'}</span>
+                        </div>
+                    </div>
+
+                    ${b.technician ? `
+                    <div class="admin-detail-section-title">Assigned Technician</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Name</label>
+                            <span>${b.technician.full_name} ${b.technician.id_verified ? '<span style="color:var(--success); font-size:0.8em;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:var(--warning); font-size:0.8em;">Not Verified</span>'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Contact</label>
+                            <span>${b.technician.phone || 'N/A'}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Assigned On</label>
+                            <span>${b.technician.assigned_at || 'N/A'}</span>
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    ${paymentHtml}
+                `;
+
+                const statusUrl = "{{ url_for('admin_request_status', booking_id=0) }}".replace('0', b.id);
+                let footerHtml = `<button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('requestDetailsModal')">Close</button>`;
+
+                if (b.status === 'pending') {
+                    footerHtml += `
+                        <button class="admin-btn admin-btn-reject" onclick="closeAdminModal('requestDetailsModal'); openRejectModal('${b.id}', '${b.customer.full_name}');">
+                            <i class="fas fa-times"></i> Reject
+                        </button>
+                        <button class="admin-btn admin-btn-approve" onclick="closeAdminModal('requestDetailsModal'); openAssignTechnicianModal('${b.id}', '${b.customer.full_name}');">
+                            <i class="fas fa-user-check"></i> Approve &amp; Assign
+                        </button>`;
+                } else if (b.status === 'confirmed') {
+                    footerHtml += `
+                        <form method="POST" action="${statusUrl}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="status" value="in_progress">
+                            <button type="submit" class="admin-btn admin-btn-primary">Start</button>
+                        </form>`;
+                } else if (b.status === 'in_progress') {
+                    footerHtml += `
+                        <form method="POST" action="${statusUrl}" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="status" value="completed">
+                            <button type="submit" class="admin-btn admin-btn-success">Complete</button>
+                        </form>`;
+                }
+                footer.innerHTML = footerHtml;
+            })
+            .catch(() => {
+                body.innerHTML = `<p style="color:var(--danger); text-align:center; padding:2rem;">Could not load request details. Please try again.</p>`;
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        filteredCards = getVisibleCards();
+        renderPage();
+    });
+</script>
+{% endblock %}

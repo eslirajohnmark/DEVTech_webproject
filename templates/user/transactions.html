@@ -1,0 +1,805 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Transactions{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Transactions</h1>
+        <p>View and manage your payment transactions</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+        </a>
+        <a href="{{ url_for('user_dashboard') }}" class="user-btn-secondary" style="font-size:0.8rem; padding:0.3rem 1rem;">
+            <i class="fas fa-arrow-left"></i> Back
+        </a>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Stats Summary -->
+<div class="user-stats-grid">
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(37,99,235,0.08); color:var(--primary);">
+            <i class="fas fa-receipt"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ transactions|length }}</span>
+            <span class="user-stat-label">Total Transactions</span>
+        </div>
+    </div>
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
+            <i class="fas fa-clock"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'pending')|list|length }}</span>
+            <span class="user-stat-label">Pending</span>
+        </div>
+    </div>
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
+            <i class="fas fa-check-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length }}</span>
+            <span class="user-stat-label">Confirmed</span>
+        </div>
+    </div>
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
+            <i class="fas fa-times-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length }}</span>
+            <span class="user-stat-label">Rejected</span>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Tabs -->
+<div class="user-filter-tabs">
+    <button class="user-filter-tab active" onclick="filterTransactions('all', this)">
+        <i class="fas fa-list"></i> All
+        <span class="user-tab-badge">{{ transactions|length }}</span>
+    </button>
+    <button class="user-filter-tab" onclick="filterTransactions('pending', this)">
+        <i class="fas fa-clock" style="color:var(--warning);"></i> Pending
+        <span class="user-tab-badge">{{ transactions|selectattr('payment_status', 'equalto', 'pending')|list|length }}</span>
+    </button>
+    <button class="user-filter-tab" onclick="filterTransactions('confirmed', this)">
+        <i class="fas fa-check-circle" style="color:var(--success);"></i> Confirmed
+        <span class="user-tab-badge">{{ transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length }}</span>
+    </button>
+    <button class="user-filter-tab" onclick="filterTransactions('rejected', this)">
+        <i class="fas fa-times-circle" style="color:var(--danger);"></i> Rejected
+        <span class="user-tab-badge">{{ transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length }}</span>
+    </button>
+</div>
+
+<!-- Transactions List -->
+<div class="user-transaction-container">
+    {% if transactions %}
+        <div class="user-transaction-list">
+            {% for transaction in transactions %}
+            <div class="user-transaction-item" data-status="{{ transaction.payment_status }}">
+                <!-- Transaction Header -->
+                <div class="user-transaction-header">
+                    <div class="user-transaction-left">
+                        <span class="user-transaction-id">#{{ transaction.transaction_number }}</span>
+                        <span class="user-transaction-status {{ transaction.payment_status }}">
+                            {{ transaction.payment_status|capitalize }}
+                        </span>
+                    </div>
+                    <span class="user-transaction-date">
+                        <i class="fas fa-calendar-alt"></i> 
+                        {{ transaction.transaction_date.strftime('%b %d, %Y at %I:%M %p') }}
+                    </span>
+                </div>
+
+                <!-- Transaction Body -->
+                <div class="user-transaction-body">
+                    <div class="user-transaction-info">
+                        {% if transaction.booking %}
+                            <h4>{{ transaction.booking.service.name }}</h4>
+                            <p><i class="fas fa-tag"></i> Booking #{{ transaction.booking.booking_number }}</p>
+                        {% else %}
+                            <h4>Manual Payment</h4>
+                        {% endif %}
+                        <p><i class="fas fa-credit-card"></i> {{ transaction.payment_method }}</p>
+                        {% if transaction.gcash_reference %}
+                            <p><i class="fas fa-mobile-alt"></i> GCash Ref: {{ transaction.gcash_reference }}</p>
+                        {% endif %}
+                        {% if transaction.rejection_reason %}
+                            <p class="user-transaction-rejection">
+                                <i class="fas fa-exclamation-circle"></i> 
+                                <strong>Reason:</strong> {{ transaction.rejection_reason }}
+                            </p>
+                        {% endif %}
+                    </div>
+                    <div class="user-transaction-amount">
+                        <span class="user-transaction-price">₱{{ "%.2f"|format(transaction.amount) }}</span>
+                        <span class="user-transaction-method">{{ transaction.payment_method }}</span>
+                    </div>
+                </div>
+
+                <!-- Transaction Actions -->
+                <div class="user-transaction-actions">
+                    {% if transaction.payment_status == 'pending' %}
+                        <button class="user-btn-primary small" onclick="openPaymentModal('{{ transaction.id }}')">
+                            <i class="fas fa-credit-card"></i> Pay Now
+                        </button>
+                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
+                            <i class="fas fa-eye"></i> View Details
+                        </button>
+                    {% elif transaction.payment_status == 'confirmed' %}
+                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
+                            <i class="fas fa-eye"></i> View Details
+                        </button>
+                        {% if transaction.receipt_image %}
+                            <button class="user-btn-secondary small" onclick="viewReceipt('{{ transaction.receipt_image }}')">
+                                <i class="fas fa-image"></i> View Receipt
+                            </button>
+                        {% endif %}
+                    {% elif transaction.payment_status == 'rejected' %}
+                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
+                            <i class="fas fa-eye"></i> View Details
+                        </button>
+                        <button class="user-btn-primary small" onclick="retryPayment('{{ transaction.id }}')">
+                            <i class="fas fa-redo"></i> Retry Payment
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="user-empty-state">
+            <i class="fas fa-receipt"></i>
+            <h3>No Transactions Found</h3>
+            <p>You haven't made any transactions yet.</p>
+            <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+                <i class="fas fa-plus"></i> Book a Service
+            </a>
+        </div>
+    {% endif %}
+</div>
+
+<!-- ============================================ -->
+<!-- PAYMENT MODAL -->
+<!-- ============================================ -->
+<div class="user-modal" id="paymentModal">
+    <div class="user-modal-content" style="max-width: 550px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-credit-card"></i> Make Payment</h2>
+            <button class="user-modal-close" onclick="closePaymentModal()">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <form method="POST" id="paymentForm" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" id="paymentTransactionId" name="transaction_id" value="">
+                
+                <!-- Payment Summary -->
+                <div class="user-payment-summary">
+                    <div class="user-payment-item">
+                        <span>Transaction</span>
+                        <span id="paymentTransactionNumber">-</span>
+                    </div>
+                    <div class="user-payment-item">
+                        <span>Service</span>
+                        <span id="paymentServiceName">-</span>
+                    </div>
+                    <div class="user-payment-item">
+                        <span>Booking</span>
+                        <span id="paymentBookingNumber">-</span>
+                    </div>
+                    <div class="user-payment-item user-payment-total">
+                        <span>Total Amount</span>
+                        <span id="paymentAmount">₱0.00</span>
+                    </div>
+                </div>
+
+                <!-- Payment Method -->
+                <div class="user-payment-methods">
+                    <h4>Select Payment Method</h4>
+                    <div class="user-payment-options">
+                        <label class="user-payment-option" for="pay-gcash">
+                            <input type="radio" name="payment_method" id="pay-gcash" value="GCash" checked onchange="togglePaymentMethod()">
+                            <div class="user-payment-option-content">
+                                <i class="fas fa-mobile-alt" style="color:#0073e6;"></i>
+                                <span>GCash</span>
+                            </div>
+                        </label>
+                        <label class="user-payment-option" for="pay-car">
+                            <input type="radio" name="payment_method" id="pay-car" value="C.A.R" onchange="togglePaymentMethod()">
+                            <div class="user-payment-option-content">
+                                <i class="fas fa-money-bill-wave" style="color:#22c55e;"></i>
+                                <span>C.A.R</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- GCash Payment Info -->
+                <div class="user-payment-gcash" id="gcashInfo">
+                    <div class="user-gcash-header">
+                        <i class="fas fa-mobile-alt" style="color:#0073e6; font-size:1.2rem;"></i>
+                        <h4>GCash Payment Instructions</h4>
+                    </div>
+                    <div class="user-gcash-details">
+                        <div class="user-gcash-row">
+                            <span>GCash Number:</span>
+                            <span><strong>0917 123 4567</strong></span>
+                        </div>
+                        <div class="user-gcash-row">
+                            <span>Account Name:</span>
+                            <span><strong>DEVTech Computer Services</strong></span>
+                        </div>
+                        <div class="user-gcash-row">
+                            <span>Amount to Pay:</span>
+                            <span><strong id="gcashAmount">₱0.00</strong></span>
+                        </div>
+                        <div class="user-gcash-row">
+                            <span>Reference:</span>
+                            <span><strong id="gcashReference">-</strong></span>
+                        </div>
+                    </div>
+                    
+                    <div class="user-gcash-note">
+                        <i class="fas fa-info-circle"></i>
+                        <span>Please send the exact amount and use your transaction number as reference.</span>
+                    </div>
+
+                    <!-- GCash Reference Input -->
+                    <div class="user-form-group" style="margin-top:0.8rem;">
+                        <label for="gcashReferenceInput">GCash Reference Number <span class="user-required-star">*</span></label>
+                        <input type="text" id="gcashReferenceInput" name="reference_number" class="user-form-input" placeholder="Enter GCash reference number">
+                        <small class="user-field-hint"><i class="fas fa-info-circle"></i> Enter the reference number from your GCash transaction</small>
+                    </div>
+
+                    <!-- Receipt Upload -->
+                    <div class="user-form-group" style="margin-top:0.8rem;">
+                        <label for="receiptUpload">Upload GCash Receipt/Screenshot <span class="user-optional">(Optional)</span></label>
+                        <div class="user-file-upload">
+                            <input type="file" id="receiptUpload" name="receipt_image" accept="image/*,.pdf" onchange="previewReceipt(this)">
+                            <div class="user-file-upload-area" id="fileUploadArea">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Click or drag to upload receipt</p>
+                                <span class="user-file-types">PNG, JPG, GIF, PDF (Max 5MB)</span>
+                            </div>
+                            <div class="user-file-preview" id="filePreview" style="display:none;">
+                                <img id="filePreviewImage" src="#" alt="Receipt Preview">
+                                <button type="button" class="user-file-remove" onclick="removeReceipt()">&times;</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- C.A.R Info -->
+                <div class="user-payment-car" id="carInfo" style="display:none;">
+                    <div class="user-car-header">
+                        <i class="fas fa-money-bill-wave" style="color:#22c55e; font-size:1.2rem;"></i>
+                        <h4>C.A.R (Cash After Repair)</h4>
+                    </div>
+                    <div class="user-car-details">
+                        <p><i class="fas fa-check-circle" style="color:var(--success);"></i> You only pay after the repair is completed</p>
+                        <p><i class="fas fa-check-circle" style="color:var(--success);"></i> Pay at the DEVTech store when you pick up your device</p>
+                        <p><i class="fas fa-check-circle" style="color:var(--success);"></i> No need to upload a receipt</p>
+                        <p><i class="fas fa-info-circle" style="color:var(--primary);"></i> You will be notified when your repair is ready</p>
+                    </div>
+                </div>
+
+                <div class="user-modal-footer" style="padding:0; margin-top:1.5rem; border-top:1px solid var(--user-border); padding-top:1rem;">
+                    <button type="button" class="user-btn-secondary" onclick="closePaymentModal()">Cancel</button>
+                    <button type="submit" class="user-btn-primary" id="submitPayment">
+                        <i class="fas fa-check"></i> Submit Payment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- TRANSACTION DETAILS MODAL -->
+<!-- ============================================ -->
+<div class="user-modal" id="transactionDetailsModal">
+    <div class="user-modal-content" style="max-width: 600px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Transaction Details</h2>
+            <button class="user-modal-close" onclick="closeTransactionDetails()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="transactionDetailsBody">
+            <div id="transactionDetailsContent">
+                <div class="transaction-detail-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading transaction details...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeTransactionDetails()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- RECEIPT VIEWER MODAL -->
+<!-- ============================================ -->
+<div class="user-modal" id="receiptViewerModal">
+    <div class="user-modal-content" style="max-width: 700px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-image"></i> Payment Receipt</h2>
+            <button class="user-modal-close" onclick="closeReceiptViewer()">&times;</button>
+        </div>
+        <div class="user-modal-body" style="text-align:center;">
+            <img id="receiptViewerImage" src="#" alt="Receipt" style="max-width:100%; max-height:70vh; border-radius:8px;">
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeReceiptViewer()">Close</button>
+            <a id="receiptDownloadLink" href="#" download="receipt" class="user-btn-primary">
+                <i class="fas fa-download"></i> Download
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer"></div>
+
+<script>
+    // ============================================
+    // STATE
+    // ============================================
+    
+    let currentTransactionId = null;
+    let transactionData = {};
+
+    // ============================================
+    // TOAST NOTIFICATION
+    // ============================================
+
+    function showUserToast(message, type = 'info', duration = 4000) {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 10000;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                max-width: 400px;
+                width: 100%;
+                pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+        
+        const toast = document.createElement('div');
+        const colors = {
+            'success': '#22c55e',
+            'error': '#ef4444',
+            'warning': '#f59e0b',
+            'info': '#2563eb'
+        };
+        
+        toast.style.cssText = `
+            pointer-events: auto;
+            background: var(--user-card);
+            padding: 12px 20px;
+            border-radius: 12px;
+            border-left: 4px solid ${colors[type] || '#2563eb'};
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--user-text-primary);
+            transform: translateX(120%);
+            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            width: 100%;
+        `;
+        
+        const icons = {
+            'success': 'fa-check-circle',
+            'error': 'fa-exclamation-circle',
+            'warning': 'fa-exclamation-triangle',
+            'info': 'fa-info-circle'
+        };
+        
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
+            <span style="flex:1;">${message}</span>
+            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:var(--user-text-muted); cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
+        `;
+        
+        container.appendChild(toast);
+        
+        requestAnimationFrame(() => {
+            toast.style.transform = 'translateX(0)';
+        });
+        
+        setTimeout(() => {
+            toast.style.transform = 'translateX(120%)';
+            setTimeout(() => {
+                if (toast.parentElement) toast.remove();
+            }, 400);
+        }, duration);
+    }
+
+    // ============================================
+    // FILTER TRANSACTIONS
+    // ============================================
+
+    function filterTransactions(status, button) {
+        document.querySelectorAll('.user-filter-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        button.classList.add('active');
+
+        const items = document.querySelectorAll('.user-transaction-item');
+        let visibleCount = 0;
+
+        items.forEach(item => {
+            if (status === 'all' || item.dataset.status === status) {
+                item.style.display = '';
+                visibleCount++;
+            } else {
+                item.style.display = 'none';
+            }
+        });
+
+        // Show/hide empty state
+        const container = document.querySelector('.user-transaction-container');
+        let emptyState = container.querySelector('.user-filter-empty-state');
+        
+        if (visibleCount === 0) {
+            if (!emptyState) {
+                emptyState = document.createElement('div');
+                emptyState.className = 'user-empty-state user-filter-empty-state';
+                emptyState.innerHTML = `
+                    <i class="fas fa-filter"></i>
+                    <h3>No Results Found</h3>
+                    <p>No transactions match the selected filter.</p>
+                    <button class="user-btn-secondary" onclick="document.querySelector('.user-filter-tab').click()">
+                        <i class="fas fa-undo"></i> Reset Filter
+                    </button>
+                `;
+                container.appendChild(emptyState);
+            }
+            emptyState.style.display = 'block';
+        } else {
+            if (emptyState) {
+                emptyState.style.display = 'none';
+            }
+        }
+    }
+
+    // ============================================
+    // PAYMENT MODAL
+    // ============================================
+
+    function openPaymentModal(transactionId) {
+        currentTransactionId = transactionId;
+        document.getElementById('paymentTransactionId').value = transactionId;
+        
+        // Find transaction data from the page
+        const item = document.querySelector(`.user-transaction-item[data-status]`);
+        if (item) {
+            const header = item.querySelector('.user-transaction-header');
+            const body = item.querySelector('.user-transaction-body');
+            const amount = item.querySelector('.user-transaction-price');
+            
+            if (header) {
+                const id = header.querySelector('.user-transaction-id');
+                if (id) document.getElementById('paymentTransactionNumber').textContent = id.textContent.trim();
+            }
+            
+            if (body) {
+                const h4 = body.querySelector('h4');
+                if (h4) document.getElementById('paymentServiceName').textContent = h4.textContent;
+                
+                const pTags = body.querySelectorAll('p');
+                pTags.forEach(p => {
+                    if (p.textContent.includes('Booking')) {
+                        document.getElementById('paymentBookingNumber').textContent = p.textContent.replace('Booking', '').trim();
+                    }
+                });
+            }
+            
+            if (amount) {
+                document.getElementById('paymentAmount').textContent = amount.textContent;
+                document.getElementById('gcashAmount').textContent = amount.textContent;
+            }
+            
+            // Set reference
+            const ref = document.querySelector('.user-transaction-id');
+            if (ref) {
+                document.getElementById('gcashReference').textContent = ref.textContent.trim();
+            }
+        }
+        
+        document.getElementById('paymentModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closePaymentModal() {
+        document.getElementById('paymentModal').classList.remove('active');
+        document.body.style.overflow = '';
+        document.getElementById('paymentForm').reset();
+        removeReceipt();
+    }
+
+    function togglePaymentMethod() {
+        const gcashRadio = document.getElementById('pay-gcash');
+        const gcashInfo = document.getElementById('gcashInfo');
+        const carInfo = document.getElementById('carInfo');
+        
+        if (gcashRadio.checked) {
+            gcashInfo.style.display = 'block';
+            carInfo.style.display = 'none';
+        } else {
+            gcashInfo.style.display = 'none';
+            carInfo.style.display = 'block';
+        }
+    }
+
+    // ============================================
+    // RECEIPT UPLOAD
+    // ============================================
+
+    function previewReceipt(input) {
+        const file = input.files[0];
+        if (!file) return;
+        
+        // Check file size (max 5MB)
+        if (file.size > 5 * 1024 * 1024) {
+            showUserToast('File too large. Maximum size is 5MB.', 'error');
+            input.value = '';
+            return;
+        }
+        
+        // Check file type
+        const validTypes = ['image/png', 'image/jpeg', 'image/gif', 'application/pdf'];
+        if (!validTypes.includes(file.type)) {
+            showUserToast('Invalid file type. Please upload PNG, JPG, GIF, or PDF.', 'error');
+            input.value = '';
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const preview = document.getElementById('filePreview');
+            const image = document.getElementById('filePreviewImage');
+            const uploadArea = document.getElementById('fileUploadArea');
+            
+            image.src = e.target.result;
+            preview.style.display = 'block';
+            uploadArea.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function removeReceipt() {
+        const input = document.getElementById('receiptUpload');
+        const preview = document.getElementById('filePreview');
+        const uploadArea = document.getElementById('fileUploadArea');
+        
+        input.value = '';
+        preview.style.display = 'none';
+        uploadArea.style.display = 'block';
+        document.getElementById('filePreviewImage').src = '#';
+    }
+
+    // ============================================
+    // TRANSACTION DETAILS
+    // ============================================
+
+    function viewTransactionDetails(transactionId) {
+        const modal = document.getElementById('transactionDetailsModal');
+        const content = document.getElementById('transactionDetailsContent');
+        
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        content.innerHTML = `
+            <div class="transaction-detail-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading transaction details...</p>
+            </div>
+        `;
+        
+        // Find transaction from page
+        const item = document.querySelector(`.user-transaction-item`);
+        if (item) {
+            const header = item.querySelector('.user-transaction-header');
+            const body = item.querySelector('.user-transaction-body');
+            const amount = item.querySelector('.user-transaction-price');
+            
+            let html = '<div class="transaction-detail-content">';
+            
+            // Header
+            html += `<div class="transaction-detail-row"><strong>Transaction:</strong> <span>${header?.querySelector('.user-transaction-id')?.textContent || '-'}</span></div>`;
+            html += `<div class="transaction-detail-row"><strong>Status:</strong> <span class="user-transaction-status ${item.dataset.status}">${item.dataset.status|capitalize}</span></div>`;
+            html += `<div class="transaction-detail-row"><strong>Date:</strong> <span>${header?.querySelector('.user-transaction-date')?.textContent?.trim() || '-'}</span></div>`;
+            
+            // Body
+            html += `<div class="transaction-detail-row"><strong>Service:</strong> <span>${body?.querySelector('h4')?.textContent || '-'}</span></div>`;
+            
+            const pTags = body?.querySelectorAll('p') || [];
+            pTags.forEach(p => {
+                const text = p.textContent;
+                if (text.includes('Booking')) {
+                    html += `<div class="transaction-detail-row"><strong>Booking:</strong> <span>${text.replace('Booking', '').trim()}</span></div>`;
+                } else if (text.includes('GCash Ref')) {
+                    html += `<div class="transaction-detail-row"><strong>GCash Reference:</strong> <span>${text.replace('GCash Ref:', '').trim()}</span></div>`;
+                } else if (text.includes('Method')) {
+                    html += `<div class="transaction-detail-row"><strong>Payment Method:</strong> <span>${text.replace('Payment Method:', '').trim()}</span></div>`;
+                } else if (text.includes('Reason')) {
+                    html += `<div class="transaction-detail-row"><strong>Rejection Reason:</strong> <span style="color:var(--danger);">${text.replace('Reason:', '').trim()}</span></div>`;
+                }
+            });
+            
+            html += `<div class="transaction-detail-row"><strong>Amount:</strong> <span style="font-size:1.2rem; font-weight:700; color:var(--primary);">${amount?.textContent || '₱0.00'}</span></div>`;
+            
+            // Receipt
+            const receiptImage = item.querySelector('[data-receipt]');
+            if (receiptImage) {
+                html += `<div class="transaction-detail-row"><strong>Receipt:</strong> <button class="user-btn-secondary small" onclick="viewReceipt('${receiptImage.dataset.receipt}')"><i class="fas fa-image"></i> View Receipt</button></div>`;
+            }
+            
+            html += '</div>';
+            content.innerHTML = html;
+        }
+    }
+
+    function closeTransactionDetails() {
+        document.getElementById('transactionDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // ============================================
+    // RECEIPT VIEWER
+    // ============================================
+
+    function viewReceipt(receiptPath) {
+        const modal = document.getElementById('receiptViewerModal');
+        const image = document.getElementById('receiptViewerImage');
+        const downloadLink = document.getElementById('receiptDownloadLink');
+        
+        image.src = receiptPath;
+        downloadLink.href = receiptPath;
+        downloadLink.download = receiptPath.split('/').pop();
+        
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeReceiptViewer() {
+        document.getElementById('receiptViewerModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // ============================================
+    // RETRY PAYMENT
+    // ============================================
+
+    function retryPayment(transactionId) {
+        openPaymentModal(transactionId);
+    }
+
+    // ============================================
+    // PAYMENT FORM SUBMISSION
+    // ============================================
+
+    document.getElementById('paymentForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const transactionId = document.getElementById('paymentTransactionId').value;
+        const paymentMethod = document.querySelector('input[name="payment_method"]:checked');
+        const reference = document.getElementById('gcashReferenceInput').value;
+        const receiptFile = document.getElementById('receiptUpload').files[0];
+        
+        if (!paymentMethod) {
+            showUserToast('Please select a payment method.', 'error');
+            return;
+        }
+        
+        if (paymentMethod.value === 'GCash' && !reference) {
+            showUserToast('Please enter the GCash reference number.', 'error');
+            document.getElementById('gcashReferenceInput').focus();
+            return;
+        }
+        
+        // Submit the form
+        const formData = new FormData(this);
+        this.submit();
+    });
+
+    // ============================================
+    // MODAL CLOSE HANDLERS
+    // ============================================
+    
+    document.getElementById('paymentModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closePaymentModal();
+        }
+    });
+
+    document.getElementById('transactionDetailsModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeTransactionDetails();
+        }
+    });
+
+    document.getElementById('receiptViewerModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeReceiptViewer();
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closePaymentModal();
+            closeTransactionDetails();
+            closeReceiptViewer();
+        }
+    });
+
+    // ============================================
+    // FLASH MESSAGE CLOSE
+    // ============================================
+    
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+
+    setTimeout(() => {
+        document.querySelectorAll('.flash-message').forEach(msg => {
+            msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            msg.style.opacity = '0';
+            msg.style.transform = 'translateY(-20px)';
+            setTimeout(() => {
+                if (msg.parentElement) msg.remove();
+            }, 500);
+        });
+    }, 5000);
+
+    // ============================================
+    // KEYBOARD SHORTCUT: Ctrl + Shift + L
+    // ============================================
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+            e.preventDefault();
+            window.location.href = '/admin/login';
+        }
+    });
+
+    console.log('✅ Transactions page initialized');
+</script>
+{% endblock %}

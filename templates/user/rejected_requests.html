@@ -1,0 +1,115 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Rejected Requests{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Rejected Requests</h1>
+        <p>View all your cancelled or rejected bookings</p>
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+            <i class="fas fa-plus"></i> New Booking
+        </a>
+        <button class="user-icon-btn" onclick="showUserToast('Notifications')">
+            <i class="fas fa-bell"></i>
+            <span class="user-badge">{{ notifications|length }}</span>
+        </button>
+    </div>
+</div>
+
+<!-- Stats Summary -->
+<div class="user-stats-grid">
+    <div class="user-stat-card">
+        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:#dc2626;">
+            <i class="fas fa-times-circle"></i>
+        </div>
+        <div class="user-stat-info">
+            <span class="user-stat-number">{{ bookings|length }}</span>
+            <span class="user-stat-label">Rejected Requests</span>
+        </div>
+    </div>
+</div>
+
+<!-- Bookings Table -->
+<div class="user-table-container">
+    {% if bookings %}
+        <table class="user-table">
+            <thead>
+                <tr>
+                    <th>Booking ID</th>
+                    <th>Service</th>
+                    <th>Device</th>
+                    <th>Date & Time</th>
+                    <th>Status</th>
+                    <th>Amount</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for booking in bookings %}
+                <tr>
+                    <td><span class="user-booking-id">{{ booking.booking_number }}</span></td>
+                    <td><span class="user-service-name">{{ booking.service.name }}</span></td>
+                    <td>{{ booking.device_type }}</td>
+                    <td>
+                        <div class="user-booking-datetime">
+                            <div>{{ booking.booking_date.strftime('%b %d, %Y') }}</div>
+                            <div class="user-time">{{ booking.booking_time.strftime('%I:%M %p') }}</div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="user-status-badge cancelled">
+                            Cancelled
+                        </span>
+                    </td>
+                    <td><span class="user-amount">₱{{ "%.2f"|format(booking.service.price) }}</span></td>
+                    <td>
+                        <button class="user-action-btn-sm view-btn" onclick="openBookingDetails('{{ booking.id }}')" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="user-empty-state">
+            <i class="fas fa-check-circle" style="color:var(--success);"></i>
+            <h3>No Rejected Requests</h3>
+            <p>You don't have any rejected or cancelled bookings.</p>
+            <a href="{{ url_for('request_service') }}" class="user-btn-primary">
+                <i class="fas fa-plus"></i> Book Now
+            </a>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Booking Details Modal -->
+<div class="user-modal" id="bookingDetailsModal">
+    <div class="user-modal-content" style="max-width: 700px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-file-invoice"></i> Booking Details</h2>
+            <button class="user-modal-close" onclick="closeBookingDetails()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="bookingDetailsBody">
+            <div id="bookingDetailsContent">
+                <div class="booking-detail-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading booking details...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeBookingDetails()">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Include the same JavaScript from completed_bookings.html
+    // (Copy the script from completed_bookings.html)
+</script>
+{% endblock %}

@@ -1,0 +1,468 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Notifications{% endblock %}
+
+{% block content %}
+<!-- Top Bar -->
+<div class="user-top-bar">
+    <div class="user-page-title">
+        <h1>Notifications</h1>
+        <p>Stay updated with your latest notifications</p>
+    </div>
+    <div class="user-top-actions">
+        <button class="user-btn-secondary" onclick="markAllAsRead()" style="font-size:0.8rem; padding:0.4rem 1rem;">
+            <i class="fas fa-check-double"></i> Mark All Read
+        </button>
+        <a href="{{ url_for('user_shop') }}" class="user-icon-btn" title="Back to Shop">
+            <i class="fas fa-store"></i>
+        </a>
+        <button class="user-icon-btn" onclick="window.location.reload()">
+            <i class="fas fa-sync-alt"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+                <div class="flash-message {{ category }}">
+                    <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- Filter Tabs -->
+<div class="user-filter-tabs">
+    <button class="user-filter-tab active" onclick="filterNotifications('all', this)">
+        <i class="fas fa-bell"></i> All
+        <span class="user-tab-badge">{{ notifications|length }}</span>
+    </button>
+    <button class="user-filter-tab" onclick="filterNotifications('unread', this)">
+        <i class="fas fa-circle" style="color:var(--user-primary); font-size:0.6rem;"></i> Unread
+        <span class="user-tab-badge">{{ notifications|selectattr('is_read', 'equalto', false)|list|length }}</span>
+    </button>
+    <button class="user-filter-tab" onclick="filterNotifications('read', this)">
+        <i class="fas fa-check-circle" style="color:var(--user-success); font-size:0.6rem;"></i> Read
+    </button>
+    <button class="user-filter-tab" onclick="filterNotifications('info', this)">
+        <i class="fas fa-info-circle" style="color:var(--user-primary);"></i> Info
+    </button>
+    <button class="user-filter-tab" onclick="filterNotifications('success', this)">
+        <i class="fas fa-check-circle" style="color:var(--user-success);"></i> Success
+    </button>
+    <button class="user-filter-tab" onclick="filterNotifications('warning', this)">
+        <i class="fas fa-exclamation-triangle" style="color:var(--user-warning);"></i> Warning
+    </button>
+    <button class="user-filter-tab" onclick="filterNotifications('error', this)">
+        <i class="fas fa-times-circle" style="color:var(--user-danger);"></i> Error
+    </button>
+</div>
+
+<!-- Notifications List -->
+<div class="user-notification-container">
+    {% if notifications %}
+        <div class="user-notification-list">
+            {% for notif in notifications %}
+            <div class="user-notification-card {% if not notif.is_read %}unread{% endif %}" 
+                 data-id="{{ notif.id }}"
+                 data-status="{% if not notif.is_read %}unread{% else %}read{% endif %}"
+                 data-type="{{ notif.type }}"
+                 onclick="viewNotificationDetails('{{ notif.id }}')"
+                 style="cursor:pointer;">
+                <div class="user-notification-card-left">
+                    <div class="user-notification-icon-large {{ notif.type }}">
+                        <i class="fas fa-{% if notif.type == 'success' %}check-circle{% elif notif.type == 'error' %}times-circle{% elif notif.type == 'warning' %}exclamation-triangle{% else %}info-circle{% endif %}"></i>
+                    </div>
+                </div>
+                <div class="user-notification-card-content">
+                    <div class="user-notification-card-header">
+                        <h4 class="user-notification-card-title">{{ notif.title }}</h4>
+                        <span class="user-notification-card-time">{{ notif.created_at.strftime('%b %d, %Y at %I:%M %p') }}</span>
+                    </div>
+                    <p class="user-notification-card-message">{{ notif.message }}</p>
+                    {% if notif.type == 'error' %}
+                        <div class="user-notification-rejection-badge">
+                            <i class="fas fa-exclamation-circle"></i> Request Rejected
+                        </div>
+                    {% endif %}
+                    <div class="user-notification-card-actions">
+                        <button class="user-action-btn-sm view-btn" onclick="event.stopPropagation(); viewNotificationDetails('{{ notif.id }}')" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        {% if not notif.is_read %}
+                            <button class="user-action-btn-sm mark-read-btn" onclick="event.stopPropagation(); markAsRead('{{ notif.id }}')" title="Mark as read">
+                                <i class="fas fa-check"></i>
+                            </button>
+                        {% endif %}
+                        <button class="user-action-btn-sm delete-btn" onclick="event.stopPropagation(); deleteNotification('{{ notif.id }}')" title="Delete">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="user-empty-state" style="padding:3rem 1rem;">
+            <i class="fas fa-bell-slash" style="font-size:3rem;"></i>
+            <h3>No Notifications</h3>
+            <p>You're all caught up! No new notifications to display.</p>
+            <a href="{{ url_for('user_shop') }}" class="user-btn-primary" style="margin-top:1rem;">
+                <i class="fas fa-store"></i> Continue Shopping
+            </a>
+        </div>
+    {% endif %}
+</div>
+
+<!-- ============================================ -->
+<!-- NOTIFICATION DETAILS MODAL -->
+<!-- ============================================ -->
+<div class="user-modal" id="notificationDetailsModal">
+    <div class="user-modal-content" style="max-width: 550px;">
+        <div class="user-modal-header">
+            <h2><i class="fas fa-bell"></i> Notification Details</h2>
+            <button class="user-modal-close" onclick="closeNotificationDetails()">&times;</button>
+        </div>
+        <div class="user-modal-body" id="notificationDetailsBody">
+            <div id="notificationDetailsContent">
+                <div class="notification-detail-loading" style="text-align:center; padding:2rem;">
+                    <i class="fas fa-spinner fa-spin" style="font-size:1.5rem;"></i>
+                    <p style="margin-top:0.5rem;">Loading notification details...</p>
+                </div>
+            </div>
+        </div>
+        <div class="user-modal-footer">
+            <button class="user-btn-secondary" onclick="closeNotificationDetails()">Close</button>
+            <button class="user-btn-primary" id="notificationActionBtn" style="display:none;">
+                <i class="fas fa-eye"></i> View Booking
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ============================================
+    // NOTIFICATION FUNCTIONS
+    // ============================================
+
+    function filterNotifications(filter, button) {
+        // Update active tab
+        document.querySelectorAll('.user-filter-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        button.classList.add('active');
+
+        // Filter notifications
+        const notifications = document.querySelectorAll('.user-notification-card');
+        let visibleCount = 0;
+
+        notifications.forEach(notif => {
+            let show = true;
+            
+            if (filter === 'unread') {
+                show = notif.dataset.status === 'unread';
+            } else if (filter === 'read') {
+                show = notif.dataset.status === 'read';
+            } else if (filter === 'all') {
+                show = true;
+            } else {
+                show = notif.dataset.type === filter;
+            }
+
+            if (show) {
+                notif.style.display = 'flex';
+                visibleCount++;
+            } else {
+                notif.style.display = 'none';
+            }
+        });
+
+        // Show/hide empty state
+        const container = document.querySelector('.user-notification-container');
+        let emptyState = container.querySelector('.user-filter-empty-state');
+        
+        if (visibleCount === 0) {
+            if (!emptyState) {
+                emptyState = document.createElement('div');
+                emptyState.className = 'user-empty-state user-filter-empty-state';
+                emptyState.innerHTML = `
+                    <i class="fas fa-filter"></i>
+                    <h3>No Results Found</h3>
+                    <p>No notifications match the selected filter.</p>
+                    <button class="user-btn-secondary" onclick="document.querySelector('.user-filter-tab.active').click()">
+                        <i class="fas fa-undo"></i> Reset Filter
+                    </button>
+                `;
+                container.appendChild(emptyState);
+            }
+            emptyState.style.display = 'block';
+        } else {
+            if (emptyState) {
+                emptyState.style.display = 'none';
+            }
+        }
+    }
+
+    // ============================================
+    // NOTIFICATION DETAILS
+    // ============================================
+
+    function viewNotificationDetails(notificationId) {
+        const modal = document.getElementById('notificationDetailsModal');
+        const content = document.getElementById('notificationDetailsContent');
+        const actionBtn = document.getElementById('notificationActionBtn');
+        
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Find the notification card
+        const card = document.querySelector(`.user-notification-card[data-id="${notificationId}"]`);
+        if (!card) {
+            content.innerHTML = `
+                <div class="notification-detail-empty" style="text-align:center; padding:2rem;">
+                    <i class="fas fa-bell-slash" style="font-size:2rem; opacity:0.3;"></i>
+                    <p style="margin-top:0.5rem;">Notification not found</p>
+                </div>
+            `;
+            actionBtn.style.display = 'none';
+            return;
+        }
+        
+        const title = card.querySelector('.user-notification-card-title')?.textContent || 'Notification';
+        const message = card.querySelector('.user-notification-card-message')?.textContent || '';
+        const time = card.querySelector('.user-notification-card-time')?.textContent || '';
+        const type = card.dataset.type || 'info';
+        const isRejection = type === 'error' || title.includes('Rejected') || title.includes('Rejection');
+        
+        // Build HTML
+        let html = `
+            <div class="notification-detail-item">
+                <div class="notification-detail-header" style="display:flex; align-items:center; gap:0.8rem; margin-bottom:1rem; padding-bottom:0.8rem; border-bottom:1px solid var(--user-border);">
+                    <div class="user-notification-icon-large ${type}" style="font-size:1.4rem;">
+                        <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}"></i>
+                    </div>
+                    <div>
+                        <h4 style="margin:0;">${title}</h4>
+                        <small style="color:var(--user-text-muted);"><i class="fas fa-clock"></i> ${time}</small>
+                    </div>
+                </div>
+        `;
+        
+        if (isRejection) {
+            // Extract booking number if present
+            const bookingMatch = message.match(/booking #(\w+)/i);
+            const bookingNumber = bookingMatch ? bookingMatch[1] : '';
+            
+            html += `
+                <div class="notification-rejection-details" style="padding:1rem; background:rgba(239,68,68,0.05); border-radius:8px; border-left: 4px solid var(--danger);">
+                    <h4 style="color:var(--danger); margin-bottom:0.5rem;">
+                        <i class="fas fa-exclamation-triangle"></i> Request Rejected
+                    </h4>
+                    <p style="color:var(--user-text-secondary); white-space:pre-wrap; line-height:1.6;">${message}</p>
+                    ${bookingNumber ? `
+                        <div style="margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid var(--user-border);">
+                            <small style="color:var(--user-text-muted);">
+                                <i class="fas fa-tag"></i> Booking: ${bookingNumber}
+                            </small>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+            
+            // Show action button if booking number found
+            if (bookingNumber) {
+                actionBtn.style.display = 'inline-flex';
+                actionBtn.innerHTML = '<i class="fas fa-calendar-check"></i> View Booking';
+                actionBtn.onclick = function() {
+                    closeNotificationDetails();
+                    window.location.href = `/total-bookings?search=${bookingNumber}`;
+                };
+            } else {
+                actionBtn.style.display = 'none';
+            }
+        } else {
+            html += `
+                <div style="padding:0.5rem 0;">
+                    <p style="color:var(--user-text-secondary); white-space:pre-wrap; line-height:1.6;">${message}</p>
+                </div>
+            `;
+            actionBtn.style.display = 'none';
+        }
+        
+        html += `</div>`;
+        content.innerHTML = html;
+        
+        // Mark as read if unread
+        if (card.dataset.status === 'unread') {
+            const markBtn = card.querySelector('.mark-read-btn');
+            if (markBtn) markBtn.click();
+        }
+    }
+
+    function closeNotificationDetails() {
+        document.getElementById('notificationDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('notificationDetailsModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeNotificationDetails();
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeNotificationDetails();
+        }
+    });
+
+    // ============================================
+    // NOTIFICATION ACTIONS
+    // ============================================
+
+    function markAsRead(notificationId) {
+        fetch(`/notification/${notificationId}/read`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const card = document.querySelector(`.user-notification-card[data-id="${notificationId}"]`);
+                if (card) {
+                    card.classList.remove('unread');
+                    card.dataset.status = 'read';
+                    const markBtn = card.querySelector('.mark-read-btn');
+                    if (markBtn) markBtn.remove();
+                }
+                showUserToast('Notification marked as read', 'success');
+                updateBadgeCount();
+            } else {
+                showUserToast(data.message || 'Failed to mark as read', 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('An error occurred', 'error');
+        });
+    }
+
+    function markAllAsRead() {
+        if (!confirm('Mark all notifications as read?')) return;
+
+        fetch('/notification/mark-all-read', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.querySelectorAll('.user-notification-card.unread').forEach(card => {
+                    card.classList.remove('unread');
+                    card.dataset.status = 'read';
+                    const markBtn = card.querySelector('.mark-read-btn');
+                    if (markBtn) markBtn.remove();
+                });
+                showUserToast('All notifications marked as read', 'success');
+                updateBadgeCount();
+            } else {
+                showUserToast(data.message || 'Failed to mark all as read', 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('An error occurred', 'error');
+        });
+    }
+
+    function deleteNotification(notificationId) {
+        if (!confirm('Delete this notification?')) return;
+
+        fetch(`/notification/${notificationId}/delete`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const card = document.querySelector(`.user-notification-card[data-id="${notificationId}"]`);
+                if (card) {
+                    card.style.transition = 'all 0.3s ease';
+                    card.style.opacity = '0';
+                    card.style.transform = 'translateX(100px)';
+                    setTimeout(() => card.remove(), 300);
+                }
+                showUserToast('Notification deleted', 'info');
+                updateBadgeCount();
+                
+                const remaining = document.querySelectorAll('.user-notification-card');
+                if (remaining.length === 0) {
+                    setTimeout(() => location.reload(), 500);
+                }
+            } else {
+                showUserToast(data.message || 'Failed to delete notification', 'error');
+            }
+        })
+        .catch(error => {
+            showUserToast('An error occurred', 'error');
+        });
+    }
+
+    function updateBadgeCount() {
+        const unread = document.querySelectorAll('.user-notification-card.unread').length;
+        const badge = document.querySelector('.user-badge');
+        const tabBadge = document.querySelector('.user-filter-tab.active .user-tab-badge');
+        
+        if (badge) {
+            if (unread > 0) {
+                badge.textContent = unread;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        
+        if (tabBadge) {
+            tabBadge.textContent = unread;
+        }
+    }
+
+    function showUserToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `user-toast ${type}`;
+        toast.innerHTML = `
+            <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+            ${message}
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 100);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    // Flash message close
+    document.querySelectorAll('.flash-close').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.parentElement.remove();
+        });
+    });
+</script>
+{% endblock %}

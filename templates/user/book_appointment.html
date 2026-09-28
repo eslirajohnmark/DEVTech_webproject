@@ -1,0 +1,323 @@
+{% extends "base/user_base.html" %}
+
+{% block title %}Book a Repair{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+{% endblock %}
+
+{% block content %}
+
+<div class="user-top-bar">
+    <div class="user-page-title">
+        {% if category %}
+        <p style="font-size:0.78rem;color:var(--user-text-muted);margin-bottom:0.2rem;">
+            <a href="{{ url_for('service_catalog') }}" style="color:var(--user-blue);font-weight:600;">
+                <i class="fas fa-arrow-left"></i> All categories</a>
+        </p>
+        <h1>{{ category.name }}</h1>
+        <p>{{ category.description }}</p>
+        {% else %}
+        <h1>Book a New Repair</h1>
+        <p>Schedule your computer repair service</p>
+        {% endif %}
+    </div>
+    <div class="user-top-actions">
+        <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="Notifications">
+            <i class="fas fa-bell"></i>
+            {% if notifications and notifications|length > 0 %}
+            <span class="user-badge">{{ notifications|length }}</span>
+            {% endif %}
+        </a>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages">
+            {% for category_msg, message in messages %}
+                <div class="flash-message {{ category_msg }}">
+                    <i class="fas fa-{% if category_msg == 'success' %}check-circle{% elif category_msg == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                    <button class="flash-close" onclick="this.parentElement.remove()">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<div class="user-booking-grid">
+    <section class="user-grid-panel user-booking-form-panel">
+        <div class="user-panel-header">
+            <h3 class="user-panel-title">
+                <i class="fas fa-pen"></i> Repair Request Form
+            </h3>
+            <span class="user-required-badge">* Required</span>
+        </div>
+
+        <form class="user-booking-form" method="POST"
+              action="{{ url_for('request_service') }}"
+              id="bookingForm" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if category %}
+            <input type="hidden" name="preselected_category" value="{{ category.slug }}">
+            {% endif %}
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">01</span>
+                    <h4 class="user-step-title">Device Type <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-device-grid">
+                    <label class="user-device-card" for="device-desktop">
+                        <input type="radio" name="device_type" id="device-desktop" value="Desktop" checked />
+                        <div class="user-device-content">
+                            <i class="fas fa-desktop"></i><span>Desktop</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-laptop">
+                        <input type="radio" name="device_type" id="device-laptop" value="Laptop" />
+                        <div class="user-device-content">
+                            <i class="fas fa-laptop"></i><span>Laptop</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-mac">
+                        <input type="radio" name="device_type" id="device-mac" value="Mac" />
+                        <div class="user-device-content">
+                            <i class="fab fa-apple"></i><span>Mac</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-other">
+                        <input type="radio" name="device_type" id="device-other" value="Other" />
+                        <div class="user-device-content">
+                            <i class="fas fa-question-circle"></i><span>Other</span>
+                        </div>
+                    </label>
+                </div>
+                <div class="user-form-group" id="customDeviceGroup" style="display:none;margin-top:0.5rem;">
+                    <label for="custom_device">Specify your device <span class="user-required-star">*</span></label>
+                    <input type="text" id="custom_device" name="custom_device" class="user-form-input"
+                           placeholder="Enter your device type...">
+                </div>
+            </div>
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">02</span>
+                    <h4 class="user-step-title">Select Service <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-input-group">
+                    <label for="service_id">
+                        {% if category %}{{ category.name }} services{% else %}Choose a service{% endif %}
+                    </label>
+                    <select class="user-form-input" name="service_id" id="service_id" required>
+                        <option value="">-- Select a service --</option>
+                        {% for service in services %}
+                        <option value="{{ service.id }}"
+                                data-price="{{ service.price }}"
+                                data-hours="{{ service.estimated_hours }}">
+                            {{ service.name }}{% if service.price and service.price > 0 %} - ₱{{ "%.2f"|format(service.price) }}{% endif %}
+                        </option>
+                        {% endfor %}
+                        <option value="other">Other Service (Custom)</option>
+                    </select>
+                </div>
+                <div class="user-form-group" id="customServiceGroup" style="display:none;margin-top:0.5rem;">
+                    <label for="custom_service">Describe your requirement <span class="user-required-star">*</span></label>
+                    <input type="text" id="custom_service" name="custom_service" class="user-form-input"
+                           placeholder="Enter your specific service request...">
+                </div>
+            </div>
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">03</span>
+                    <h4 class="user-step-title">Issue Description <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-input-group">
+                    <label for="problemDesc">What seems to be the problem?</label>
+                    <textarea class="user-form-textarea" name="problem_description"
+                              id="problemDesc" required
+                              placeholder="Describe your issue in detail..."></textarea>
+                    <div class="user-field-footer">
+                        <span class="user-char-count"><span id="charCount">0</span> / 500</span>
+                        <span class="user-field-hint"><i class="fas fa-info-circle"></i> Be specific</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">04</span>
+                    <h4 class="user-step-title">Service Location <span class="user-required-star">*</span></h4>
+                </div>
+
+                <div class="user-input-group">
+                    <label for="serviceAddress">Delivery Address <span style="font-weight:400;color:var(--user-text-muted);font-size:0.75rem;">(Tacloban City only)</span></label>
+                    <div class="user-input-with-icon">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <input type="text" name="service_address" id="serviceAddress"
+                               class="user-form-input" required
+                               placeholder="Enter your complete address in Tacloban City">
+                    </div>
+                    <div class="user-location-toggle">
+                        <label class="user-checkbox-label">
+                            <input type="checkbox" id="inShopCheck" name="in_shop"
+                                   onchange="toggleAddress()" checked>
+                            <span><i class="fas fa-store"></i> In-shop repair at DEVTech center</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="user-input-group map-section" id="mapSection"
+                     style="margin-top:0.8rem;display:none;">
+                    <label>Pin Your Location on Map</label>
+                    <div class="map-search-container">
+                        <div class="map-search-wrapper">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="mapSearchInput" class="map-search-input"
+                                   placeholder="Search for a location...">
+                            <button type="button" class="map-search-btn" onclick="searchLocation()">
+                                <i class="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="locationMap"></div>
+                    <div class="map-pin-result" id="mapPinResult">
+                        <i class="fas fa-map-pin"></i>
+                        <span id="pinResultText">Click on the map to pin your location</span>
+                    </div>
+                    <div class="boundary-warning" id="boundaryWarning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>This location is outside Tacloban City. Please select a location within Tacloban City.</span>
+                    </div>
+                    <div class="location-valid" id="locationValid">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Location is within Tacloban City</span>
+                    </div>
+                    <div class="map-controls">
+                        <button type="button" class="map-btn primary" id="getLocationBtn" onclick="getUserLocation()">
+                            <i class="fas fa-crosshairs"></i> Use My Location
+                        </button>
+                        <button type="button" class="map-btn" onclick="resetMap()">
+                            <i class="fas fa-undo"></i> Reset Map
+                        </button>
+                    </div>
+                    <p class="map-hint"><i class="fas fa-info-circle"></i>
+                        Click anywhere on the map to pin your location. Only Tacloban City locations are accepted.</p>
+                    <input type="hidden" name="pinned_lat" id="pinnedLat" value="" />
+                    <input type="hidden" name="pinned_lng" id="pinnedLng" value="" />
+                    <input type="hidden" name="is_valid_location" id="isValidLocation" value="0" />
+                </div>
+            </div>
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">05</span>
+                    <h4 class="user-step-title">Preferred Schedule <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-schedule-row">
+                    <div class="user-input-group">
+                        <label for="bookingDate">Select Date</label>
+                        <div class="user-input-with-icon">
+                            <i class="fas fa-calendar-day"></i>
+                            <input type="date" name="booking_date" id="bookingDate"
+                                   class="user-form-input" required>
+                        </div>
+                        <div id="availabilityStatus" class="user-availability-text default">
+                            <i class="fas fa-info-circle"></i> Select a date to check availability
+                        </div>
+                    </div>
+                    <div class="user-input-group">
+                        <label>Available Time Slots <span style="font-weight:400;color:var(--user-text-muted);font-size:0.75rem;">(Max 5 per slot)</span></label>
+                        <div class="user-time-slots" id="timeSlots">
+                            <div class="user-time-slot available" data-time="08:00"><span>8:00 AM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="09:00"><span>9:00 AM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="10:00"><span>10:00 AM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="11:00"><span>11:00 AM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot lunch" data-time="12:00"><span>12:00 PM</span><span class="user-slot-badge lunch-badge">Lunch Break</span></div>
+                            <div class="user-time-slot available" data-time="13:00"><span>1:00 PM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="14:00"><span>2:00 PM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="15:00"><span>3:00 PM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="16:00"><span>4:00 PM</span><span class="user-slot-badge available-badge">Available</span></div>
+                            <div class="user-time-slot available" data-time="17:00"><span>5:00 PM</span><span class="user-slot-badge available-badge">Available</span></div>
+                        </div>
+                        <input type="hidden" name="booking_time" id="bookingTime" value="">
+                        <div class="user-time-legend">
+                            <span><span class="legend-dot available-dot"></span> Available</span>
+                            <span><span class="legend-dot booked-dot"></span> Booked</span>
+                            <span><span class="legend-dot lunch-dot"></span> Lunch</span>
+                            <span><span class="legend-dot selected-dot"></span> Selected</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">06</span>
+                    <h4 class="user-step-title">Payment Method <span class="user-required-star">*</span></h4>
+                </div>
+                <div class="user-payment-options">
+                    <label class="user-payment-option" for="payment-gcash">
+                        <input type="radio" name="payment_method" id="payment-gcash" value="GCash" checked>
+                        <div class="user-payment-option-content">
+                            <i class="fas fa-mobile-alt" style="color:#0073e6;"></i>
+                            <span>GCash</span>
+                        </div>
+                    </label>
+                    <label class="user-payment-option" for="payment-car">
+                        <input type="radio" name="payment_method" id="payment-car" value="C.A.R">
+                        <div class="user-payment-option-content">
+                            <i class="fas fa-money-bill-wave" style="color:#22c55e;"></i>
+                            <span>C.A.R (Cash After Repair)</span>
+                        </div>
+                    </label>
+                </div>
+                <div id="paymentInfo" style="margin-top:0.8rem;padding:0.8rem 1rem;background:var(--user-bg);border-radius:var(--user-radius-sm);border:1px solid var(--user-border);">
+                    <p id="paymentDetails" style="font-size:0.85rem;color:var(--user-text-secondary);">
+                        <i class="fas fa-info-circle"></i>
+                        <span id="paymentInfoText">You will receive a GCash payment link via email after booking.</span>
+                    </p>
+                </div>
+            </div>
+
+            <div class="user-form-actions">
+                <button type="reset" class="user-btn-secondary" onclick="resetForm()">
+                    <i class="fas fa-undo"></i> Clear All
+                </button>
+                <button type="submit" class="user-btn-primary" id="submitBtn" disabled>
+                    <i class="fas fa-check"></i> Submit Request
+                </button>
+            </div>
+            <div id="submitWarning" style="display:none;margin-top:0.5rem;padding:0.5rem 1rem;background:#fee2e2;border:1px solid #fecaca;border-radius:var(--user-radius-sm);color:#991b1b;font-size:0.85rem;">
+                <i class="fas fa-exclamation-circle"></i>
+                <span>Please pin a valid location within Tacloban City before submitting.</span>
+            </div>
+        </form>
+    </section>
+
+    <aside class="user-grid-panel user-summary-panel">
+        <h3 class="user-panel-title"><i class="fas fa-file-invoice"></i> Booking Summary</h3>
+        <div class="user-summary-content" id="summaryBox">
+            <div class="user-summary-item"><label>Device</label><p id="summaryDevice">Desktop</p></div>
+            <div class="user-summary-item"><label>Service</label><p id="summaryService">Not selected</p></div>
+            <div class="user-summary-item"><label>Issue</label><p id="summaryIssue" class="user-summary-placeholder">Not described yet</p></div>
+            <div class="user-summary-item"><label>Location</label><p id="summaryAddress">In-shop repair</p></div>
+            <div class="user-summary-item"><label>Schedule</label><p id="summarySchedule" class="user-summary-placeholder">Not set</p></div>
+            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">GCash</p></div>
+        </div>
+        <div class="user-summary-divider"></div>
+        <div class="user-summary-total"><span>Estimated Duration</span><span class="user-total-value" id="summaryHours">1-2 hours</span></div>
+        <div class="user-summary-total"><span>Service Fee</span><span class="user-total-value" id="summaryPrice">₱0.00</span></div>
+        <div class="user-summary-actions">
+            <button class="user-btn-primary full" onclick="submitBooking()" id="summarySubmitBtn" disabled>
+                <i class="fas fa-calendar-plus"></i> Book Now
+            </button>
+        </div>
+    </aside>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% include 'user/_booking_form_script.html' %}
+{% endblock %}
