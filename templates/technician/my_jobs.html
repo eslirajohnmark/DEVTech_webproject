@@ -1,12 +1,108 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'my-jobs' %}
 
 {% block title %}My Jobs{% endblock %}
-{% block meta_page %}my_jobs{% endblock %}
 {% block meta_title %}My Jobs{% endblock %}
 {% block meta_subtitle %}Service requests assigned to you{% endblock %}
 
-{% block extra_js %}
-<script type="module" nonce="{{ tech_nonce }}"
-        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% block body %}
+{% set current_filter = request.args.get('status', 'all') %}
+
+<section class="tech-jobs-page">
+
+    <div class="tech-card-head" style="margin-bottom:1rem;">
+        <div style="min-width:0;">
+            <h2 style="font-size:1.12rem; font-weight:750; letter-spacing:-0.02em;">
+                My Jobs
+            </h2>
+            <p style="font-size:0.81rem; color:var(--t-text-muted); margin-top:0.15rem;">
+                {{ jobs|length }} assigned to you.
+            </p>
+        </div>
+    </div>
+
+    <div class="tech-toolbar" style="margin-bottom:1.1rem;">
+        {% set tabs = [
+            ('all',        'All'),
+            ('pending',    'Pending'),
+            ('confirmed',  'Confirmed'),
+            ('in_progress','On Repair'),
+            ('completed',  'Ready'),
+            ('cancelled',  'Cancelled'),
+        ] %}
+        {% for key, label in tabs %}
+        <a class="tech-btn tech-btn--ghost tech-btn--sm {% if current_filter == key %}is-active{% endif %}"
+           href="{{ url_for('technician.my_jobs', status=key) }}">
+            {{ label }}
+        </a>
+        {% endfor %}
+    </div>
+
+    <div class="tech-jobs">
+        {% set ns = namespace(any=false) %}
+        {% for job in jobs %}
+            {% if current_filter == 'all' or job.status == current_filter %}
+                {% set ns.any = true %}
+                {% set meta = {
+                    'pending':     ('info',   'fa-clipboard-check'),
+                    'confirmed':   ('info',   'fa-clipboard-check'),
+                    'in_progress': ('warn',   'fa-screwdriver-wrench'),
+                    'completed':   ('ok',     'fa-box-open'),
+                    'on_hold':     ('danger', 'fa-pause'),
+                    'cancelled':   ('danger', 'fa-circle-xmark'),
+                }.get(job.status, ('neutral', 'fa-circle')) %}
+
+                <a class="tech-job" data-status="{{ job.status }}"
+                   href="{{ url_for('technician.job_detail', job_id=job.id) }}">
+
+                    <div class="tech-job-top">
+                        <div style="min-width:0;">
+                            <span class="tech-job-id">{{ job.booking_number }}</span>
+                            <div class="tech-job-customer">{{ job.user.full_name }}</div>
+                            <div class="tech-job-service">{{ job.service.name }}</div>
+                        </div>
+                        <div class="tech-job-badges">
+                            <span class="tech-pill tech-pill--{{ meta[0] }}">
+                                <i class="fas {{ meta[1] }}"></i> {{ job.status|replace('_', ' ')|title }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <p class="tech-job-desc">{{ job.description }}</p>
+
+                    <div class="tech-job-meta">
+                        <span class="tech-chip">
+                            <i class="fas {{ 'fa-store' if job.is_in_shop else 'fa-house-chimney' }}"></i>
+                            {{ 'In-Shop' if job.is_in_shop else 'Home Service' }}
+                        </span>
+                        <span class="tech-chip">
+                            <i class="fas fa-laptop"></i> {{ job.device_type }}
+                        </span>
+                        <span class="tech-chip">
+                            <i class="fas fa-calendar"></i>
+                            {{ job.booking_date.strftime('%b %d, %Y') if job.booking_date else '—' }}
+                        </span>
+                        <span class="tech-chip">
+                            <i class="fas fa-clock"></i>
+                            {{ job.booking_time.strftime('%I:%M %p') if job.booking_time else '—' }}
+                        </span>
+                        <span class="tech-chip">
+                            <i class="fas fa-money-bill"></i>
+                            ₱{{ '%.2f'|format(job.service.price) }}
+                        </span>
+                    </div>
+
+                </a>
+            {% endif %}
+        {% endfor %}
+
+        {% if not ns.any %}
+        <div class="tech-empty">
+            <i class="fas fa-clipboard-question"></i>
+            <h3>No jobs match</h3>
+            <p>Try switching the filter above.</p>
+        </div>
+        {% endif %}
+    </div>
+
+</section>
 {% endblock %}

@@ -1,13 +1,277 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'device-intake' %}
 
 {% block title %}Device Intake{% endblock %}
-{% block meta_page %}intake{% endblock %}
 {% block meta_title %}Device Intake{% endblock %}
 {% block meta_subtitle %}Record condition and accessories received{% endblock %}
-{% block meta_job_id %}{{ current or 0 }}{% endblock %}
 
-{% block extra_js %}
-<script type="module" nonce="{{ tech_nonce }}"
-        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% block body %}
+
+{% set c = record %}
+{% set accessories_list = (c.accessories | fromjson) if c and c.accessories else [] %}
+{% set device_type_options = ['Laptop','Desktop','All-in-One','Tablet','Printer','Other'] %}
+{% set condition_options = [
+    ('good',    'Good',    'No visible damage'),
+    ('fair',    'Fair',    'Cosmetic wear or minor damage'),
+    ('poor',    'Poor',    'Significant wear affecting use'),
+    ('damaged', 'Damaged', 'Cracked, bent, or liquid exposed'),
+] %}
+{% set accessory_options = [
+    'Charger / Adapter','Power Cable','Battery','Carrying Bag',
+    'Mouse','Keyboard','External Drive','Stylus','Manual / Box',
+] %}
+
+{# ============================================================
+   MODE 1 — PICKER (no job selected)
+   ============================================================ #}
+{% if not current %}
+<section class="tech-intake-page">
+    <div class="tech-card-head" style="margin-bottom:1rem;">
+        <div style="min-width:0;">
+            <h2 style="font-size:1.12rem; font-weight:750; letter-spacing:-0.02em;">
+                Device Intake
+            </h2>
+            <p style="font-size:0.81rem; color:var(--t-text-muted); margin-top:0.15rem;">
+                Select a job to check in a device.
+            </p>
+        </div>
+    </div>
+
+    <div class="tech-jobs">
+        {% for j in jobs %}
+            {% set has_record = j.id in recorded_ids %}
+            <a class="tech-job" data-status="{{ j.status }}"
+               href="{{ url_for('technician.intake_form', job_id=j.id) }}">
+                <div class="tech-job-top">
+                    <div style="min-width:0;">
+                        <span class="tech-job-id">{{ j.booking_number }}</span>
+                        <div class="tech-job-customer">{{ j.user.full_name }}</div>
+                        <div class="tech-job-service">{{ j.service.name }}</div>
+                    </div>
+                    <div class="tech-job-badges">
+                        {% if has_record %}
+                            <span class="tech-pill tech-pill--ok">
+                                <i class="fas fa-check"></i> Recorded
+                            </span>
+                        {% else %}
+                            <span class="tech-pill tech-pill--warn">
+                                <i class="fas fa-hourglass"></i> Not recorded
+                            </span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="tech-job-meta">
+                    <span class="tech-chip">
+                        <i class="fas {{ 'fa-store' if j.is_in_shop else 'fa-house-chimney' }}"></i>
+                        {{ 'In-Shop' if j.is_in_shop else 'Home Service' }}
+                    </span>
+                    <span class="tech-chip">
+                        <i class="fas fa-laptop"></i> {{ j.device_type }}
+                    </span>
+                </div>
+            </a>
+        {% else %}
+            <div class="tech-empty">
+                <i class="fas fa-box-open"></i>
+                <h3>No active jobs</h3>
+                <p>Device intake is recorded against a job assigned to you.</p>
+            </div>
+        {% endfor %}
+    </div>
+</section>
+
+{# ============================================================
+   MODE 2 — FORM (a job is selected)
+   ============================================================ #}
+{% else %}
+
+{% set job = jobs | selectattr('id', 'equalto', current) | first %}
+
+<section class="tech-intake-page">
+
+    <a href="{{ url_for('technician.intake_picker') }}" class="tech-back">
+        <i class="fas fa-arrow-left"></i> Back to job list
+    </a>
+
+    {# -------- HEADER -------- #}
+    <section class="tech-card" style="margin-bottom:1.1rem;">
+        <div class="tech-card-head" style="margin-bottom:0.9rem;">
+            <div style="min-width:0;">
+                <span class="tech-job-id">{{ job.booking_number }}</span>
+                <h2 style="font-size:1.05rem; font-weight:700; margin-top:0.1rem;">
+                    {{ job.user.full_name }}
+                </h2>
+            </div>
+            <div class="tech-job-badges">
+                <span class="tech-chip">
+                    <i class="fas {{ 'fa-store' if job.is_in_shop else 'fa-house-chimney' }}"></i>
+                    {{ 'In-Shop' if job.is_in_shop else 'Home Service' }}
+                </span>
+                {% if c %}
+                <span class="tech-chip">
+                    <i class="fas fa-clock-rotate-left"></i>
+                    Last recorded {{ c.recorded_at }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        <p style="font-size:0.83rem; color:var(--t-text-soft);">
+            <strong>Reported problem:</strong> {{ job.description }}
+        </p>
+    </section>
+
+    {# -------- FORM -------- #}
+    <form method="POST"
+          action="{{ url_for('technician_api.job_intake', job_id=job.id) }}"
+          novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="tech-grid-2" style="align-items:start;">
+
+            {# ---- Device section ---- #}
+            <section class="tech-card">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title"><i class="fas fa-laptop"></i> Device</h3>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="deviceType">Device type</label>
+                    <select class="tech-select" id="deviceType" name="deviceType" style="width:100%;">
+                        {% for t in device_type_options %}
+                        <option value="{{ t }}"
+                                {% if (c and c.device_type == t) or (not c and job.device_type == t) %}selected{% endif %}>
+                            {{ t }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="deviceModel">
+                        Make and model <span class="req">*</span>
+                    </label>
+                    <input class="tech-input" id="deviceModel" name="deviceModel"
+                           value="{{ c.device_model if c else job.device_type }}"
+                           placeholder="e.g. Acer Aspire 5 A515-56" required />
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="serialNumber">Serial number</label>
+                    <input class="tech-input" id="serialNumber" name="serialNumber"
+                           value="{{ c.serial_number if c else '' }}"
+                           placeholder="Or N/A for a custom build" />
+                </div>
+            </section>
+
+            {# ---- Condition section ---- #}
+            <section class="tech-card">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title"><i class="fas fa-clipboard-check"></i> Condition on Arrival</h3>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:0.45rem; margin-bottom:0.9rem;">
+                    {% set current_condition = (c.condition if c else 'good') %}
+                    {% for key, label, sub in condition_options %}
+                    <label class="tech-check">
+                        <input type="radio" name="condition" value="{{ key }}"
+                               {% if current_condition == key %}checked{% endif %} />
+                        <span>
+                            <strong>{{ label }}</strong><br>
+                            <span style="color:var(--t-text-muted); font-size:0.75rem;">{{ sub }}</span>
+                        </span>
+                    </label>
+                    {% endfor %}
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="conditionNotes">
+                        Condition notes <span class="req">*</span>
+                    </label>
+                    <textarea class="tech-textarea" id="conditionNotes" name="conditionNotes"
+                              placeholder="Describe every mark, crack or fault visible at handover."
+                              required>{{ c.condition_notes if c else '' }}</textarea>
+                    <p class="tech-hint">Be specific. This is the record referred to at release.</p>
+                </div>
+            </section>
+        </div>
+
+        {# ---- Accessories ---- #}
+        <section class="tech-card" style="margin-top:1.1rem;">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title"><i class="fas fa-plug"></i> Accessories Received</h3>
+                <span class="tech-chip">{{ accessories_list|length }} selected</span>
+            </div>
+            <div class="tech-check-grid">
+                {% for item in accessory_options %}
+                <label class="tech-check">
+                    <input type="checkbox" name="accessories" value="{{ item }}"
+                           {% if item in accessories_list %}checked{% endif %} />
+                    <span>{{ item }}</span>
+                </label>
+                {% endfor %}
+            </div>
+            <p class="tech-hint" style="margin-top:0.7rem;">
+                Only tick what was physically handed over. Everything ticked must be
+                returned when the device is released.
+            </p>
+        </section>
+
+        {# ---- Handover checks ---- #}
+        <section class="tech-card" style="margin-top:1.1rem;">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title"><i class="fas fa-list-check"></i> Handover Checks</h3>
+            </div>
+
+            <div class="tech-check-grid" style="margin-bottom:1rem;">
+                <label class="tech-check">
+                    <input type="checkbox" name="powersOn" {% if c and c.powers_on %}checked{% endif %} />
+                    <span>Device powers on</span>
+                </label>
+                <label class="tech-check">
+                    <input type="checkbox" name="hasPassword" {% if c and c.has_password %}checked{% endif %} />
+                    <span>Login password supplied</span>
+                </label>
+                <label class="tech-check">
+                    <input type="checkbox" name="dataBackupConsent" {% if c and c.data_backup_consent %}checked{% endif %} />
+                    <span>Customer consents to data backup</span>
+                </label>
+                <label class="tech-check">
+                    <input type="checkbox" name="customerPresent" {% if c and c.customer_present %}checked{% endif %} />
+                    <span>Customer present at handover</span>
+                </label>
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="passwordNote">Access notes</label>
+                <input class="tech-input" id="passwordNote" name="passwordNote"
+                       value="{{ c.password_note if c else '' }}"
+                       placeholder="How access was provided - never write the password itself." />
+                <p class="tech-hint">Record that access was given, not the credential.</p>
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="photosNote">Photo record</label>
+                <input class="tech-input" id="photosNote" name="photosNote"
+                       value="{{ c.photos_note if c else '' }}"
+                       placeholder="e.g. 3 photos of the cracked panel and chassis corners" />
+                <p class="tech-hint">Photo upload arrives with the Flask backend; for now,
+                    note what was photographed.</p>
+            </div>
+        </section>
+
+        {# ---- Actions ---- #}
+        <div style="display:flex; gap:0.55rem; justify-content:flex-end;
+                    flex-wrap:wrap; margin-top:1.1rem;">
+            <a href="{{ url_for('technician.job_detail', job_id=job.id) }}"
+               class="tech-btn tech-btn--ghost">
+                Open job detail
+            </a>
+            <button class="tech-btn tech-btn--primary" type="submit">
+                <i class="fas fa-floppy-disk"></i>
+                {{ 'Update intake record' if c else 'Save intake record' }}
+            </button>
+        </div>
+    </form>
+
+</section>
+{% endif %}
 {% endblock %}

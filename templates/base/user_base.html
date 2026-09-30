@@ -382,7 +382,18 @@
                 window.location.href = '/admin/login';
             }
         });
+
+        // ============================================
+        // TECHNICIAN SHORTCUT: Ctrl + Shift + Y
+        // ============================================
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+                e.preventDefault();
+                window.location.href = '/technician/login';
+            }
+        });
     </script>
+    
 
     <script src="{{ url_for('static', filename='js/user.js') }}"></script>
     {% block extra_js %}{% endblock %}

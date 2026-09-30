@@ -102,6 +102,12 @@ def _make_tech_nonce():
 @app.context_processor
 def _inject_tech_nonce():
     return {'tech_nonce': getattr(g, 'tech_nonce', '')}
+
+@app.context_processor
+def _inject_technician_globals():
+    return {
+        'today_str': datetime.utcnow().strftime('%a, %b %d'),
+    }
  
 @app.after_request
 def _technician_csp(resp):
@@ -159,6 +165,7 @@ oauth.register(name='facebook',
  
 app.jinja_env.filters['tojson'] = lambda obj: json.dumps(obj, default=str)
 app.jinja_env.filters['escape'] = lambda s: escape_markupsafe(s) if s else ''
+app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else []
  
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['TECH_UPLOAD_FOLDER'], exist_ok=True)

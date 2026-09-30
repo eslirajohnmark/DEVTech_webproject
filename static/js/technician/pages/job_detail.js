@@ -97,3 +97,41 @@ export async function init(tech, jobId) {
         });
     }
 }
+// Add this after the advanceBtn listener
+const diagnosisForm = document.getElementById('diagnosisForm');
+if (diagnosisForm) {
+    diagnosisForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const textarea = diagnosisForm.querySelector('textarea');
+        const btn = diagnosisForm.querySelector('button[type="submit"]');
+        const diagnosis = textarea.value.trim();
+
+        if (diagnosis.length < 10) {
+            Shell.toast('Please write a diagnosis (at least 10 characters).', 'danger');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+        const res = await fetch(`/technician/api/jobs/${jobId}/diagnosis`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+            },
+            body: JSON.stringify({ diagnosis })
+        });
+        const data = await res.json();
+
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save"></i> Save Diagnosis';
+
+        if (data.ok) {
+            Shell.toast('Diagnosis saved.', 'ok');
+            setTimeout(() => window.location.reload(), 500);
+        } else {
+            Shell.toast(data.reason || 'Could not save diagnosis.', 'danger');
+        }
+    });
+}

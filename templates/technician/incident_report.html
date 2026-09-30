@@ -1,12 +1,232 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'incident-report' %}
 
 {% block title %}Incident Reports{% endblock %}
-{% block meta_page %}incidents{% endblock %}
 {% block meta_title %}Incident Reports{% endblock %}
 {% block meta_subtitle %}Safety and security during service{% endblock %}
 
-{% block extra_js %}
-<script type="module" nonce="{{ tech_nonce }}"
-        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% block body %}
+
+{% set incident_types = [
+    ('safety',     'Personal Safety Concern',  'fa-shield-halved'),
+    ('electrical', 'Electrical Hazard',        'fa-bolt'),
+    ('animal',     'Aggressive Animal',        'fa-dog'),
+    ('access',     'Cannot Access Location',   'fa-door-closed'),
+    ('customer',   'Customer Dispute',         'fa-user-xmark'),
+    ('other',      'Other',                    'fa-circle-question'),
+] %}
+
+{% set severity_levels = [
+    ('low',      'Low',      'ok'),
+    ('medium',   'Medium',   'warn'),
+    ('high',     'High',     'danger'),
+    ('critical', 'Critical', 'danger'),
+] %}
+
+<section class="tech-incidents-page">
+
+    <div class="tech-hold-banner" style="margin-bottom:1.35rem;">
+        <i class="fas fa-triangle-exclamation"></i>
+        <div>
+            <h4>If you are in immediate danger, call for help first</h4>
+            <p>Contact emergency services (911) or leave the location before filing
+               anything here. This form creates a record for DEVTech management &mdash;
+               it does not contact emergency services.</p>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="tech-login-{{ 'success' if category == 'success' else 'error' }} is-shown"
+                 style="margin-bottom:1rem;">
+                <i class="fas fa-{{ 'circle-check' if category == 'success' else 'circle-exclamation' }}"></i>
+                <span>{{ message }}</span>
+            </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="tech-split" style="align-items:start;">
+
+        <section class="tech-card">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title">
+                    <i class="fas fa-shield-halved"></i> File an Incident Report
+                </h3>
+            </div>
+
+            <form method="POST"
+                  action="{{ url_for('technician_api.incidents') }}"
+                  novalidate>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="tech-field">
+                    <label class="tech-label" for="incidentJob">Related job</label>
+                    <select class="tech-select" id="incidentJob" name="jobId"
+                            style="width:100%;">
+                        <option value="">Not related to a specific job</option>
+                        {% for j in jobs %}
+                        <option value="{{ j.id }}"
+                                {% if prefill_job and prefill_job|string == j.id|string %}selected{% endif %}>
+                            {{ j.booking_number }} - {{ j.user.full_name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="tech-grid-2">
+                    <div class="tech-field">
+                        <label class="tech-label" for="incidentType">Type of incident</label>
+                        <select class="tech-select" id="incidentType" name="type"
+                                style="width:100%;">
+                            {% for key, label, icon in incident_types %}
+                            <option value="{{ key }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="tech-field">
+                        <label class="tech-label" for="incidentLocation">Location</label>
+                        <input class="tech-input" id="incidentLocation" name="location"
+                               placeholder="Barangay, Tacloban City" />
+                    </div>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label">Severity</label>
+                    <div class="tech-check-grid">
+                        {% for key, label, tone in severity_levels %}
+                        <label class="tech-check">
+                            <input type="radio" name="severity" value="{{ key }}"
+                                   {% if key == 'low' %}checked{% endif %} />
+                            <span>{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="incidentDescription">
+                        What happened <span class="req">*</span>
+                    </label>
+                    <textarea class="tech-textarea" id="incidentDescription"
+                              name="description" rows="5" required minlength="20"
+                              placeholder="Describe the situation factually: what happened, when, and who was involved."></textarea>
+                    <p class="tech-hint">Minimum 20 characters. Facts only.</p>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="incidentAction">Action you took</label>
+                    <textarea class="tech-textarea" id="incidentAction"
+                              name="actionTaken" rows="3"
+                              placeholder="e.g. Left the location and informed the customer by phone."></textarea>
+                </div>
+
+                <label class="tech-check" style="margin-bottom:1rem;">
+                    <input type="checkbox" name="authoritiesNotified" />
+                    <span>Emergency services or barangay officials were contacted</span>
+                </label>
+
+                <button class="tech-btn tech-btn--danger tech-btn--wide" type="submit">
+                    <i class="fas fa-paper-plane"></i> Submit report to management
+                </button>
+
+                <p class="tech-hint" style="margin-top:0.7rem; text-align:center;">
+                    Reports are reviewed by an administrator. You cannot close your own report.
+                </p>
+            </form>
+        </section>
+
+        <section class="tech-card">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title">
+                    <i class="fas fa-clock-rotate-left"></i> Your Reports
+                </h3>
+                <span class="tech-chip">{{ reports|length }}</span>
+            </div>
+
+            {% if reports %}
+            <div style="display:flex; flex-direction:column; gap:0.7rem;">
+                {% for r in reports %}
+
+                    {% set type_meta = incident_types | selectattr('0', 'equalto', r.type) | first %}
+                    {% set type_label = type_meta[1] if type_meta else r.type %}
+                    {% set type_icon  = type_meta[2] if type_meta else 'fa-circle-question' %}
+
+                    {% set sev_meta = severity_levels | selectattr('0', 'equalto', r.severity) | first %}
+                    {% set sev_label = sev_meta[1] if sev_meta else r.severity %}
+                    {% set sev_tone  = sev_meta[2] if sev_meta else 'neutral' %}
+
+                    {% set status_tone = {
+                        'open':       'warn',
+                        'reviewing':  'info',
+                        'resolved':   'ok',
+                    }.get(r.status, 'neutral') %}
+
+                    <article class="tech-card"
+                             style="background:var(--t-surface-2); padding:0.9rem;">
+                        <div class="tech-job-top" style="margin-bottom:0.45rem;">
+                            <div style="min-width:0;">
+                                <span class="tech-job-id">
+                                    {{ r.id }}
+                                    {% if r.booking_id %} &middot; {{ r.booking_id }}{% endif %}
+                                </span>
+                                <div style="font-weight:650; font-size:0.87rem; margin-top:0.1rem;">
+                                    <i class="fas {{ type_icon }}"
+                                       style="margin-right:0.35rem; color:var(--t-text-muted);"></i>
+                                    {{ type_label }}
+                                </div>
+                            </div>
+                            <div class="tech-job-badges">
+                                <span class="tech-pill tech-pill--{{ sev_tone }}">
+                                    {{ sev_label }}
+                                </span>
+                                <span class="tech-pill tech-pill--{{ status_tone }}">
+                                    {{ r.status|title }}
+                                </span>
+                            </div>
+                        </div>
+
+                        <p style="font-size:0.81rem; line-height:1.55;
+                                  color:var(--t-text-soft); margin-bottom:0.5rem;">
+                            {{ r.description }}
+                        </p>
+
+                        <div class="tech-job-meta">
+                            <span class="tech-chip">
+                                <i class="fas fa-clock"></i> {{ r.reported_at }}
+                            </span>
+                            {% if r.location %}
+                            <span class="tech-chip">
+                                <i class="fas fa-location-dot"></i> {{ r.location }}
+                            </span>
+                            {% endif %}
+                            {% if r.authorities_notified %}
+                            <span class="tech-chip">
+                                <i class="fas fa-phone"></i> Authorities contacted
+                            </span>
+                            {% endif %}
+                        </div>
+
+                        {% if r.reviewed_by %}
+                        <p class="tech-hint" style="margin-top:0.55rem;
+                                                    border-top:1px solid var(--t-border);
+                                                    padding-top:0.5rem;">
+                            <i class="fas fa-user-shield"></i>
+                            Reviewed by {{ r.reviewed_by }} on {{ r.reviewed_at }}
+                        </p>
+                        {% endif %}
+                    </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="tech-empty">
+                <i class="fas fa-clipboard-check"></i>
+                <h3>No incidents filed</h3>
+                <p>Reports you submit will be listed here with their review status.</p>
+            </div>
+            {% endif %}
+        </section>
+    </div>
+
+</section>
 {% endblock %}

@@ -5,32 +5,121 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#070b18" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
-
-    <meta name="page_module"   content="{% block meta_page %}dashboard{% endblock %}" />
-    <meta name="meta_title"    content="{% block meta_title %}Technician Portal{% endblock %}" />
-    <meta name="meta_subtitle" content="{% block meta_subtitle %}{% endblock %}" />
-    <meta name="meta_job_id"   content="{% block meta_job_id %}0{% endblock %}" />
-
     <title>DEVTech · {% block title %}Technician{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='images/favicon.svg') }}" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
-
-    <script type="module"
-            nonce="{{ tech_nonce }}"
-            src="{{ url_for('static', filename='js/technician/theme.js') }}"></script>
-    {% block extra_head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
-    {% block body %}
-    <div class="tech-layout" id="techLayout"></div>
-    {% endblock %}
+{% set endpoint = request.endpoint or '' %}
 
-    <script src="{{ url_for('static', filename='js/technician/tech-data.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/technician/tech-shell.js') }}"></script>
+<div class="tech-layout">
 
-    {% block extra_js %}{% endblock %}
+    <aside class="tech-sidebar" id="techSidebar">
+        <div class="tech-brand">
+            <div class="tech-brand-mark"><i class="fas fa-screwdriver-wrench"></i></div>
+            <div class="tech-brand-text">
+                <div class="tech-brand-name">DEV<span>Tech</span></div>
+                <div class="tech-brand-sub">Technician Portal</div>
+            </div>
+            <button class="tech-sidebar-close" id="sidebarClose" aria-label="Close menu">
+                <i class="fas fa-xmark"></i>
+            </button>
+        </div>
+
+        <a class="tech-whoami" href="{{ url_for('technician.profile') }}">
+            <div class="tech-whoami-avatar">
+                {{ session.get('username', 'TT')[:2] | upper }}
+            </div>
+            <div class="tech-whoami-text">
+                <span class="tech-whoami-name">{{ session.get('username', 'Technician') }}</span>
+                <span class="tech-whoami-role">
+                    <i class="fas fa-circle tech-dot available"></i> Technician
+                </span>
+            </div>
+        </a>
+
+        <nav class="tech-nav">
+            <a class="tech-nav-item {% if endpoint == 'technician.dashboard' %}is-active{% endif %}"
+               href="{{ url_for('technician.dashboard') }}">
+                <i class="fas fa-gauge-high"></i><span>Dashboard</span>
+            </a>
+            <a class="tech-nav-item {% if endpoint in ('technician.my_jobs','technician.job_detail') %}is-active{% endif %}"
+               href="{{ url_for('technician.my_jobs') }}">
+                <i class="fas fa-briefcase"></i><span>My Jobs</span>
+            </a>
+            <a class="tech-nav-item {% if 'intake' in endpoint %}is-active{% endif %}"
+               href="{{ url_for('technician.intake_picker') }}">
+                <i class="fas fa-box-archive"></i><span>Device Intake</span>
+            </a>
+            <a class="tech-nav-item {% if 'report' in endpoint %}is-active{% endif %}"
+               href="{{ url_for('technician.reports_picker') }}">
+                <i class="fas fa-file-lines"></i><span>Service Report</span>
+            </a>
+            <a class="tech-nav-item {% if 'message' in endpoint %}is-active{% endif %}"
+               href="{{ url_for('technician.messages') }}">
+                <i class="fas fa-comments"></i><span>Messages</span>
+            </a>
+            <a class="tech-nav-item {% if endpoint == 'technician.incidents' %}is-active{% endif %}"
+               href="{{ url_for('technician.incidents') }}">
+                <i class="fas fa-shield-halved"></i><span>Incident Reports</span>
+            </a>
+            <a class="tech-nav-item {% if endpoint == 'technician.profile' %}is-active{% endif %}"
+               href="{{ url_for('technician.profile') }}">
+                <i class="fas fa-user"></i><span>My Profile</span>
+            </a>
+        </nav>
+
+        <a class="tech-nav-item tech-logout" href="{{ url_for('technician.logout') }}">
+            <i class="fas fa-arrow-right-from-bracket"></i><span>Sign out</span>
+        </a>
+    </aside>
+
+    <div class="tech-main">
+        <header class="tech-topbar">
+            <button class="tech-menu-btn" id="sidebarOpen" aria-label="Open menu">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="tech-topbar-title">
+                <h1>{% block meta_title %}Technician Portal{% endblock %}</h1>
+                <p>{% block meta_subtitle %}{% endblock %}</p>
+            </div>
+            <div class="tech-topbar-actions">
+                <span class="tech-today">
+                    <i class="fas fa-calendar-day"></i> {{ today_str }}
+                </span>
+            </div>
+        </header>
+
+        <main class="tech-content" id="techContent">
+            {% block body %}{% endblock %}
+        </main>
+    </div>
+
+    <div class="tech-scrim" id="techScrim"></div>
+</div>
+
+<script nonce="{{ tech_nonce }}">
+    (function () {
+        var sidebar = document.getElementById('techSidebar');
+        var scrim   = document.getElementById('techScrim');
+        document.getElementById('sidebarOpen')?.addEventListener('click', function () {
+            sidebar.classList.add('is-open');
+            scrim.classList.add('is-visible');
+        });
+        document.getElementById('sidebarClose')?.addEventListener('click', function () {
+            sidebar.classList.remove('is-open');
+            scrim.classList.remove('is-visible');
+        });
+        scrim?.addEventListener('click', function () {
+            sidebar.classList.remove('is-open');
+            scrim.classList.remove('is-visible');
+        });
+    })();
+</script>
+
+{% block extra_js %}{% endblock %}
 </body>
 </html>

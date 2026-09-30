@@ -1,12 +1,119 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'dashboard' %}
 
 {% block title %}Dashboard{% endblock %}
-{% block meta_page %}dashboard{% endblock %}
 {% block meta_title %}Dashboard{% endblock %}
 {% block meta_subtitle %}Your workload at a glance{% endblock %}
 
-{% block extra_js %}
-<script type="module" nonce="{{ tech_nonce }}"
-        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% block body %}
+<section class="tech-dashboard">
+
+    <div class="tech-card" style="margin-bottom:1.35rem; background:linear-gradient(120deg, var(--t-surface), var(--t-surface-2));">
+        <h2 style="font-size:1.12rem; font-weight:750;">
+            Good to see you, {{ technician.full_name }}.
+        </h2>
+        <p style="font-size:0.81rem; color:var(--t-text-muted); margin-top:0.15rem;">
+            {{ active_count }} active job{{ '' if active_count == 1 else 's' }} today.
+        </p>
+    </div>
+
+    <div class="tech-stats">
+        <div class="tech-stat">
+            <div class="tech-stat-icon"><i class="fas fa-briefcase"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ total }}</span>
+                <span class="tech-stat-label">Total Jobs</span>
+            </div>
+        </div>
+        <div class="tech-stat tech-stat--warn">
+            <div class="tech-stat-icon"><i class="fas fa-screwdriver-wrench"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ on_repair }}</span>
+                <span class="tech-stat-label">On Repair</span>
+            </div>
+        </div>
+        <div class="tech-stat tech-stat--ok">
+            <div class="tech-stat-icon"><i class="fas fa-box-open"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ ready }}</span>
+                <span class="tech-stat-label">Ready</span>
+            </div>
+        </div>
+        <div class="tech-stat">
+            <div class="tech-stat-icon"><i class="fas fa-circle-check"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ ready }}</span>
+                <span class="tech-stat-label">Completed</span>
+            </div>
+        </div>
+    </div>
+
+    <section class="tech-card" style="margin-bottom:1.1rem;">
+        <div class="tech-card-head">
+            <h3 class="tech-card-title"><i class="fas fa-calendar-day"></i> Today's Schedule</h3>
+        </div>
+        <div class="tech-jobs">
+            {% for job in todays_jobs %}
+            <a class="tech-job" data-status="{{ job.status }}"
+               href="{{ url_for('technician.job_detail', job_id=job.id) }}">
+                <div class="tech-job-top">
+                    <div style="min-width:0;">
+                        <span class="tech-job-id">{{ job.booking_number }}</span>
+                        <div class="tech-job-customer">{{ job.user.full_name }}</div>
+                        <div class="tech-job-service">{{ job.service.name }}</div>
+                    </div>
+                    <span class="tech-pill tech-pill--info">{{ job.status }}</span>
+                </div>
+                <div class="tech-job-meta">
+                    <span class="tech-chip">
+                        <i class="fas fa-clock"></i>
+                        {{ job.booking_time.strftime('%I:%M %p') }}
+                    </span>
+                    <span class="tech-chip">
+                        <i class="fas fa-laptop"></i> {{ job.device_type }}
+                    </span>
+                </div>
+            </a>
+            {% else %}
+            <p class="tech-hint">No jobs scheduled for today.</p>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="tech-card">
+        <div class="tech-card-head">
+            <h3 class="tech-card-title"><i class="fas fa-list"></i> Active Jobs</h3>
+            <a href="{{ url_for('technician.my_jobs') }}"
+               class="tech-btn tech-btn--ghost tech-btn--sm">
+                View all <i class="fas fa-arrow-right"></i>
+            </a>
+        </div>
+        <div class="tech-jobs">
+            {% for job in active[:5] %}
+            <a class="tech-job" data-status="{{ job.status }}"
+               href="{{ url_for('technician.job_detail', job_id=job.id) }}">
+                <div class="tech-job-top">
+                    <div style="min-width:0;">
+                        <span class="tech-job-id">{{ job.booking_number }}</span>
+                        <div class="tech-job-customer">{{ job.user.full_name }}</div>
+                    </div>
+                    <span class="tech-pill tech-pill--info">{{ job.status }}</span>
+                </div>
+                <p class="tech-job-desc">{{ job.description }}</p>
+                <div class="tech-job-meta">
+                    <span class="tech-chip">
+                        <i class="fas fa-laptop"></i> {{ job.device_type }}
+                    </span>
+                    <span class="tech-chip">
+                        <i class="fas fa-money-bill"></i>
+                        ₱{{ '%.2f'|format(job.service.price) }}
+                    </span>
+                </div>
+            </a>
+            {% else %}
+            <p class="tech-hint">Nothing active right now.</p>
+            {% endfor %}
+        </div>
+    </section>
+
+</section>
 {% endblock %}

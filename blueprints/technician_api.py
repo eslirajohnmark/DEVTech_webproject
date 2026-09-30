@@ -3,20 +3,21 @@
 Each endpoint re-checks ownership on the row before touching it, so a
 technician can never see or mutate another technician's work.
 """
-from flask import Blueprint, jsonify, request, session, abort, send_file
+from flask import (
+    Blueprint, jsonify, request, session, abort, send_file,
+    redirect, url_for, flash,
+)
 from datetime import datetime
 from functools import wraps
 import json
 
 from app import db, User, Booking
 from models.technician_models import (
-    IntakeRecord, ServiceReport, IncidentReport,
-    ApprovalRequest, JobLog, UploadedFile,
+    IntakeRecord, ServiceReport, IncidentReport, JobLog,
+    UploadedFile,
 )
 
-
 technician_api_bp = Blueprint('technician_api', __name__)
-
 
 def technician_required(fn):
     @wraps(fn)
@@ -248,26 +249,75 @@ def advance_job(job_id):
     if b.technician_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
 
-    track = ['pending', 'confirmed', 'in_progress', 'completed']
-    if b.status not in track:
-        return jsonify({'ok': False, 'reason': 'Cannot advance from ' + b.status})
+    # --- Stage 1: pending (Accepted) → confirmed (Recorded) ---
+    if b.status == 'pending':
+        intake = IntakeRecord.query.filter_by(booking_id=b.id).first()
+        if not intake:
+            return jsonify({'ok': False, 'reason': 'Please record device intake first.'}), 400
+        b.status = 'confirmed'
+        log_text = "Device recorded. Ready for diagnosis."
+        action = 'intake'
 
-    idx = track.index(b.status)
-    if idx >= len(track) - 1:
-        return jsonify({'ok': False, 'reason': 'Already at final stage.'})
+    # --- Stage 2: confirmed (Recorded) → diagnosis_pending (Diagnosis) ---
+    elif b.status == 'confirmed':
+        # Diagnosis text is required to move past this stage
+        report = ServiceReport.query.filter_by(booking_id=b.id).first()
+        if not report or not (report.diagnosis or '').strip():
+            return jsonify({'ok': False, 'reason': 'Please write a diagnosis before starting the repair.'}), 400
+        b.status = 'diagnosis_pending'
+        log_text = f"Diagnosis recorded: {report.diagnosis[:120]}{'...' if len(report.diagnosis) > 120 else ''}"
+        action = 'diagnosis'
 
-    prev = b.status
-    b.status = track[idx + 1]
+    # --- Stage 3: diagnosis_pending (Diagnosis) → in_progress (On Repair) ---
+    elif b.status == 'diagnosis_pending':
+        b.status = 'in_progress'
+        log_text = "Repair started."
+        action = 'status'
+
+    # --- Stage 4: in_progress (On Repair) → completed (Ready for Collection) ---
+    elif b.status == 'in_progress':
+        b.status = 'completed'
+        log_text = "Repair complete. Device ready for collection."
+        action = 'status'
+
+    # --- Stage 5: completed (Ready for Collection) → released (Released) ---
+    elif b.status == 'completed':
+        b.status = 'released'
+        log_text = "Device released to customer. ID verified."
+        action = 'release'
+
+    else:
+        return jsonify({'ok': False, 'reason': f'Cannot advance from status: {b.status}'})
+
     b.updated_at = datetime.utcnow()
-    db.session.add(JobLog(
-        booking_id=b.id, at=_now(),
-        by_name=session.get('username', 'Technician'),
-        action='status',
-        text=f'Status changed from {prev} to {b.status}.',
-    ))
-    db.session.commit()
-    return jsonify({'ok': True, 'job': _job_to_dict(b)})
 
+    # Write the activity log entry
+    db.session.add(JobLog(
+        booking_id=b.id,
+        at=_now(),
+        by_name=session.get('username', 'Technician'),
+        action=action,
+        text=log_text,
+    ))
+
+    from app import create_notification
+    status_labels = {
+        'confirmed': 'Recorded',
+        'diagnosis_pending': 'Diagnosis',
+        'in_progress': 'On Repair',
+        'completed': 'Ready for Collection',
+        'released': 'Released',
+    }
+    create_notification(
+        b.user_id, 'Repair Status Updated',
+        f'Your booking {b.booking_number} is now: {status_labels.get(b.status, b.status)}.',
+        'info',
+    )
+    db.session.commit()
+
+    if not request.is_json:
+        return redirect(url_for('technician.job_detail', job_id=b.id))
+    return jsonify({'ok': True, 'job': _job_to_dict(b)})
 
 @technician_api_bp.route('/jobs/<int:job_id>/notes', methods=['POST'])
 @technician_required
@@ -287,6 +337,38 @@ def save_notes(job_id):
     db.session.commit()
     return jsonify({'ok': True})
 
+@technician_api_bp.route('/jobs/<int:job_id>/diagnosis', methods=['POST'])
+@technician_required
+def save_diagnosis(job_id):
+    b = Booking.query.get_or_404(job_id)
+    if b.technician_id != session['user_id']:
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+
+    body = request.get_json(silent=True) or {}
+    diagnosis = (body.get('diagnosis') or '').strip()
+
+    if not diagnosis:
+        return jsonify({'ok': False, 'reason': 'Diagnosis text is required.'}), 400
+
+    report = ServiceReport.query.filter_by(booking_id=b.id).first()
+    if not report:
+        report = ServiceReport(booking_id=b.id, technician_id=session['user_id'], created_at=_now())
+        db.session.add(report)
+
+    report.diagnosis = diagnosis
+    report.updated_at = _now()
+
+    # Log the diagnosis entry in the activity log
+    db.session.add(JobLog(
+        booking_id=b.id,
+        at=_now(),
+        by_name=session.get('username', 'Technician'),
+        action='diagnosis',
+        text=f'Diagnosis recorded: {diagnosis[:120]}{"..." if len(diagnosis) > 120 else ""}',
+    ))
+    db.session.commit()
+
+    return jsonify({'ok': True, 'diagnosis': diagnosis})
 
 @technician_api_bp.route('/jobs/<int:job_id>/logs')
 @technician_required
@@ -302,7 +384,6 @@ def job_logs(job_id):
 # ---------------------------------------------------------------------------
 # INTAKE
 # ---------------------------------------------------------------------------
-
 @technician_api_bp.route('/jobs/<int:job_id>/intake', methods=['GET', 'POST'])
 @technician_required
 def job_intake(job_id):
@@ -311,35 +392,45 @@ def job_intake(job_id):
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
 
     if request.method == 'POST':
-        body = request.get_json(silent=True) or {}
+        is_form = not request.is_json
+        body = request.form if is_form else (request.get_json(silent=True) or {})
+
         r = IntakeRecord.query.filter_by(booking_id=job_id).first()
         if not r:
             r = IntakeRecord(booking_id=job_id)
             db.session.add(r)
+
         r.recorded_at         = _now()
         r.device_type         = body.get('deviceType', '')
         r.device_model        = body.get('deviceModel', '')
         r.serial_number       = body.get('serialNumber', '')
         r.condition           = body.get('condition', 'good')
         r.condition_notes     = body.get('conditionNotes', '')
-        r.accessories         = json.dumps(body.get('accessories', []))
+        r.accessories         = json.dumps(
+            body.getlist('accessories') if is_form
+            else body.get('accessories', [])
+        )
         r.powers_on           = bool(body.get('powersOn'))
         r.has_password        = bool(body.get('hasPassword'))
         r.password_note       = body.get('passwordNote', '')
         r.data_backup_consent = bool(body.get('dataBackupConsent'))
         r.customer_present    = bool(body.get('customerPresent'))
         r.photos_note         = body.get('photosNote', '')
+
         db.session.add(JobLog(
             booking_id=job_id, at=_now(),
             by_name=session.get('username', 'Technician'),
             action='intake', text='Intake recorded.',
         ))
         db.session.commit()
+
+        if is_form:
+            flash('Intake record saved.', 'success')
+            return redirect(url_for('technician.job_detail', job_id=job_id))
         return jsonify({'ok': True, 'record': _intake_dict(r)})
 
     r = IntakeRecord.query.filter_by(booking_id=job_id).first()
     return jsonify({'ok': True, 'record': _intake_dict(r)})
-
 
 # ---------------------------------------------------------------------------
 # SERVICE REPORT
@@ -353,12 +444,15 @@ def job_report(job_id):
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
 
     if request.method == 'POST':
-        body = request.get_json(silent=True) or {}
+        is_form = not request.is_json
+        body = request.form if is_form else (request.get_json(silent=True) or {})
         action = body.get('action', 'submit')
+
         r = ServiceReport.query.filter_by(booking_id=job_id).first()
         if not r:
             r = ServiceReport(booking_id=job_id, created_at=_now())
             db.session.add(r)
+
         r.technician_id   = session['user_id']
         r.status          = 'submitted' if action == 'submit' else 'draft'
         r.updated_at      = _now()
@@ -373,9 +467,18 @@ def job_report(job_id):
         r.recommendations = body.get('recommendations', '')
         r.photos_note     = body.get('photosNote', '')
         r.admin_note      = body.get('adminNote', '')
+
+        db.session.add(JobLog(
+            booking_id=job_id, at=_now(),
+            by_name=session.get('username', 'Technician'),
+            action='report', text=f'Service report {r.status}.',
+        ))
         db.session.commit()
-        return jsonify({'ok': True, 'report': {
-            'id': r.id, 'status': r.status}})
+
+        if is_form:
+            flash(f'Report {r.status}.', 'success')
+            return redirect(url_for('technician.job_detail', job_id=job_id))
+        return jsonify({'ok': True, 'report': {'id': r.id, 'status': r.status}})
 
     r = ServiceReport.query.filter_by(booking_id=job_id).first()
     if not r:
@@ -390,27 +493,40 @@ def job_report(job_id):
         'photosNote': r.photos_note, 'adminNote': r.admin_note,
     }})
 
-
 # ---------------------------------------------------------------------------
 # INCIDENTS
 # ---------------------------------------------------------------------------
-
 @technician_api_bp.route('/incidents', methods=['GET', 'POST'])
 @technician_required
 def incidents():
     tid = session['user_id']
 
     if request.method == 'POST':
-        body = request.get_json(silent=True) or {}
+        is_form = not request.is_json
+        body = request.form if is_form else (request.get_json(silent=True) or {})
+
         desc = (body.get('description') or '').strip()
         if len(desc) < 20:
+            if is_form:
+                flash('Describe what happened (at least 20 characters).', 'danger')
+                return redirect(url_for('technician.incidents'))
             return jsonify({
                 'ok': False,
                 'reason': 'Describe what happened (at least 20 characters).'
             }), 400
+
+        job_id = body.get('jobId') or None
+        if job_id in ('', 'None', 'null'):
+            job_id = None
+        else:
+            try:
+                job_id = int(job_id)
+            except (TypeError, ValueError):
+                job_id = None
+
         r = IncidentReport(
             technician_id=tid,
-            booking_id=body.get('jobId') or None,
+            booking_id=job_id,
             reported_at=_now(),
             type=body.get('type', 'other'),
             severity=body.get('severity', 'low'),
@@ -421,6 +537,10 @@ def incidents():
         )
         db.session.add(r)
         db.session.commit()
+
+        if is_form:
+            flash(f'Incident {r.id} submitted to management.', 'success')
+            return redirect(url_for('technician.incidents'))
         return jsonify({'ok': True, 'incident': {'id': r.id}})
 
     rows = IncidentReport.query.filter_by(technician_id=tid) \
@@ -433,7 +553,6 @@ def incidents():
         'authoritiesNotified': r.authorities_notified,
         'reviewedBy': r.reviewed_by, 'reviewedAt': r.reviewed_at,
     } for r in rows]})
-
 
 # ---------------------------------------------------------------------------
 # UPLOADS

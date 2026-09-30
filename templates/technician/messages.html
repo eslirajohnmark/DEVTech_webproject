@@ -1,12 +1,114 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'messages' %}
 
 {% block title %}Messages{% endblock %}
-{% block meta_page %}messages{% endblock %}
 {% block meta_title %}Messages{% endblock %}
 {% block meta_subtitle %}Customers and administrators{% endblock %}
 
-{% block extra_js %}
-<script type="module" nonce="{{ tech_nonce }}"
-        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% block body %}
+
+{% if not conversations %}
+<section class="tech-card">
+    <div class="tech-empty">
+        <i class="fas fa-comments"></i>
+        <h3>No conversations yet</h3>
+        <p>When a customer or admin messages you, their thread appears here.
+           You can also start one from any job's detail page.</p>
+    </div>
+</section>
+
+{% else %}
+
+<section class="tech-msg-layout">
+
+    <aside class="tech-msg-list">
+        <div style="padding:0.9rem 1rem 0.6rem; border-bottom:1px solid var(--t-glass-edge-2);">
+            <h3 style="font-size:0.94rem; font-weight:700; display:flex;
+                       align-items:center; gap:0.5rem;">
+                <i class="fas fa-comments" style="color:var(--t-blue);"></i>
+                Conversations
+            </h3>
+        </div>
+
+        {% for conv in conversations %}
+        <a class="tech-thread {% if conv.is_active %}is-active{% endif %}"
+           href="{{ url_for('technician.messages', thread=conv.other_user_id) }}">
+
+            <div class="tech-thread-avatar">
+                {{ conv.initials }}
+            </div>
+
+            <div class="tech-thread-body">
+                <div class="tech-thread-name">
+                    <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                        {{ conv.name }}
+                    </span>
+                    {% if conv.unread_count > 0 %}
+                    <span class="tech-thread-unread">{{ conv.unread_count }}</span>
+                    {% endif %}
+                </div>
+                <div class="tech-thread-preview">
+                    {{ conv.last_message[:60] }}{% if conv.last_message|length > 60 %}…{% endif %}
+                </div>
+            </div>
+
+            <div class="tech-thread-time">
+                {{ conv.last_time }}
+            </div>
+        </a>
+        {% endfor %}
+    </aside>
+
+    <main class="tech-msg-pane">
+        {% if active_thread %}
+
+        <div class="tech-msg-head">
+            <div style="min-width:0;">
+                <div style="font-weight:700; font-size:0.92rem;">
+                    {{ active_thread.name }}
+                </div>
+                <div style="font-size:0.74rem; color:var(--t-text-muted);">
+                    {{ active_thread.role_label }}
+                </div>
+            </div>
+        </div>
+
+        <div class="tech-msg-body" id="msgBody">
+            {% if thread_messages %}
+                {% for m in thread_messages %}
+                <div class="tech-bubble from-{{ 'tech' if m.is_sent else 'customer' }}">
+                    {{ m.content }}
+                    <span class="tech-bubble-time">{{ m.created_at }}</span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div style="margin:auto; text-align:center; color:var(--t-text-muted);
+                            font-size:0.82rem;">
+                    No messages yet. Say hello.
+                </div>
+            {% endif %}
+        </div>
+
+        <form class="tech-msg-compose" method="POST"
+              action="{{ url_for('technician.message_send', other_user_id=active_thread.other_user_id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <textarea class="tech-textarea" name="content" rows="1"
+                      placeholder="Write a message..." required></textarea>
+            <button class="tech-btn tech-btn--primary" type="submit"
+                    aria-label="Send">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </form>
+
+        {% else %}
+        <div class="tech-empty">
+            <i class="fas fa-comment-dots"></i>
+            <h3>Select a conversation</h3>
+            <p>Choose a thread from the list on the left.</p>
+        </div>
+        {% endif %}
+    </main>
+
+</section>
+{% endif %}
+
 {% endblock %}

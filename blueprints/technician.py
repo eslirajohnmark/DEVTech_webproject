@@ -13,6 +13,9 @@ from datetime import datetime
 from functools import wraps
 
 from app import db, User, Booking
+from models.technician_models import (
+    IntakeRecord, ServiceReport, IncidentReport, JobLog,
+)
 
 
 technician_bp = Blueprint(
@@ -104,14 +107,45 @@ def logout():
 @technician_bp.route('/dashboard')
 @technician_required
 def dashboard():
-    return render_template('technician/dashboard.html')
+    tid = session['user_id']
+    technician = User.query.get(tid)
+
+    all_jobs = Booking.query.filter_by(technician_id=tid)\
+        .order_by(Booking.created_at.desc()).all()
+
+    total     = len(all_jobs)
+    on_repair = sum(1 for j in all_jobs if j.status == 'in_progress')
+    ready     = sum(1 for j in all_jobs if j.status == 'completed')
+    active    = [j for j in all_jobs if j.status in
+                 ('pending', 'confirmed', 'in_progress')]
+
+    today = datetime.utcnow().date()
+    todays_jobs = [j for j in all_jobs if j.booking_date == today]
+
+    return render_template('technician/dashboard.html',
+                           technician=technician,
+                           total=total, on_repair=on_repair, ready=ready,
+                           active=active, active_count=len(active),
+                           todays_jobs=todays_jobs)
 
 
 @technician_bp.route('/jobs')
 @technician_required
 def my_jobs():
-    return render_template('technician/my_jobs.html')
+    tid = session['user_id']
+    status = request.args.get('status', 'all')
 
+    q = Booking.query.filter_by(technician_id=tid)
+    if status != 'all':
+        q = q.filter_by(status=status)
+
+    jobs = q.order_by(
+        Booking.assigned_at.is_(None),
+        Booking.assigned_at.desc(),
+        Booking.created_at.desc()
+    ).all()
+
+    return render_template('technician/my_jobs.html', jobs=jobs)
 
 @technician_bp.route('/jobs/<int:job_id>')
 @technician_required
@@ -119,13 +153,35 @@ def job_detail(job_id):
     booking = Booking.query.get_or_404(job_id)
     if booking.technician_id != session['user_id']:
         abort(403)
-    return render_template('technician/job_detail.html', job_id=job_id)
+    intake = IntakeRecord.query.filter_by(booking_id=booking.id).first()
+    report = ServiceReport.query.filter_by(booking_id=booking.id)\
+        .order_by(ServiceReport.id.desc()).first()
+    logs = JobLog.query.filter_by(booking_id=booking.id)\
+        .order_by(JobLog.at.desc()).all()
+    return render_template('technician/job_detail.html',
+                           job=booking, intake=intake, report=report, logs=logs)
 
 
 @technician_bp.route('/intake')
 @technician_required
 def intake_picker():
-    return render_template('technician/device_intake.html', current=None)
+    tid = session['user_id']
+    jobs = Booking.query.filter_by(technician_id=tid)\
+        .filter(Booking.status.notin_(['cancelled']))\
+        .order_by(Booking.created_at.desc()).all()
+
+    recorded_ids = set()
+    if jobs:
+        recorded_ids = {
+            r.booking_id for r in
+            IntakeRecord.query.filter(
+                IntakeRecord.booking_id.in_([j.id for j in jobs])
+            ).all()
+        }
+
+    return render_template('technician/device_intake.html',
+                           current=None, jobs=jobs,
+                           recorded_ids=recorded_ids)
 
 
 @technician_bp.route('/intake/<int:job_id>')
@@ -134,13 +190,24 @@ def intake_form(job_id):
     booking = Booking.query.get_or_404(job_id)
     if booking.technician_id != session['user_id']:
         abort(403)
-    return render_template('technician/device_intake.html', current=job_id)
+    record = IntakeRecord.query.filter_by(booking_id=job_id).first()
+    jobs = Booking.query.filter_by(technician_id=session['user_id'])\
+        .filter(Booking.status.notin_(['cancelled'])).all()
+    return render_template('technician/device_intake.html',
+                           current=job_id, job=booking, record=record,
+                           jobs=jobs, recorded_ids=set())
 
 
 @technician_bp.route('/reports')
 @technician_required
 def reports_picker():
-    return render_template('technician/service_report.html', current=None)
+    tid = session['user_id']
+    jobs = Booking.query.filter_by(technician_id=tid)\
+        .order_by(Booking.created_at.desc()).all()
+    reports = {j.id: ServiceReport.query.filter_by(booking_id=j.id)
+               .order_by(ServiceReport.id.desc()).first() for j in jobs}
+    return render_template('technician/service_report.html',
+                           current=None, jobs=jobs, reports=reports)
 
 
 @technician_bp.route('/reports/new/<int:job_id>')
@@ -149,31 +216,204 @@ def report_form(job_id):
     booking = Booking.query.get_or_404(job_id)
     if booking.technician_id != session['user_id']:
         abort(403)
-    return render_template('technician/service_report.html', current=job_id)
+    report = ServiceReport.query.filter_by(booking_id=job_id)\
+        .order_by(ServiceReport.id.desc()).first()
+    return render_template('technician/service_report.html',
+                           current=job_id, job=booking, report=report)
 
 
 @technician_bp.route('/incidents')
 @technician_required
 def incidents():
+    tid = session['user_id']
+    reports = IncidentReport.query.filter_by(technician_id=tid)\
+        .order_by(IncidentReport.reported_at.desc()).all()
+    jobs = Booking.query.filter_by(technician_id=tid)\
+        .order_by(Booking.created_at.desc()).all()
     return render_template('technician/incident_report.html',
+                           reports=reports, jobs=jobs,
                            prefill_job=request.args.get('job'))
 
+
+# ---------------------------------------------------------------------------
+# MESSAGES
+# ---------------------------------------------------------------------------
 
 @technician_bp.route('/messages')
 @technician_required
 def messages():
+    from app import Message, or_, and_
+
+    tid = session['user_id']
+
+    sent_to = db.session.query(Message.recipient_id)\
+        .filter_by(sender_id=tid).distinct().all()
+    received_from = db.session.query(Message.sender_id)\
+        .filter_by(recipient_id=tid).distinct().all()
+    other_ids = {r[0] for r in sent_to} | {r[0] for r in received_from}
+
+    conversations = []
+    for other_id in other_ids:
+        other = User.query.get(other_id)
+        if not other:
+            continue
+
+        latest = Message.query.filter(
+            or_(
+                and_(Message.sender_id == tid, Message.recipient_id == other_id),
+                and_(Message.sender_id == other_id, Message.recipient_id == tid),
+            )
+        ).order_by(Message.created_at.desc()).first()
+
+        unread = Message.query.filter_by(
+            sender_id=other_id, recipient_id=tid, is_read=False
+        ).count()
+
+        initials = ''.join(
+            w[0] for w in (other.full_name or '?').split()[:2]
+        ).upper() or '?'
+
+        conversations.append({
+            'other_user_id': other_id,
+            'name': other.full_name,
+            'initials': initials,
+            'role_label': 'Administrator' if other.role == 'admin' else 'Customer',
+            'last_message': latest.content if latest else 'No messages yet',
+            'last_time': latest.created_at.strftime('%b %d, %I:%M %p')
+                         if latest else '',
+            'unread_count': unread,
+            'is_active': False,
+        })
+
+    conversations.sort(key=lambda c: c['last_time'], reverse=True)
+
+    thread_param = request.args.get('thread')
+    active_thread = None
+    thread_messages = []
+
+    if thread_param:
+        try:
+            other_id = int(thread_param)
+        except ValueError:
+            other_id = None
+
+        if other_id:
+            other = User.query.get(other_id)
+            if other:
+                Message.query.filter_by(
+                    sender_id=other_id, recipient_id=tid, is_read=False
+                ).update({'is_read': True})
+                db.session.commit()
+
+                for c in conversations:
+                    if c['other_user_id'] == other_id:
+                        c['is_active'] = True
+                        active_thread = c
+                        break
+
+                if not active_thread:
+                    initials = ''.join(
+                        w[0] for w in (other.full_name or '?').split()[:2]
+                    ).upper() or '?'
+                    active_thread = {
+                        'other_user_id': other_id,
+                        'name': other.full_name,
+                        'initials': initials,
+                        'role_label': 'Administrator' if other.role == 'admin' else 'Customer',
+                        'job_id': None,
+                        'job_number': None,
+                    }
+
+                rows = Message.query.filter(
+                    or_(
+                        and_(Message.sender_id == tid, Message.recipient_id == other_id),
+                        and_(Message.sender_id == other_id, Message.recipient_id == tid),
+                    )
+                ).order_by(Message.created_at.asc()).all()
+
+                thread_messages = [{
+                    'content': m.content,
+                    'created_at': m.created_at.strftime('%b %d, %I:%M %p'),
+                    'is_sent': m.sender_id == tid,
+                } for m in rows]
+
     return render_template('technician/messages.html',
-                           active_thread=request.args.get('thread'))
+                           conversations=conversations,
+                           active_thread=active_thread,
+                           thread_messages=thread_messages)
 
 
-@technician_bp.route('/messages/<thread_id>')
+@technician_bp.route('/messages/<int:other_user_id>/send', methods=['POST'])
 @technician_required
-def message_thread(thread_id):
-    return render_template('technician/messages.html',
-                           active_thread=thread_id)
+def message_send(other_user_id):
+    from app import Message
 
+    tid = session['user_id']
+    content = (request.form.get('content') or '').strip()
+
+    if not content:
+        flash('Message cannot be empty.', 'danger')
+        return redirect(url_for('technician.messages', thread=other_user_id))
+
+    if not User.query.get(other_user_id):
+        abort(404)
+
+    db.session.add(Message(
+        sender_id=tid, recipient_id=other_user_id,
+        content=content, is_read=False,
+    ))
+    db.session.commit()
+
+    return redirect(url_for('technician.messages', thread=other_user_id))
+
+
+# ---------------------------------------------------------------------------
+# PROFILE
+# ---------------------------------------------------------------------------
 
 @technician_bp.route('/profile')
 @technician_required
 def profile():
-    return render_template('technician/profile.html')
+    tid = session['user_id']
+    tech = User.query.get(tid)
+
+    stats = {
+        'total':        Booking.query.filter_by(technician_id=tid).count(),
+        'active':       Booking.query.filter_by(technician_id=tid)
+                        .filter(Booking.status.notin_(['completed', 'cancelled']))
+                        .count(),
+        'released':     Booking.query.filter_by(technician_id=tid,
+                                                status='completed').count(),
+        'home_service': Booking.query.filter_by(technician_id=tid,
+                                                is_in_shop=False).count(),
+    }
+
+    return render_template('technician/profile.html', tech=tech, stats=stats)
+
+
+@technician_bp.route('/profile/password', methods=['POST'])
+@technician_required
+def change_password():
+    tid = session['user_id']
+    tech = User.query.get(tid)
+
+    current = request.form.get('current_password', '')
+    new = request.form.get('new_password', '')
+    confirm = request.form.get('confirm_password', '')
+
+    if not tech.check_password(current):
+        flash('Current password is incorrect.', 'danger')
+        return redirect(url_for('technician.profile'))
+
+    if new != confirm:
+        flash('New passwords do not match.', 'danger')
+        return redirect(url_for('technician.profile'))
+
+    if len(new) < 8 or not any(c.isalpha() for c in new) or not any(c.isdigit() for c in new):
+        flash('Password must be at least 8 characters and include a letter and a number.', 'danger')
+        return redirect(url_for('technician.profile'))
+
+    tech.set_password(new)
+    db.session.commit()
+    flash('Password updated successfully.', 'success')
+    return redirect(url_for('technician.profile'))

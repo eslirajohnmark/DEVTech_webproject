@@ -1,12 +1,234 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'profile' %}
 
 {% block title %}My Profile{% endblock %}
-{% block meta_page %}profile{% endblock %}
 {% block meta_title %}My Profile{% endblock %}
-{% block meta_subtitle %}Your details{% endblock %}
+{% block meta_subtitle %}Your technician account details{% endblock %}
 
-{% block extra_js %}
-<script type="module" nonce="{{ tech_nonce }}"
-        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% block body %}
+
+<section class="tech-profile-page">
+
+    <section class="tech-card"
+             style="margin-bottom:1.35rem; background:linear-gradient(120deg, var(--t-surface), var(--t-surface-2));">
+        <div style="display:flex; align-items:center; gap:1.1rem; flex-wrap:wrap;">
+
+            <div class="tech-account-avatar"
+                 style="width:62px; height:62px; font-size:1.2rem; flex-shrink:0;">
+                {{ (tech.full_name or 'TT').split() | map('first') | join('') | upper | truncate(2, True, '') }}
+            </div>
+
+            <div style="min-width:0; flex:1;">
+                <h2 style="font-size:1.24rem; font-weight:780; letter-spacing:-0.02em;">
+                    {{ tech.full_name }}
+                </h2>
+                <p style="font-size:0.83rem; color:var(--t-text-muted);">
+                    Technician
+                </p>
+                <div class="tech-job-badges" style="margin-top:0.55rem;">
+                    <span class="tech-chip">
+                        <i class="fas fa-id-badge"></i> {{ tech.username }}
+                    </span>
+                    {% if tech.id_verified %}
+                    <span class="tech-chip">
+                        <i class="fas fa-circle-check"
+                           style="color:var(--t-yellow);"></i> Verified
+                    </span>
+                    {% else %}
+                    <span class="tech-chip">
+                        <i class="fas fa-clock"></i> Verification pending
+                    </span>
+                    {% endif %}
+                    <span class="tech-chip">
+                        <i class="fas fa-calendar-check"></i>
+                        Joined {{ tech.created_at.strftime('%b %d, %Y') if tech.created_at else '—' }}
+                    </span>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <div class="tech-stats" style="margin-bottom:1.35rem;">
+        <div class="tech-stat">
+            <div class="tech-stat-icon"><i class="fas fa-clipboard-list"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ stats.total }}</span>
+                <span class="tech-stat-label">Jobs Assigned</span>
+            </div>
+        </div>
+        <div class="tech-stat tech-stat--warn">
+            <div class="tech-stat-icon"><i class="fas fa-screwdriver-wrench"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ stats.active }}</span>
+                <span class="tech-stat-label">Currently Active</span>
+            </div>
+        </div>
+        <div class="tech-stat tech-stat--ok">
+            <div class="tech-stat-icon"><i class="fas fa-circle-check"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ stats.released }}</span>
+                <span class="tech-stat-label">Completed</span>
+            </div>
+        </div>
+        <div class="tech-stat tech-stat--info">
+            <div class="tech-stat-icon"><i class="fas fa-house-chimney"></i></div>
+            <div class="tech-stat-body">
+                <span class="tech-stat-num">{{ stats.home_service }}</span>
+                <span class="tech-stat-label">Home Visits</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="tech-split" style="align-items:start;">
+
+        <div>
+            <section class="tech-card" style="margin-bottom:1.1rem;">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-address-card"></i> Contact Details
+                    </h3>
+                </div>
+                <div class="tech-kv">
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">Email address</span>
+                        <span class="tech-kv-val">{{ tech.email }}</span>
+                    </div>
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">Mobile number</span>
+                        <span class="tech-kv-val">{{ tech.phone or '—' }}</span>
+                    </div>
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">Home address</span>
+                        <span class="tech-kv-val">{{ tech.address or '—' }}</span>
+                    </div>
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">City</span>
+                        <span class="tech-kv-val">{{ tech.city or '—' }}</span>
+                    </div>
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">Province</span>
+                        <span class="tech-kv-val">{{ tech.province or '—' }}</span>
+                    </div>
+                </div>
+                <p class="tech-hint" style="margin-top:0.9rem;">
+                    <i class="fas fa-circle-info"></i>
+                    Your name, email, and phone are managed by an administrator.
+                    Contact them to change your details.
+                </p>
+            </section>
+
+            <section class="tech-card">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-certificate"></i> Credentials
+                    </h3>
+                </div>
+
+                <div class="tech-field">
+                    <span class="tech-kv-key">Specialization</span>
+                    <p style="font-size:0.86rem; margin-top:0.15rem;">
+                        Computer Repair
+                    </p>
+                </div>
+
+                <div>
+                    <span class="tech-kv-key">Identity verification</span>
+                    {% if tech.id_verified %}
+                        <p style="font-size:0.86rem; margin-top:0.15rem; color:var(--t-yellow);">
+                            <i class="fas fa-circle-check"></i> Verified by an administrator
+                            {% if tech.id_verified_at %}
+                                on {{ tech.id_verified_at.strftime('%b %d, %Y') }}
+                            {% endif %}
+                        </p>
+                        {% if tech.id_type %}
+                        <p class="tech-hint">
+                            Document on file: {{ tech.id_type }}
+                        </p>
+                        {% endif %}
+                    {% else %}
+                        <p style="font-size:0.86rem; margin-top:0.15rem; color:var(--t-text-muted);">
+                            <i class="fas fa-clock"></i> Pending review
+                        </p>
+                        <p class="tech-hint">
+                            An administrator must verify your identity document before
+                            you can be assigned to new service bookings.
+                        </p>
+                    {% endif %}
+                </div>
+
+                <hr class="tech-divider">
+
+                <p class="tech-hint">
+                    <i class="fas fa-shield-halved"></i>
+                    This information is what a customer sees to verify your identity
+                    before a home-service visit, together with the booking reference
+                    for their job.
+                </p>
+            </section>
+        </div>
+
+        <div>
+            <section class="tech-card">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-key"></i> Change Password
+                    </h3>
+                </div>
+
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                        <div class="tech-login-{{ 'success' if category == 'success' else 'error' }} is-shown"
+                             style="margin-bottom:1rem;">
+                            <i class="fas fa-{{ 'circle-check' if category == 'success' else 'circle-exclamation' }}"></i>
+                            <span>{{ message }}</span>
+                        </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                <form method="POST"
+                      action="{{ url_for('technician.change_password') }}"
+                      novalidate>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="tech-field">
+                        <label class="tech-label" for="currentPassword">
+                            Current password <span class="req">*</span>
+                        </label>
+                        <input class="tech-input" id="currentPassword"
+                               name="current_password" type="password"
+                               required autocomplete="current-password" />
+                    </div>
+
+                    <div class="tech-field">
+                        <label class="tech-label" for="newPassword">
+                            New password <span class="req">*</span>
+                        </label>
+                        <input class="tech-input" id="newPassword"
+                               name="new_password" type="password"
+                               minlength="8" required autocomplete="new-password" />
+                        <p class="tech-hint">
+                            Minimum 8 characters, including a letter and a number.
+                        </p>
+                    </div>
+
+                    <div class="tech-field">
+                        <label class="tech-label" for="confirmPassword">
+                            Confirm new password <span class="req">*</span>
+                        </label>
+                        <input class="tech-input" id="confirmPassword"
+                               name="confirm_password" type="password"
+                               minlength="8" required autocomplete="new-password" />
+                    </div>
+
+                    <button class="tech-btn tech-btn--primary" type="submit">
+                        <i class="fas fa-key"></i> Change password
+                    </button>
+                </form>
+            </section>
+        </div>
+    </div>
+
+</section>
 {% endblock %}

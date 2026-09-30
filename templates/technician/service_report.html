@@ -1,12 +1,272 @@
 {% extends 'base/technician_base.html' %}
 
 {% block title %}Service Report{% endblock %}
-{% block meta_page %}service_report{% endblock %}
 {% block meta_title %}Service Report{% endblock %}
 {% block meta_subtitle %}Record and submit service details to the admin{% endblock %}
 
-{% block extra_js %}
-<script src="{{ url_for('static', filename='js/technician/tech-data.js') }}"></script>
-<script src="{{ url_for('static', filename='js/technician/tech-shell.js') }}"></script>
-<script src="{{ url_for('static', filename='js/technician/pages/service_report.js') }}"></script>
+{% block body %}
+
+{% set outcome_options = [
+    ('fixed',             'Fixed',              'Device working as expected',           'fa-circle-check'),
+    ('partial',           'Partially fixed',    'Improvement but not fully resolved',   'fa-circle-half-stroke'),
+    ('not_repairable',    'Not repairable',     'Beyond economic or technical repair',  'fa-circle-xmark'),
+    ('for_parts',         'Awaiting parts',     'Work paused waiting on stock',         'fa-truck-fast'),
+    ('customer_declined', 'Customer declined',  'Customer refused the repair',          'fa-hand'),
+] %}
+
+{# ============================================================
+   MODE 1 — PICKER
+   ============================================================ #}
+{% if not current %}
+<section class="tech-report-page">
+
+    <div class="tech-card-head" style="margin-bottom:1rem;">
+        <div style="min-width:0;">
+            <h2 style="font-size:1.12rem; font-weight:750; letter-spacing:-0.02em;">
+                Service Reports
+            </h2>
+            <p style="font-size:0.81rem; color:var(--t-text-muted); margin-top:0.15rem;">
+                Select a job to write a report for the admin.
+            </p>
+        </div>
+    </div>
+
+    <div class="tech-jobs">
+        {% for j in jobs %}
+            {% set r = reports.get(j.id) %}
+            <a class="tech-job" data-status="{{ j.status }}"
+               href="{{ url_for('technician.report_form', job_id=j.id) }}">
+                <div class="tech-job-top">
+                    <div style="min-width:0;">
+                        <span class="tech-job-id">{{ j.booking_number }}</span>
+                        <div class="tech-job-customer">{{ j.user.full_name }}</div>
+                        <div class="tech-job-service">{{ j.service.name }}</div>
+                    </div>
+                    <div class="tech-job-badges">
+                        {% if r and r.status == 'submitted' %}
+                            <span class="tech-pill tech-pill--ok">
+                                <i class="fas fa-circle-check"></i> Submitted
+                            </span>
+                        {% elif r and r.status == 'draft' %}
+                            <span class="tech-pill tech-pill--warn">
+                                <i class="fas fa-pencil"></i> Draft saved
+                            </span>
+                        {% else %}
+                            <span class="tech-pill tech-pill--neutral">
+                                <i class="fas fa-hourglass"></i> Not started
+                            </span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="tech-job-meta">
+                    <span class="tech-chip">
+                        <i class="fas fa-laptop"></i> {{ j.device_type }}
+                    </span>
+                    <span class="tech-chip">
+                        <i class="fas fa-calendar"></i>
+                        {{ j.booking_date.strftime('%b %d, %Y') if j.booking_date else '—' }}
+                    </span>
+                </div>
+            </a>
+        {% else %}
+            <div class="tech-empty">
+                <i class="fas fa-file-lines"></i>
+                <h3>No jobs assigned</h3>
+                <p>A service report is written against a job assigned to you.</p>
+            </div>
+        {% endfor %}
+    </div>
+
+</section>
+
+{# ============================================================
+   MODE 2 — FORM
+   ============================================================ #}
+{% else %}
+
+{% set job = jobs | selectattr('id', 'equalto', current) | first
+   if jobs is defined and jobs is iterable and jobs is not mapping
+   else job %}
+
+<section class="tech-report-page">
+
+    <a href="{{ url_for('technician.reports_picker') }}" class="tech-back">
+        <i class="fas fa-arrow-left"></i> Back to job list
+    </a>
+
+    {% set is_submitted = (report and report.status == 'submitted') %}
+    {% set is_draft     = (report and report.status == 'draft') %}
+
+    {# -------- HEADER -------- #}
+    <section class="tech-card" style="margin-bottom:1.1rem;">
+        <div class="tech-card-head" style="margin-bottom:0.9rem;">
+            <div style="min-width:0;">
+                <span class="tech-job-id">{{ job.booking_number }}</span>
+                <h2 style="font-size:1.05rem; font-weight:700; margin-top:0.1rem;">
+                    {{ job.user.full_name }}
+                </h2>
+                <p style="font-size:0.82rem; color:var(--t-text-muted); margin-top:0.15rem;">
+                    {{ job.service.name }} &middot; {{ job.device_type }}
+                </p>
+            </div>
+            <div class="tech-job-badges">
+                {% if is_submitted %}
+                    <span class="tech-pill tech-pill--ok">
+                        <i class="fas fa-paper-plane"></i> Sent to admin
+                    </span>
+                {% elif is_draft %}
+                    <span class="tech-pill tech-pill--warn">
+                        <i class="fas fa-pencil"></i> Draft
+                    </span>
+                {% endif %}
+            </div>
+        </div>
+        {% if is_submitted %}
+        <p class="tech-hint" style="border-top:1px solid var(--t-border); padding-top:0.7rem;">
+            <i class="fas fa-lock"></i>
+            This report was submitted {{ report.submitted_at }} and is now read-only.
+        </p>
+        {% endif %}
+    </section>
+
+    <form method="POST"
+          action="{{ url_for('technician_api.job_report', job_id=job.id) }}"
+          novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        {# -------- Diagnosis & work -------- #}
+        <div class="tech-grid-2" style="align-items:start;">
+
+            <section class="tech-card">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title"><i class="fas fa-stethoscope"></i> Diagnosis &amp; Findings</h3>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="diagnosis">
+                        What did you find? <span class="req">*</span>
+                    </label>
+                    <textarea class="tech-textarea" id="diagnosis" name="diagnosis" rows="5"
+                              {% if is_submitted %}disabled{% endif %}
+                              placeholder="State the actual fault. Note here if it differed from what the customer reported.">{{ report.diagnosis if report else '' }}</textarea>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="tests">Tests performed</label>
+                    <textarea class="tech-textarea" id="tests" name="tests" rows="4"
+                              {% if is_submitted %}disabled{% endif %}
+                              placeholder="e.g. RAM swap test, PSU voltage reading, SMART check, memory diagnostic.">{{ report.tests if report else '' }}</textarea>
+                </div>
+            </section>
+
+            <section class="tech-card">
+                <div class="tech-card-head">
+                    <h3 class="tech-card-title"><i class="fas fa-screwdriver-wrench"></i> Work Performed</h3>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="workPerformed">
+                        Steps taken and the result <span class="req">*</span>
+                    </label>
+                    <textarea class="tech-textarea" id="workPerformed" name="workPerformed" rows="5"
+                              {% if is_submitted %}disabled{% endif %}
+                              placeholder="Every step: disassembly, cleaning, replacement, reassembly, verification.">{{ report.work_performed if report else '' }}</textarea>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="hoursSpent">Time spent (hours)</label>
+                    <input class="tech-input" id="hoursSpent" name="hoursSpent"
+                           type="number" min="0" step="0.25"
+                           value="{{ report.hours_spent if report and report.hours_spent else '' }}"
+                           {% if is_submitted %}disabled{% endif %} />
+                </div>
+            </section>
+        </div>
+
+        {# -------- Outcome -------- #}
+        <section class="tech-card" style="margin-top:1.1rem;">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title"><i class="fas fa-flag-checkered"></i> Outcome</h3>
+            </div>
+
+            <div class="tech-check-grid" style="margin-bottom:0.9rem;">
+                {% set current_outcome = (report.outcome if report else 'fixed') %}
+                {% for key, label, sub, icon in outcome_options %}
+                <label class="tech-check">
+                    <input type="radio" name="outcome" value="{{ key }}"
+                           {% if current_outcome == key %}checked{% endif %}
+                           {% if is_submitted %}disabled{% endif %} />
+                    <span>
+                        <strong><i class="fas {{ icon }}" style="margin-right:0.3rem;"></i>{{ label }}</strong><br>
+                        <span style="color:var(--t-text-muted); font-size:0.75rem;">{{ sub }}</span>
+                    </span>
+                </label>
+                {% endfor %}
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="outcomeNotes">Outcome notes</label>
+                <textarea class="tech-textarea" id="outcomeNotes" name="outcomeNotes" rows="3"
+                          {% if is_submitted %}disabled{% endif %}
+                          placeholder="Anything the admin should know about the result.">{{ report.outcome_notes if report else '' }}</textarea>
+            </div>
+        </section>
+
+        {# -------- Recommendations -------- #}
+        <section class="tech-card" style="margin-top:1.1rem;">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title"><i class="fas fa-lightbulb"></i> Recommendations</h3>
+            </div>
+            <div class="tech-field">
+                <label class="tech-label" for="recommendations">Advice to pass to the customer</label>
+                <textarea class="tech-textarea" id="recommendations" name="recommendations" rows="3"
+                          {% if is_submitted %}disabled{% endif %}
+                          placeholder="e.g. Replace the battery within 3 months, keep the vent clear, back up weekly.">{{ report.recommendations if report else '' }}</textarea>
+            </div>
+        </section>
+
+        {# -------- Attachments & notes -------- #}
+        <section class="tech-card" style="margin-top:1.1rem;">
+            <div class="tech-card-head">
+                <h3 class="tech-card-title"><i class="fas fa-paperclip"></i> Attachments &amp; Notes</h3>
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="photosNote">Photo / video evidence</label>
+                <input class="tech-input" id="photosNote" name="photosNote"
+                       value="{{ report.photos_note if report else '' }}"
+                       {% if is_submitted %}disabled{% endif %}
+                       placeholder="e.g. 4 photos: before, during, after, test result screen." />
+                <p class="tech-hint">File upload arrives with the Flask backend; for now, describe what was captured.</p>
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="adminNote">Private note to the admin</label>
+                <textarea class="tech-textarea" id="adminNote" name="adminNote" rows="3"
+                          {% if is_submitted %}disabled{% endif %}
+                          placeholder="Only visible to admin. Use for anything that should not appear on the customer copy.">{{ report.admin_note if report else '' }}</textarea>
+            </div>
+        </section>
+
+        {# -------- Actions -------- #}
+        <div style="display:flex; gap:0.55rem; justify-content:flex-end;
+                    flex-wrap:wrap; margin-top:1.1rem;">
+            <a href="{{ url_for('technician.job_detail', job_id=job.id) }}"
+               class="tech-btn tech-btn--ghost">Cancel</a>
+
+            {% if not is_submitted %}
+                <button class="tech-btn tech-btn--ghost" type="submit"
+                        name="action" value="draft">
+                    <i class="fas fa-floppy-disk"></i> Save draft
+                </button>
+                <button class="tech-btn tech-btn--primary" type="submit"
+                        name="action" value="submit">
+                    <i class="fas fa-paper-plane"></i> Submit to admin
+                </button>
+            {% endif %}
+        </div>
+    </form>
+
+</section>
+{% endif %}
 {% endblock %}
