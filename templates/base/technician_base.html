@@ -87,6 +87,9 @@
                 <p>{% block meta_subtitle %}{% endblock %}</p>
             </div>
             <div class="tech-topbar-actions">
+                <a class="tech-icon-btn" href="{{ url_for('technician.notifications') }}" aria-label="Notifications">
+                    <i class="fas fa-bell"></i>{% if tech_unread %}<span class="tech-icon-badge">{{ tech_unread }}</span>{% endif %}
+                </a>
                 <span class="tech-today">
                     <i class="fas fa-calendar-day"></i> {{ today_str }}
                 </span>

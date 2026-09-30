@@ -1,0 +1,11 @@
+{% extends 'base/technician_base.html' %}
+{% block title %}Notifications{% endblock %}
+{% block meta_title %}Notifications{% endblock %}
+{% block body %}
+<section class="tech-card">
+  {% for n in rows %}
+  <div class="tech-tl-item"><p class="tech-tl-text"><strong>{{ n.title }}</strong> — {{ n.message }}</p>
+    <p class="tech-tl-meta">{{ n.created_at.strftime('%b %d, %I:%M %p') }}</p></div>
+  {% else %}<p class="tech-hint">Nothing new.</p>{% endfor %}
+</section>
+{% endblock %}

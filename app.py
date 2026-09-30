@@ -29,6 +29,9 @@ from flask_limiter.util import get_remote_address
 from flask_caching import Cache
 from flask_talisman import Talisman
 from commands import register_commands
+from flask import send_file  
+from services.job_status import (STAGES, STATUS_LABELS, ACTIVE_STATUSES,
+                                 FINISHED_STATUSES, SLOT_STATUSES)
  
 load_dotenv()
 
@@ -108,6 +111,12 @@ def _inject_technician_globals():
     return {
         'today_str': datetime.utcnow().strftime('%a, %b %d'),
     }
+
+@app.context_processor
+def _inject_job_status():
+    return {'job_stages': STAGES, 'status_labels': STATUS_LABELS}
+
+MONITOR_STAGES = STAGES  
  
 @app.after_request
 def _technician_csp(resp):
@@ -945,11 +954,14 @@ def rejected_requests():
 def cancel_booking(booking_id):
     user_id = session.get('user_id')
     booking = Booking.query.get_or_404(booking_id)
+    if booking.technician_id:
+        create_notification(booking.technician_id, 'Job Cancelled',
+            f'{booking.booking_number} was cancelled by the customer.', 'warning')
     if booking.user_id != user_id:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     if booking.status not in ['pending', 'confirmed']:
         return jsonify({'success': False, 'message': 'This booking cannot be cancelled'}), 400
-    booking.status = 'cancelled'
+    booking.status = 'cancelled'    
     booking.updated_at = datetime.utcnow()
     db.session.commit()
     create_notification(user_id, 'Booking Cancelled', f'Your booking {booking.booking_number} has been cancelled.', 'warning')
@@ -1354,6 +1366,13 @@ def monitor_device(booking_id=None):
 @app.route('/api/booking/<int:booking_id>/monitor')
 @login_required
 def api_booking_monitor(booking_id):
+    from models.technician_models import ServiceReport
+    rep = ServiceReport.query.filter_by(booking_id=b.id).order_by(ServiceReport.id.desc()).first()
+    done = bool(rep and rep.status == 'submitted')
+    repair = ({'diagnosis': rep.diagnosis,
+           'outcome': rep.outcome if done else None,
+           'recommendations': rep.recommendations if done else None}
+          if rep and rep.diagnosis else None)
     from models.technician_models import JobLog, ServiceRating
     b = Booking.query.get(booking_id)
     if not b or b.user_id != session['user_id']:

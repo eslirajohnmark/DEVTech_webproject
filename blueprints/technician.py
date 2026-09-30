@@ -11,7 +11,8 @@ from flask import (
 )
 from datetime import datetime
 from functools import wraps
-
+from services.job_status import ACTIVE_STATUSES, FINISHED_STATUSES
+from models.technician_models import technician_rating
 from app import db, User, Booking
 from models.technician_models import (
     IntakeRecord, ServiceReport, IncidentReport, JobLog,
@@ -23,6 +24,8 @@ technician_bp = Blueprint(
     template_folder='../templates',
     static_folder='../static',
 )
+
+
 
 
 def technician_required(fn):
@@ -112,12 +115,12 @@ def dashboard():
 
     all_jobs = Booking.query.filter_by(technician_id=tid)\
         .order_by(Booking.created_at.desc()).all()
-
-    total     = len(all_jobs)
-    on_repair = sum(1 for j in all_jobs if j.status == 'in_progress')
+    
+    total = sum(1 for j in all_jobs if j.status in ())
+    on_repair = sum(1 for j in all_jobs if j.status in ('diagnosis_pending', 'in_progress'))
     ready     = sum(1 for j in all_jobs if j.status == 'completed')
-    active    = [j for j in all_jobs if j.status in
-                 ('pending', 'confirmed', 'in_progress')]
+    released  = sum(1 for j in all_jobs if j.status == 'released')
+    active    = [j for j in all_jobs if j.status in ACTIVE_STATUSES]
 
     today = datetime.utcnow().date()
     todays_jobs = [j for j in all_jobs if j.booking_date == today]
@@ -243,7 +246,10 @@ def incidents():
 @technician_required
 def messages():
     from app import Message, or_, and_
-
+    from app import create_notification 
+    create_notification(other_user_id, 'New Message',
+    f'You have a new message from {User.query.get(tid).full_name}', 'info')
+    
     tid = session['user_id']
 
     sent_to = db.session.query(Message.recipient_id)\
@@ -376,6 +382,12 @@ def message_send(other_user_id):
 def profile():
     tid = session['user_id']
     tech = User.query.get(tid)
+    
+    stats['active']   = Booking.query.filter_by(technician_id=tid)\
+        .filter(Booking.status.notin_(FINISHED_STATUSES + ['cancelled'])).count()
+    stats['released'] = Booking.query.filter(Booking.technician_id == tid, 
+                                             Booking.status.in_(FINISHED_STATUSES)).count() 
+    rating, rating_count = technician_rating(tid)   # pass to template, show as a chip
 
     stats = {
         'total':        Booking.query.filter_by(technician_id=tid).count(),
@@ -417,3 +429,21 @@ def change_password():
     db.session.commit()
     flash('Password updated successfully.', 'success')
     return redirect(url_for('technician.profile'))
+
+@technician_bp.app_context_processor
+def _tech_notif_count():
+    from app import Notification
+    uid = session.get('user_id')
+    if session.get('role') != 'technician' or not uid:
+        return {}
+    return {'tech_unread': Notification.query.filter_by(user_id=uid, is_read=False).count()}
+
+@technician_bp.route('/notifications')
+@technician_required
+def notifications():
+    from app import Notification
+    rows = Notification.query.filter_by(user_id=session['user_id'])\
+        .order_by(Notification.created_at.desc()).limit(50).all()
+    Notification.query.filter_by(user_id=session['user_id'], is_read=False).update({'is_read': True})
+    db.session.commit()
+    return render_template('technician/notifications.html', rows=rows)

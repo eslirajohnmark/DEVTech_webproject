@@ -199,3 +199,9 @@ class ServiceRating(db.Model):
     experience     = db.Column(db.Text)
     improvement    = db.Column(db.Text)
     submitted_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    
+def technician_rating(tech_id):
+    from sqlalchemy import func
+    avg, cnt = db.session.query(func.avg(ServiceRating.stars), func.count(ServiceRating.id))\
+        .filter(ServiceRating.technician_id == tech_id).one()
+    return (round(float(avg), 1) if avg else None), cnt

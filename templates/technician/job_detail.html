@@ -5,25 +5,11 @@
 {% block meta_subtitle %}{{ job.service.name }}{% endblock %}
 
 {% block body %}
-{% set meta = {
-    'pending':           ('info',   'Accepted'),
-    'confirmed':         ('info',   'Recorded'),
-    'diagnosis_pending': ('warn',   'Diagnosis'),
-    'in_progress':       ('warn',   'On Repair'),
-    'completed':         ('ok',     'Ready for Collection'),
-    'released':          ('ok',     'Released'),
-    'on_hold':           ('danger', 'On Hold'),
-    'cancelled':         ('danger', 'Cancelled'),
-}.get(job.status, ('neutral', job.status|title)) %}
+{% set stages = job_stages %}
+{% set meta = {'pending':'info','confirmed':'info','diagnosis_pending':'warn','in_progress':'warn',
+               'completed':'ok','released':'ok','on_hold':'danger','cancelled':'danger'}.get(job.status,'neutral') %}
+... <span class="tech-pill tech-pill--{{ meta }}">{{ status_labels.get(job.status, job.status|title) }}</span>
 
-{% set stages = [
-    ('pending',           'Accepted',             'fa-clipboard-check'),
-    ('confirmed',         'Recorded',             'fa-box-archive'),
-    ('diagnosis_pending', 'Diagnosis',            'fa-stethoscope'),
-    ('in_progress',       'On Repair',            'fa-screwdriver-wrench'),
-    ('completed',         'Ready for Collection', 'fa-box-open'),
-    ('released',          'Released',             'fa-hand-holding-heart')
-] %}
 {% set stage_keys = stages|map(attribute=0)|list %}
 {% set current_index = stage_keys.index(job.status) if job.status in stage_keys else 0 %}
 

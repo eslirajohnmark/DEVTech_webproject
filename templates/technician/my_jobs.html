@@ -22,12 +22,14 @@
 
     <div class="tech-toolbar" style="margin-bottom:1.1rem;">
         {% set tabs = [
-            ('all',        'All'),
-            ('pending',    'Pending'),
-            ('confirmed',  'Confirmed'),
+            ('all','All'),
+            ('confirmed','Assigned'),
+            ('diagnosis_pending','Diagnosis'),
             ('in_progress','On Repair'),
-            ('completed',  'Ready'),
-            ('cancelled',  'Cancelled'),
+            ('completed','Ready'),
+            ('released','Released'),
+            ('cancelled','Cancelled')
+            
         ] %}
         {% for key, label in tabs %}
         <a class="tech-btn tech-btn--ghost tech-btn--sm {% if current_filter == key %}is-active{% endif %}"
