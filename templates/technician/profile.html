@@ -5,3 +5,8 @@
 {% block meta_page %}profile{% endblock %}
 {% block meta_title %}My Profile{% endblock %}
 {% block meta_subtitle %}Your details{% endblock %}
+
+{% block extra_js %}
+<script type="module" nonce="{{ tech_nonce }}"
+        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% endblock %}

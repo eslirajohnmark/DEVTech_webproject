@@ -1,52 +1,31 @@
 /* ============================================================================
- * router.js — client-side URL map.
- *
- * Mirrors Flask's url_for('technician.*') so page controllers don't
- * hardcode paths. If a route ever changes on the server side, change
- * it here and every caller picks up the new path.
+ * router.js — maps page_module meta to a page controller.
  * ==========================================================================*/
 
-const BASE = '/technician';
-const enc = v => encodeURIComponent(v);
+import * as Dashboard from './pages/dashboard.js';
+import * as MyJobs from './pages/my_jobs.js';
+import * as JobDetail from './pages/job_detail.js';
+import * as Intake from './pages/intake.js';
+import * as ServiceReport from './pages/service_report.js';
+import * as Incidents from './pages/incidents.js';
+import * as Messages from './pages/messages.js';
+import * as Profile from './pages/profile.js';
+import * as Login from './pages/login.js';
+import * as Registration from './pages/registration.js';
 
-export const Router = {
-    base: BASE,
-
-    // ---- page routes ----
-    login:     () => BASE + '/login',
-    register:  () => BASE + '/register',
-    logout:    () => BASE + '/logout',
-    dashboard: () => BASE + '/dashboard',
-    profile:   () => BASE + '/profile',
-    myJobs:    () => BASE + '/jobs',
-    jobDetail: id => BASE + '/jobs/' + enc(id),
-    intake:    id => id ? BASE + '/intake/' + enc(id) : BASE + '/intake',
-    reports:   () => BASE + '/reports',
-    reportNew: id => BASE + '/reports/new/' + enc(id),
-    incidents: () => BASE + '/incidents',
-    messages:  id => id ? BASE + '/messages/' + enc(id) : BASE + '/messages',
-
-    // ---- JSON API routes ----
-    api: {
-        me:     BASE + '/api/me',
-        login:  BASE + '/api/login',
-        logout: BASE + '/api/logout',
-        config: BASE + '/api/config',
-
-        jobs:       BASE + '/api/jobs',
-        jobStats:   BASE + '/api/jobs/stats',
-        job:        id => BASE + '/api/jobs/' + enc(id),
-        jobAdvance: id => BASE + '/api/jobs/' + enc(id) + '/advance',
-        jobNotes:   id => BASE + '/api/jobs/' + enc(id) + '/notes',
-        jobLogs:    id => BASE + '/api/jobs/' + enc(id) + '/logs',
-        jobIntake:  id => BASE + '/api/jobs/' + enc(id) + '/intake',
-        jobReport:  id => BASE + '/api/jobs/' + enc(id) + '/report',
-
-        incidents: BASE + '/api/incidents',
-        uploads:   BASE + '/api/uploads',
-        upload:    id => BASE + '/api/uploads/' + enc(id),
-
-        notifications:     BASE + '/api/notifications',
-        notificationsRead: BASE + '/api/notifications/read',
-    },
+const ROUTES = {
+    login:          Login,
+    registration:   Registration,
+    dashboard:      Dashboard,
+    my_jobs:        MyJobs,
+    job_detail:     JobDetail,
+    intake:         Intake,
+    service_report: ServiceReport,
+    incidents:      Incidents,
+    messages:       Messages,
+    profile:        Profile,
 };
+
+export function resolve(pageModule) {
+    return ROUTES[pageModule] || null;
+}

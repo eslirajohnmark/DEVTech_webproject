@@ -1,8 +1,9 @@
 /* ============================================================================
- * COMPONENTS — buttons, pills, cards, forms, tables, toast, modal
+ * COMPONENTS — buttons, pills, chips, cards, stats, inputs, jobs, timeline,
+ *              toast, modal
  * ==========================================================================*/
 
-/* ---------- buttons ---------- */
+/* ---------- BUTTONS ---------- */
 .tech-btn {
     display: inline-flex;
     align-items: center;
@@ -23,17 +24,18 @@
 }
 .tech-btn:active { transform: translateY(1px); }
 .tech-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
-
 .tech-btn--primary {
     background: linear-gradient(135deg, var(--t-blue), var(--t-blue-dark));
-    color: #fff;
+    color: #ffffff;
     border-color: rgba(255, 255, 255, 0.12);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28),
-                0 8px 24px rgba(59, 130, 246, 0.42);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.28),
+        0 8px 24px rgba(59, 130, 246, 0.42);
 }
 .tech-btn--primary:hover:not(:disabled) {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
-                0 12px 32px rgba(59, 130, 246, 0.55);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.4),
+        0 12px 32px rgba(59, 130, 246, 0.55);
 }
 .tech-btn--ghost {
     background: var(--t-glass-2);
@@ -44,9 +46,10 @@
 .tech-btn--ghost:hover:not(:disabled) {
     color: var(--t-text);
     border-color: var(--t-blue-line);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 0 0 1px var(--t-blue-line),
-                0 8px 24px rgba(59, 130, 246, 0.2);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 0 0 1px var(--t-blue-line),
+        0 8px 24px rgba(59, 130, 246, 0.2);
 }
 .tech-btn--danger {
     background: var(--t-red-soft);
@@ -75,12 +78,14 @@
     background: rgba(250, 204, 21, 0.24);
     box-shadow: 0 8px 24px rgba(250, 204, 21, 0.32);
 }
-.tech-btn--sm   { padding: 0.42rem 0.75rem; font-size: 0.75rem; }
+.tech-btn--sm  { padding: 0.42rem 0.75rem; font-size: 0.75rem; }
 .tech-btn--wide { width: 100%; }
 
-/* ---------- pills & chips ---------- */
+/* ---------- PILLS / CHIPS / FLAGS ---------- */
 .tech-pill {
-    display: inline-flex; align-items: center; gap: 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     padding: 0.28rem 0.65rem;
     border-radius: 99px;
     font-size: 0.71rem;
@@ -99,7 +104,9 @@
 .tech-pill--neutral { background: var(--t-neutral-soft); color: var(--t-neutral); border: 1px solid rgba(148,163,184,0.32); }
 
 .tech-chip {
-    display: inline-flex; align-items: center; gap: 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     padding: 0.28rem 0.6rem;
     border-radius: var(--t-r-sm);
     background: var(--t-glass-2);
@@ -124,11 +131,12 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
-                0 0 16px rgba(244, 63, 94, 0.28);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        0 0 16px rgba(244, 63, 94, 0.28);
 }
 
-/* ---------- cards ---------- */
+/* ---------- CARDS ---------- */
 .tech-card {
     background: var(--t-glass);
     backdrop-filter: var(--t-blur);
@@ -138,12 +146,9 @@
     padding: 1.2rem;
     transition: border-color var(--t-ease), box-shadow var(--t-ease),
                 transform var(--t-ease);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 8px 32px rgba(0, 0, 0, 0.28);
-}
-.tech-card:hover {
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 12px 44px rgba(0, 0, 0, 0.36);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 8px 32px rgba(0, 0, 0, 0.28);
 }
 .tech-card-head {
     display: flex;
@@ -160,7 +165,7 @@
 }
 .tech-card-title i { color: var(--t-blue); font-size: 0.88rem; }
 
-/* ---------- stats grid ---------- */
+/* ---------- STATS GRID ---------- */
 .tech-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -181,13 +186,15 @@
     overflow: hidden;
     transition: border-color var(--t-ease), transform var(--t-ease),
                 box-shadow var(--t-ease);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 8px 32px rgba(0, 0, 0, 0.28);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 8px 32px rgba(0, 0, 0, 0.28);
 }
 .tech-stat:hover {
     transform: translateY(-2px);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 16px 44px rgba(0, 0, 0, 0.42);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 16px 44px rgba(0, 0, 0, 0.42);
 }
 .tech-stat::after {
     content: '';
@@ -213,10 +220,10 @@
     border: 1px solid var(--t-blue-line);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
-.tech-stat--ok     .tech-stat-icon { background: var(--t-yellow-soft); color: var(--t-yellow); border-color: var(--t-yellow-line); }
-.tech-stat--warn   .tech-stat-icon { background: var(--t-warn-soft);   color: #fdba74;         border-color: rgba(251,146,60,0.42); }
-.tech-stat--danger .tech-stat-icon { background: var(--t-red-soft);    color: #fda4af;         border-color: var(--t-red-line); }
-.tech-stat--info   .tech-stat-icon { background: var(--t-info-soft);   color: #93c5fd;         border-color: var(--t-blue-line); }
+.tech-stat--ok     .tech-stat-icon { background: var(--t-yellow-soft);  color: var(--t-yellow); border-color: var(--t-yellow-line); }
+.tech-stat--warn   .tech-stat-icon { background: var(--t-warn-soft);    color: #fdba74;          border-color: rgba(251,146,60,0.42); }
+.tech-stat--danger .tech-stat-icon { background: var(--t-red-soft);     color: #fda4af;          border-color: var(--t-red-line); }
+.tech-stat--info   .tech-stat-icon { background: var(--t-info-soft);    color: #93c5fd;          border-color: var(--t-blue-line); }
 
 .tech-stat-body { display: flex; flex-direction: column; min-width: 0; }
 .tech-stat-num {
@@ -226,7 +233,11 @@
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
 }
-.tech-stat-label { font-size: 0.73rem; color: var(--t-text-muted); font-weight: 550; }
+.tech-stat-label {
+    font-size: 0.73rem;
+    color: var(--t-text-muted);
+    font-weight: 550;
+}
 
 .tech-split {
     display: grid;
@@ -234,28 +245,32 @@
     gap: 1.15rem;
     align-items: start;
 }
-.tech-grid-2 {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 0.95rem;
-}
+.tech-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.95rem; }
 
-/* ---------- toolbar ---------- */
+/* ---------- TOOLBAR / SEARCH ---------- */
 .tech-toolbar {
-    display: flex; gap: 0.65rem; flex-wrap: wrap;
-    align-items: center; margin-bottom: 1.15rem;
+    display: flex;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1.15rem;
 }
-.tech-search { position: relative; flex: 1 1 240px; min-width: 0; }
+.tech-search {
+    position: relative;
+    flex: 1 1 240px;
+    min-width: 0;
+}
 .tech-search i {
     position: absolute;
-    left: 0.85rem; top: 50%; transform: translateY(-50%);
+    left: 0.85rem; top: 50%;
+    transform: translateY(-50%);
     color: var(--t-text-muted);
     font-size: 0.8rem;
     pointer-events: none;
 }
 .tech-search input { padding-left: 2.3rem; }
 
-/* ---------- inputs ---------- */
+/* ---------- INPUTS ---------- */
 .tech-input, .tech-select, .tech-textarea {
     width: 100%;
     padding: 0.65rem 0.9rem;
@@ -275,9 +290,10 @@
     outline: none;
     border-color: var(--t-yellow-line);
     background: var(--t-glass-3);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 0 0 3px var(--t-yellow-soft),
-                0 8px 24px rgba(250, 204, 21, 0.18);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 0 0 3px var(--t-yellow-soft),
+        0 8px 24px rgba(250, 204, 21, 0.18);
 }
 .tech-textarea { resize: vertical; min-height: 84px; line-height: 1.55; }
 .tech-select {
@@ -308,7 +324,6 @@
 .tech-error { font-size: 0.73rem; color: #fda4af; margin-top: 0.35rem; display: none; }
 .tech-error.is-shown { display: block; }
 
-/* ---------- check / radio ---------- */
 .tech-check {
     display: flex;
     align-items: flex-start;
@@ -334,22 +349,15 @@
 .tech-check:has(input:checked) {
     border-color: var(--t-yellow-line);
     background: linear-gradient(135deg, var(--t-yellow-soft), var(--t-glass-2));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12),
-                0 0 0 1px var(--t-yellow-line),
-                0 8px 24px rgba(250, 204, 21, 0.16);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        0 0 0 1px var(--t-yellow-line),
+        0 8px 24px rgba(250, 204, 21, 0.16);
 }
-.tech-check-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.5rem;
-}
+.tech-check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem; }
 
-/* ---------- key/value ---------- */
-.tech-kv {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 0.9rem;
-}
+/* ---------- KEY/VALUE ---------- */
+.tech-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.9rem; }
 .tech-kv-item { min-width: 0; }
 .tech-kv-key {
     display: block;
@@ -362,7 +370,7 @@
 }
 .tech-kv-val { font-size: 0.85rem; font-weight: 550; word-break: break-word; }
 
-/* ---------- empty state ---------- */
+/* ---------- EMPTY STATE ---------- */
 .tech-empty {
     text-align: center;
     padding: 3rem 1.5rem;
@@ -375,22 +383,12 @@
     display: block;
     color: var(--t-yellow);
 }
-.tech-empty h3 {
-    font-size: 0.95rem;
-    color: var(--t-text-soft);
-    font-weight: 650;
-    margin-bottom: 0.3rem;
-}
+.tech-empty h3 { font-size: 0.95rem; color: var(--t-text-soft); font-weight: 650; margin-bottom: 0.3rem; }
 .tech-empty p { font-size: 0.8rem; max-width: 380px; margin: 0 auto; }
 
-.tech-divider {
-    height: 1px;
-    background: var(--t-glass-edge-2);
-    margin: 1.15rem 0;
-    border: none;
-}
+.tech-divider { height: 1px; background: var(--t-glass-edge-2); margin: 1.15rem 0; border: none; }
 
-/* ---------- job cards ---------- */
+/* ---------- JOB CARDS ---------- */
 .tech-jobs { display: flex; flex-direction: column; gap: 0.8rem; }
 .tech-job {
     display: block;
@@ -404,15 +402,17 @@
     overflow: hidden;
     transition: border-color var(--t-ease), transform var(--t-ease),
                 box-shadow var(--t-ease);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 8px 32px rgba(0, 0, 0, 0.28);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 8px 32px rgba(0, 0, 0, 0.28);
 }
 .tech-job:hover {
     border-color: var(--t-blue-line);
     transform: translateY(-2px);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 0 0 1px var(--t-blue-line),
-                0 16px 44px rgba(0, 0, 0, 0.4);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 0 0 1px var(--t-blue-line),
+        0 16px 44px rgba(0, 0, 0, 0.4);
 }
 .tech-job::before {
     content: '';
@@ -426,11 +426,6 @@
 .tech-job[data-status="ready"]::before     { background: var(--t-yellow); box-shadow: 0 0 16px var(--t-yellow); }
 .tech-job[data-status="on_hold"]::before   { background: var(--t-red);    box-shadow: 0 0 16px var(--t-red); }
 .tech-job[data-status="released"]::before  { background: var(--t-neutral); }
-.tech-job[data-status="pending"]::before   { background: var(--t-blue);   box-shadow: 0 0 16px var(--t-blue); }
-.tech-job[data-status="confirmed"]::before { background: var(--t-blue);   box-shadow: 0 0 16px var(--t-blue); }
-.tech-job[data-status="in_progress"]::before { background: var(--t-warn); box-shadow: 0 0 16px var(--t-warn); }
-.tech-job[data-status="completed"]::before { background: var(--t-yellow); box-shadow: 0 0 16px var(--t-yellow); }
-.tech-job[data-status="cancelled"]::before { background: var(--t-neutral); }
 
 .tech-job-top {
     display: flex;
@@ -473,13 +468,8 @@
 }
 .tech-job-hold i { margin-top: 0.15rem; flex-shrink: 0; }
 
-/* ---------- job detail 2-col ---------- */
-.tech-detail {
-    display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-    gap: 1.15rem;
-    align-items: start;
-}
+/* ---------- JOB DETAIL ---------- */
+.tech-detail { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 1.15rem; align-items: start; }
 .tech-back {
     display: inline-flex; align-items: center; gap: 0.42rem;
     font-size: 0.79rem;
@@ -489,14 +479,25 @@
 }
 .tech-back:hover { color: var(--t-yellow); }
 
-/* ---------- repair track ---------- */
-.tech-track { display: flex; align-items: flex-start; gap: 0; margin: 0.25rem 0 0.4rem; }
-.tech-stage { flex: 1; text-align: center; position: relative; min-width: 0; }
+.tech-track {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin: 0.25rem 0 0.4rem;
+}
+.tech-stage {
+    flex: 1;
+    text-align: center;
+    position: relative;
+    min-width: 0;
+}
 .tech-stage::before {
     content: '';
     position: absolute;
-    top: 13px; left: -50%;
-    width: 100%; height: 2px;
+    top: 13px;
+    left: -50%;
+    width: 100%;
+    height: 2px;
     background: var(--t-glass-edge-2);
 }
 .tech-stage:first-child::before { display: none; }
@@ -524,17 +525,19 @@
 .tech-stage.is-done .tech-stage-dot {
     background: linear-gradient(135deg, var(--t-blue), var(--t-blue-dark));
     border-color: rgba(255, 255, 255, 0.22);
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4),
-                0 0 20px rgba(59, 130, 246, 0.5);
+    color: #ffffff;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.4),
+        0 0 20px rgba(59, 130, 246, 0.5);
 }
 .tech-stage.is-current .tech-stage-dot {
     background: var(--t-glass-2);
     border-color: var(--t-yellow);
     color: var(--t-yellow);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 0 0 5px var(--t-yellow-soft),
-                0 0 24px rgba(250, 204, 21, 0.5);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 0 0 5px var(--t-yellow-soft),
+        0 0 24px rgba(250, 204, 21, 0.5);
 }
 .tech-stage-name {
     font-size: 0.7rem;
@@ -546,7 +549,6 @@
 .tech-stage.is-done .tech-stage-name { color: var(--t-text-soft); }
 .tech-stage.is-current .tech-stage-name { color: var(--t-yellow); font-weight: 750; }
 
-/* ---------- hold banner ---------- */
 .tech-hold-banner {
     margin-top: 0.95rem;
     padding: 0.85rem 1rem;
@@ -562,7 +564,6 @@
 .tech-hold-banner h4 { font-size: 0.83rem; color: #fda4af; margin-bottom: 0.2rem; font-weight: 700; }
 .tech-hold-banner p { font-size: 0.78rem; color: var(--t-text-soft); }
 
-/* ---------- map ---------- */
 .tech-map {
     height: 230px;
     border-radius: var(--t-r-md);
@@ -572,8 +573,7 @@
     box-shadow: inset 0 1px 0 var(--t-glass-shine);
 }
 
-/* ---------- parts table ---------- */
-.tech-parts { width: 100%; font-size: 0.81rem; }
+.tech-parts { width: 100%; border-collapse: collapse; font-size: 0.81rem; }
 .tech-parts th {
     text-align: left;
     font-size: 0.67rem;
@@ -584,14 +584,11 @@
     padding: 0 0.5rem 0.5rem;
     border-bottom: 1px solid var(--t-glass-edge-2);
 }
-.tech-parts td {
-    padding: 0.6rem 0.5rem;
-    border-bottom: 1px solid var(--t-glass-edge-2);
-}
+.tech-parts td { padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--t-glass-edge-2); }
 .tech-parts tr:last-child td { border-bottom: none; }
 .tech-parts .num { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* ---------- timeline ---------- */
+/* ---------- TIMELINE ---------- */
 .tech-timeline { position: relative; padding-left: 1.4rem; }
 .tech-timeline::before {
     content: '';
@@ -599,7 +596,9 @@
     left: 5px; top: 6px; bottom: 6px;
     width: 2px;
     background: linear-gradient(180deg,
-        var(--t-blue) 0%, var(--t-yellow) 50%, var(--t-red) 100%);
+        var(--t-blue)   0%,
+        var(--t-yellow) 50%,
+        var(--t-red)    100%);
     opacity: 0.6;
     border-radius: 2px;
 }
@@ -608,7 +607,8 @@
 .tech-tl-item::before {
     content: '';
     position: absolute;
-    left: -1.4rem; top: 5px;
+    left: -1.4rem;
+    top: 5px;
     width: 13px; height: 13px;
     border-radius: 50%;
     background: var(--t-glass-3);
@@ -620,14 +620,10 @@
 .tech-tl-item[data-action="release"]::before  { background: var(--t-yellow); box-shadow: 0 0 0 1px var(--t-yellow), 0 0 12px var(--t-yellow); }
 .tech-tl-item[data-action="safety"]::before   { background: var(--t-red);    box-shadow: 0 0 0 1px var(--t-red),    0 0 12px var(--t-red); }
 .tech-tl-text { font-size: 0.82rem; line-height: 1.5; }
-.tech-tl-meta {
-    font-size: 0.7rem;
-    color: var(--t-text-muted);
-    margin-top: 0.15rem;
-}
+.tech-tl-meta { font-size: 0.7rem; color: var(--t-text-muted); margin-top: 0.15rem; }
 .tech-tl-meta strong { color: var(--t-text-soft); font-weight: 600; }
 
-/* ---------- toast ---------- */
+/* ---------- TOAST ---------- */
 .tech-toast {
     position: fixed;
     bottom: 1.5rem; right: 1.5rem;
@@ -640,7 +636,9 @@
     -webkit-backdrop-filter: var(--t-blur-lg);
     border: 1px solid var(--t-glass-edge);
     border-radius: var(--t-r-md);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine), var(--t-shadow-lg);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        var(--t-shadow-lg);
     font-size: 0.83rem;
     font-weight: 550;
     max-width: min(440px, calc(100vw - 2.8rem));
@@ -655,7 +653,7 @@
 .tech-toast--warn i   { color: var(--t-warn); }
 .tech-toast--danger i { color: var(--t-red); }
 
-/* ---------- modal ---------- */
+/* ---------- MODAL ---------- */
 .tech-modal {
     position: fixed;
     inset: 0;
@@ -679,7 +677,9 @@
     -webkit-backdrop-filter: var(--t-blur-lg);
     border: 1px solid var(--t-glass-edge);
     border-radius: var(--t-r-lg);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine), var(--t-shadow-lg);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        var(--t-shadow-lg);
     transform: translateY(14px) scale(0.985);
     transition: transform var(--t-ease);
     max-height: calc(100vh - 2.4rem);

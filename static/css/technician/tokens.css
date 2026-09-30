@@ -2,11 +2,11 @@
  * TOKENS — colours, shape, motion
  * ==========================================================================*/
 :root {
-    /* canvas */
+    /* ---- Base canvas (the "night") ---- */
     --t-bg:            #070b18;
     --t-bg-alt:        #0a0f22;
 
-    /* glass surfaces */
+    /* ---- Glass surfaces (translucent, not solid) ---- */
     --t-glass:         rgba(20, 28, 52, 0.42);
     --t-glass-2:       rgba(28, 38, 68, 0.38);
     --t-glass-3:       rgba(38, 50, 88, 0.32);
@@ -19,16 +19,13 @@
     --t-surface-2:     var(--t-glass-2);
     --t-surface-3:     var(--t-glass-3);
 
-    /* borders */
     --t-border:        var(--t-glass-edge-2);
     --t-border-light:  var(--t-glass-edge);
 
-    /* text */
     --t-text:          #eef2ff;
     --t-text-soft:     #b6c2e0;
     --t-text-muted:    #7a89b3;
 
-    /* RYB triad */
     --t-blue:          #3b82f6;
     --t-blue-dark:     #1d4ed8;
     --t-blue-soft:     rgba(59, 130, 246, 0.16);
@@ -44,7 +41,6 @@
     --t-red-soft:      rgba(244, 63, 94, 0.15);
     --t-red-line:      rgba(244, 63, 94, 0.42);
 
-    /* semantic aliases */
     --t-accent:        var(--t-blue);
     --t-accent-dark:   var(--t-blue-dark);
     --t-accent-soft:   var(--t-blue-soft);
@@ -61,25 +57,20 @@
     --t-neutral:       #94a3b8;
     --t-neutral-soft:  rgba(148, 163, 184, 0.15);
 
-    /* shape */
     --t-r-sm: 8px;
     --t-r-md: 12px;
     --t-r-lg: 18px;
     --t-r-xl: 26px;
 
-    /* depth */
     --t-shadow:    0 8px 32px rgba(0, 0, 0, 0.42);
     --t-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.6);
     --t-glow:      0 0 0 1px var(--t-blue-line), 0 8px 40px rgba(59, 130, 246, 0.28);
 
-    /* blur */
     --t-blur-sm: blur(10px) saturate(140%);
     --t-blur:    blur(18px) saturate(150%);
     --t-blur-lg: blur(28px) saturate(160%);
 
-    /* motion */
     --t-ease: 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 
-    /* layout */
     --t-sidebar: 268px;
 }

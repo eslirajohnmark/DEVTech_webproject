@@ -1,19 +1,25 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+import sys
+# Make `from app import db, User` (used by blueprints/commands/models) resolve to THIS
+# module even when started with `python app.py` (otherwise app.py is imported twice
+# and the blueprint imports fail circularly).
+sys.modules.setdefault('app', sys.modules[__name__])
+ 
+from flask import (Flask, render_template, request, redirect, url_for, session,
+                   flash, jsonify, g, abort, json)
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from functools import wraps
 import os
-import sys
+import hmac
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 import re
 import secrets
 from werkzeug.utils import secure_filename
-from sqlalchemy import text, or_, and_
+from sqlalchemy import text, or_, and_, func
 from markupsafe import escape as escape_markupsafe
-import json
-from flask import json
 from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
 from flask_wtf import CSRFProtect
@@ -22,135 +28,111 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_caching import Cache
 from flask_talisman import Talisman
-import secrets as _setup_secrets
 from commands import register_commands
-
+ 
 load_dotenv()
 
 # ==================== ENVIRONMENT ====================
-# FLASK_ENV drives every security-sensitive default below. Locally this is
-# 'development' (matching everything set up earlier in this project - HTTP
-# fallback, relaxed cookies, verbose errors). In production it MUST be set
-# to 'production' in the real .env file - that one flag switches on secure
-# cookies, forced HTTPS, and hides stack traces from visitors.
 IS_PRODUCTION = os.environ.get('FLASK_ENV', 'development') == 'production'
-
-
+ 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'admin@DEVTech094630.com')
 if IS_PRODUCTION and app.config['SECRET_KEY'] == 'admin@DEVTech094630.com':
-    raise RuntimeError(
-        'Refusing to start in production with the default SECRET_KEY. '
-        'Set a real random SECRET_KEY in your production .env file.'
-    )
-
+    raise RuntimeError('Refusing to start in production with the default SECRET_KEY. '
+                       'Set a real random SECRET_KEY in your production .env file.')
+ 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
-    'DATABASE_URL', 'mysql+pymysql://root:admin123@localhost/devtech_db'
-)
+    'DATABASE_URL', 'mysql+pymysql://root:admin123@localhost/devtech_db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-# Recycle stale DB connections and verify them before use - without this, a
-# production app left running for hours will start throwing
-# "MySQL server has gone away" errors once idle connections time out.
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_recycle': 280,
-    'pool_pre_ping': True,
-}
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280, 'pool_pre_ping': True}
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
+app.config['TECH_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'tech')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['DEBUG'] = not IS_PRODUCTION
-
-# ---- Session cookie hardening ----
-app.config['SESSION_COOKIE_HTTPONLY'] = True          # JS can never read the session cookie
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'         # blocks it being sent on cross-site requests
-app.config['SESSION_COOKIE_SECURE'] = IS_PRODUCTION   # browser refuses to send it over plain HTTP
+ 
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = IS_PRODUCTION
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
-
+ 
 # ==================== LOGGING ====================
-# Real deployments should never rely on print() - it's invisible once the
-# process is backgrounded under gunicorn/systemd. This writes rotating
-# logs (5MB x 5 files) alongside stdout, and only shows Flask's interactive
-# debugger/tracebacks when NOT running in production.
 if not app.debug:
     os.makedirs('logs', exist_ok=True)
     file_handler = RotatingFileHandler('logs/devtech.log', maxBytes=5 * 1024 * 1024, backupCount=5)
     file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-    ))
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
     app.logger.addHandler(file_handler)
     app.logger.setLevel(logging.INFO)
     app.logger.info('DEVTech startup (production mode)')
 
 # ==================== CSRF PROTECTION ====================
-# Protects every POST/PUT/PATCH/DELETE route (both plain <form> submissions
-# and the JS fetch() calls used throughout the shop/orders/admin panel)
-# against Cross-Site Request Forgery. Plain forms carry the token via the
-# hidden csrf_token field added to each <form>; fetch() calls carry it via
-# the X-CSRFToken header, attached automatically by the fetch patch in
-# user.js/admin.js reading the <meta name="csrf-token"> tag in each base
-# template.
+# ==================== CSRF ====================
 csrf = CSRFProtect(app)
-
+ 
 @app.errorhandler(CSRFError)
 def handle_csrf_error(e):
+    if request.path.startswith('/technician/api/'):
+        return jsonify({'ok': False, 'reason': 'Security token missing or expired. Refresh and retry.'}), 400
     if request.path.startswith('/api/'):
-        return jsonify({'success': False, 'message': 'Your session security token expired. Please refresh the page and try again.'}), 400
+        return jsonify({'success': False, 'ok': False,
+                        'message': 'Your session security token expired. Please refresh the page and try again.',
+                        'reason': 'Your session security token expired. Please refresh the page and try again.'}), 400
     flash('Your form session expired. Please try again.', 'danger')
     return redirect(request.referrer or url_for('home'))
-
+ 
 # ==================== RATE LIMITING ====================
-# Blunt but effective brute-force defense on the endpoints that matter most:
-# login forms and account creation. Limits are per-IP. In production, point
-# storage_uri at Redis (RATELIMIT_STORAGE_URI) so limits are shared across
-# multiple worker processes - the in-memory default only tracks requests
-# seen by that one process, which is fine for local development only.
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=['200 per hour'],
-    storage_uri=os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'),
-)
-
+limiter = Limiter(key_func=get_remote_address, app=app, default_limits=['200 per hour'],
+                  storage_uri=os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'))
+ 
 # ==================== CACHING ====================
-# Cuts repeated database load for data that doesn't change every request -
-# the shop's product listing and the admin dashboard's analytics queries
-# are the two most expensive, most frequently hit reads in the app. Uses
-# SimpleCache (in-process) by default; set CACHE_TYPE=RedisCache in .env
-# for a real multi-worker production deployment, since SimpleCache is not
-# shared between gunicorn worker processes.
 cache = Cache(app, config={
     'CACHE_TYPE': os.environ.get('CACHE_TYPE', 'SimpleCache'),
     'CACHE_REDIS_URL': os.environ.get('CACHE_REDIS_URL', ''),
     'CACHE_DEFAULT_TIMEOUT': 60,
 })
 
+# ==================== TECHNICIAN CSP NONCE ====================
+# Registered BEFORE Talisman on purpose: after_request hooks run in reverse order,
+# so this one runs last and its strict CSP replaces Talisman's on /technician/* only.
+@app.before_request
+def _make_tech_nonce():
+    g.tech_nonce = secrets.token_urlsafe(16)
+ 
+@app.context_processor
+def _inject_tech_nonce():
+    return {'tech_nonce': getattr(g, 'tech_nonce', '')}
+ 
+@app.after_request
+def _technician_csp(resp):
+    if request.path.startswith('/technician'):
+        n = getattr(g, 'tech_nonce', '')
+        resp.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{n}'; "
+            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+            "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
+            "img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'")
+    return resp
+ 
 # ==================== SECURITY HEADERS ====================
-# Sends the standard hardening headers a real browser-facing site needs:
-# HSTS, X-Content-Type-Options, X-Frame-Options (clickjacking defense), and
-# a Content-Security-Policy scoped to the exact third-party origins this
-# app actually uses (Font Awesome + Google Fonts). force_https is only
-# enabled in production so local HTTP/self-signed-HTTPS development (see
-# the mkcert/adhoc setup earlier in this project) keeps working unchanged.
 csp = {
     'default-src': "'self'",
-    'style-src': ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com', 'https://fonts.googleapis.com'],
+    'style-src': ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com',
+                  'https://fonts.googleapis.com', 'https://unpkg.com'],
     'font-src': ["'self'", 'https://cdnjs.cloudflare.com', 'https://fonts.gstatic.com'],
-    'script-src': ["'self'", "'unsafe-inline'"],
+    'script-src': ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdn.jsdelivr.net'],
     'img-src': ["'self'", 'data:', 'https:'],
-    'connect-src': "'self'",
+    'connect-src': ["'self'", 'https://nominatim.openstreetmap.org'],
 }
-Talisman(
-    app,
-    force_https=IS_PRODUCTION,
-    strict_transport_security=IS_PRODUCTION,
-    session_cookie_secure=IS_PRODUCTION,
-    content_security_policy=csp,
-)
+Talisman(app, force_https=IS_PRODUCTION, strict_transport_security=IS_PRODUCTION,
+         session_cookie_secure=IS_PRODUCTION, content_security_policy=csp)
+ 
 
-# ==================== HEALTH CHECK ====================
-# Used by a load balancer, uptime monitor, or `docker healthcheck` to
-# verify the app (and its database connection) are actually up - not just
-# that the process is running. Deliberately unauthenticated and minimal.
+# ==================== DATABASE / BCRYPT (created early: /healthz needs db) ====================
+db = SQLAlchemy(app)
+bcrypt = Bcrypt(app)
+ 
 @app.route('/healthz')
 def healthz():
     try:
@@ -160,61 +142,42 @@ def healthz():
         app.logger.error(f'Health check failed: {e}')
         return jsonify({'status': 'error', 'database': 'unreachable'}), 503
 
-# ==================== OAUTH (Google / Facebook) ====================
+# ==================== OAUTH(google/facebook) ====================
 oauth = OAuth(app)
-
-oauth.register(
-    name='google',
-    client_id=os.environ.get('GOOGLE_CLIENT_ID'),
-    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'},
-)
-
-oauth.register(
-    name='facebook',
-    client_id=os.environ.get('FACEBOOK_CLIENT_ID'),
-    client_secret=os.environ.get('FACEBOOK_CLIENT_SECRET'),
-    access_token_url='https://graph.facebook.com/v19.0/oauth/access_token',
-    authorize_url='https://www.facebook.com/v19.0/dialog/oauth',
-    api_base_url='https://graph.facebook.com/v19.0/',
-    client_kwargs={'scope': 'email public_profile'},
-)
-
+oauth.register(name='google',
+               client_id=os.environ.get('GOOGLE_CLIENT_ID'),
+               client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
+               server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+               client_kwargs={'scope': 'openid email profile'})
+oauth.register(name='facebook',
+               client_id=os.environ.get('FACEBOOK_CLIENT_ID'),
+               client_secret=os.environ.get('FACEBOOK_CLIENT_SECRET'),
+               access_token_url='https://graph.facebook.com/v19.0/oauth/access_token',
+               authorize_url='https://www.facebook.com/v19.0/dialog/oauth',
+               api_base_url='https://graph.facebook.com/v19.0/',
+               client_kwargs={'scope': 'email public_profile'})
+ 
 app.jinja_env.filters['tojson'] = lambda obj: json.dumps(obj, default=str)
 app.jinja_env.filters['escape'] = lambda s: escape_markupsafe(s) if s else ''
-
-
+ 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-
-# Allowed file extensions for receipts
+os.makedirs(app.config['TECH_UPLOAD_FOLDER'], exist_ok=True)
+ 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
-
+ 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-# Real magic-byte signatures for each allowed type. Checking only the file
-# extension (allowed_file above) is trivially spoofed - renaming
-# malware.exe to receipt.jpg sails straight through an extension check.
-# This reads the file's actual first bytes and confirms they match what
-# the claimed extension promises before anything gets saved to disk.
+ 
 FILE_SIGNATURES = {
-    'png': [b'\x89PNG\r\n\x1a\n'],
-    'jpg': [b'\xff\xd8\xff'],
-    'jpeg': [b'\xff\xd8\xff'],
-    'gif': [b'GIF87a', b'GIF89a'],
-    'pdf': [b'%PDF-'],
+    'png': [b'\x89PNG\r\n\x1a\n'], 'jpg': [b'\xff\xd8\xff'], 'jpeg': [b'\xff\xd8\xff'],
+    'gif': [b'GIF87a', b'GIF89a'], 'pdf': [b'%PDF-'],
 }
-MAX_RECEIPT_SIZE = 5 * 1024 * 1024  # 5MB - tighter than the 16MB global request cap
-
+MAX_RECEIPT_SIZE = 5 * 1024 * 1024
+ 
 def validate_uploaded_file(file_storage, extension):
-    """Returns (is_valid, error_message). Checks actual file content
-    against the claimed extension's magic bytes, and enforces a per-file
-    size cap independent of the app-wide MAX_CONTENT_LENGTH."""
     signatures = FILE_SIGNATURES.get(extension, [])
     if not signatures:
         return False, 'Unsupported file type.'
-
     file_storage.stream.seek(0, os.SEEK_END)
     size = file_storage.stream.tell()
     file_storage.stream.seek(0)
@@ -222,25 +185,18 @@ def validate_uploaded_file(file_storage, extension):
         return False, 'File is too large. Maximum size is 5MB.'
     if size == 0:
         return False, 'The uploaded file is empty.'
-
     header = file_storage.stream.read(8)
     file_storage.stream.seek(0)
     if not any(header.startswith(sig) for sig in signatures):
         return False, 'The file content does not match its extension. Please upload a genuine JPG, PNG, GIF, or PDF.'
-
     return True, None
 
-db = SQLAlchemy(app)
-bcrypt = Bcrypt(app)
-
 # ==================== DATABASE MODELS ====================
-
+ 
 class User(db.Model):
     __tablename__ = 'users'
-    __table_args__ = (
-        db.UniqueConstraint('oauth_provider', 'oauth_id', name='uq_users_oauth_identity'),
-    )
-    
+    __table_args__ = (db.UniqueConstraint('oauth_provider', 'oauth_id', name='uq_users_oauth_identity'),)
+ 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -259,21 +215,14 @@ class User(db.Model):
     oauth_provider = db.Column(db.String(20), nullable=True)
     oauth_id = db.Column(db.String(255), nullable=True)
     last_active = db.Column(db.DateTime, nullable=True)
-    # ---- Technician identity verification ----
-    # id_number is stored ONLY for internal admin verification records - it
-    # is never serialized to any customer-facing API response or template.
-    # Customers only ever see the boolean id_verified badge, never the
-    # number itself. Storing a government ID number is sensitive personal
-    # data under most data-privacy laws (e.g. the Philippines' Data Privacy
-    # Act, RA 10173) - real-world platforms verify identity internally and
-    # expose only a verified/unverified status externally.
-    id_type = db.Column(db.String(30), nullable=True)      # e.g. 'National ID', 'Driver's License', 'Passport'
-    id_number = db.Column(db.String(50), nullable=True)    # admin-only, never exposed via API/templates to customers
+    # id_number: admin-only audit record, never serialized to customers.
+    id_type = db.Column(db.String(30), nullable=True)
+    id_number = db.Column(db.String(50), nullable=True)
     id_verified = db.Column(db.Boolean, default=False)
     id_verified_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+ 
     bookings = db.relationship('Booking', backref='user', lazy=True, foreign_keys='Booking.user_id')
     transactions = db.relationship('Transaction', backref='user', lazy=True, foreign_keys='Transaction.user_id')
     notifications = db.relationship('Notification', backref='user', lazy=True)
@@ -283,44 +232,40 @@ class User(db.Model):
     shopping_carts = db.relationship('ShoppingCart', backref='user', lazy=True)
     orders = db.relationship('Order', backref='user', lazy=True)
     preferences = db.relationship('UserPreference', backref='user', uselist=False)
-    
+ 
     def set_password(self, password):
         self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
-    
+ 
     def check_password(self, password):
         return bcrypt.check_password_hash(self.password_hash, password)
-    
+ 
     def to_dict(self):
-        return {
-            'id': self.id,
-            'username': self.username,
-            'email': self.email,
-            'full_name': self.full_name,
-            'phone': self.phone,
-            'address': self.address,
-            'city': self.city,
-            'province': self.province,
-            'postal_code': self.postal_code,
-            'role': self.role,
-            'is_active': self.is_active,
-            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None
-        }
-
+        return {'id': self.id, 'username': self.username, 'email': self.email,
+                'full_name': self.full_name, 'phone': self.phone, 'address': self.address,
+                'city': self.city, 'province': self.province, 'postal_code': self.postal_code,
+                'role': self.role, 'is_active': self.is_active,
+                'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None}
+ 
 class ServiceCategory(db.Model):
     __tablename__ = 'service_categories'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), unique=True, nullable=False)
     description = db.Column(db.Text)
     icon = db.Column(db.String(50))
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+    # catalog visuals (match database/migrate_service_categories.sql)
+    slug = db.Column(db.String(50), unique=True, nullable=True)
+    color = db.Column(db.String(20), nullable=False, default='#2563eb')
+    display_order = db.Column(db.Integer, nullable=False, default=100)
+    tagline = db.Column(db.String(200))
+ 
     services = db.relationship('Service', backref='category', lazy=True)
-
+ 
 class Service(db.Model):
     __tablename__ = 'services'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     category_id = db.Column(db.Integer, db.ForeignKey('service_categories.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)
@@ -329,12 +274,12 @@ class Service(db.Model):
     estimated_hours = db.Column(db.Integer, default=1)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+ 
     bookings = db.relationship('Booking', backref='service', lazy=True)
-
+ 
 class Booking(db.Model):
     __tablename__ = 'bookings'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     booking_number = db.Column(db.String(50), unique=True, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
@@ -350,13 +295,13 @@ class Booking(db.Model):
     assigned_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+ 
     transaction = db.relationship('Transaction', backref='booking', uselist=False, foreign_keys='Transaction.booking_id')
     technician = db.relationship('User', foreign_keys=[technician_id])
-
+ 
 class Transaction(db.Model):
     __tablename__ = 'transactions'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     transaction_number = db.Column(db.String(50), unique=True, nullable=False)
     booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=True)
@@ -371,12 +316,12 @@ class Transaction(db.Model):
     rejection_reason = db.Column(db.Text)
     transaction_date = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
+ 
     order = db.relationship('Order', backref='transactions')
-
+ 
 class Product(db.Model):
     __tablename__ = 'products'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
@@ -388,13 +333,13 @@ class Product(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+ 
     cart_items = db.relationship('CartItem', backref='product', lazy=True)
     order_items = db.relationship('OrderItem', backref='product', lazy=True)
-
+ 
 class Notification(db.Model):
     __tablename__ = 'notifications'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     title = db.Column(db.String(100), nullable=False)
@@ -402,10 +347,10 @@ class Notification(db.Model):
     type = db.Column(db.String(20), default='info')
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+ 
 class Message(db.Model):
     __tablename__ = 'messages'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     sender_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     recipient_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
@@ -414,12 +359,12 @@ class Message(db.Model):
     is_read = db.Column(db.Boolean, default=False)
     parent_id = db.Column(db.Integer, db.ForeignKey('messages.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+ 
     replies = db.relationship('Message', backref=db.backref('parent', remote_side=[id]), lazy=True)
-
+ 
 class SupportTicket(db.Model):
     __tablename__ = 'support_tickets'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     subject = db.Column(db.String(200), nullable=False)
@@ -429,40 +374,40 @@ class SupportTicket(db.Model):
     admin_response = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
+ 
 class ActivityLog(db.Model):
     __tablename__ = 'activity_logs'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     action = db.Column(db.String(100), nullable=False)
     details = db.Column(db.Text)
     ip_address = db.Column(db.String(45))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+ 
 class SystemSetting(db.Model):
     __tablename__ = 'system_settings'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     setting_key = db.Column(db.String(50), unique=True, nullable=False)
     value = db.Column(db.Text)
     description = db.Column(db.String(200))
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
+ 
 class ShoppingCart(db.Model):
     __tablename__ = 'shopping_carts'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     status = db.Column(db.String(20), default='active')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+ 
     items = db.relationship('CartItem', backref='cart', lazy=True, cascade='all, delete-orphan')
-
+ 
 class CartItem(db.Model):
     __tablename__ = 'cart_items'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     cart_id = db.Column(db.Integer, db.ForeignKey('shopping_carts.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
@@ -470,22 +415,16 @@ class CartItem(db.Model):
     price = db.Column(db.Numeric(10, 2))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
+ 
 class Order(db.Model):
     __tablename__ = 'orders'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     order_number = db.Column(db.String(50), unique=True, nullable=False)
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(20), default='pending')
-    # Legacy single-line formatted address, kept for backward compatibility
-    # with any code/reports that already read this column directly.
     shipping_address = db.Column(db.String(255))
-    # Structured delivery-address snapshot, captured at the moment the order
-    # is placed. This deliberately duplicates data that also lives on the
-    # User row: if the customer edits their profile address later, past
-    # orders must keep showing the address the rider was actually given.
     recipient_name = db.Column(db.String(100))
     recipient_phone = db.Column(db.String(20))
     address_line = db.Column(db.String(255))
@@ -498,22 +437,22 @@ class Order(db.Model):
     payment_status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+ 
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan')
-
+ 
 class OrderItem(db.Model):
     __tablename__ = 'order_items'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
     quantity = db.Column(db.Integer, default=1)
     price = db.Column(db.Numeric(10, 2), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+ 
 class UserPreference(db.Model):
     __tablename__ = 'user_preferences'
-    
+ 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
     language = db.Column(db.String(10), default='en')
@@ -523,9 +462,9 @@ class UserPreference(db.Model):
     booking_reminders = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
+    
 # ==================== DECORATORS ====================
-
+ 
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -534,7 +473,7 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
-
+ 
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -547,12 +486,9 @@ def admin_required(f):
             return redirect(url_for('home'))
         return f(*args, **kwargs)
     return decorated_function
-
+ 
 @app.before_request
 def track_user_presence():
-    """Stamp last_active on every request from a logged-in session, so
-    User Management can show accurate online/offline status. Cheap
-    single-column UPDATE, not a full model load."""
     if request.endpoint == 'static':
         return
     user_id = session.get('user_id')
@@ -563,23 +499,13 @@ def track_user_presence():
         db.session.commit()
     except Exception:
         db.session.rollback()
-
+ 
 @app.route('/api/ping', methods=['POST'])
 def api_ping():
-    """Lightweight heartbeat the frontend calls periodically. The actual
-    last_active stamp happens in track_user_presence() above - this just
-    guarantees a request goes out even on an otherwise idle page."""
     return jsonify({'ok': True})
-
+ 
 @app.route('/api/admin/session-check')
 def api_admin_session_check():
-    """Used by the admin auto-refresh before it reloads a page. Sessions
-    are one cookie per browser, so logging in/out as a different account
-    in another tab silently changes what this tab is authenticated as
-    too. Without this check, auto-refresh would just blindly reload and
-    the admin would get bounced to the public homepage every few seconds
-    with no explanation - this lets the frontend detect that and show a
-    clear message instead."""
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'ok': False, 'reason': 'logged_out'}), 401
@@ -587,421 +513,238 @@ def api_admin_session_check():
     if not user or user.role != 'admin' or not user.is_active:
         return jsonify({'ok': False, 'reason': 'not_admin'}), 401
     return jsonify({'ok': True})
-
 # ==================== HELPER FUNCTIONS ====================
-
+ 
 def generate_booking_number():
-    prefix = 'BK'
     date_str = datetime.utcnow().strftime('%y%m%d')
-    last_booking = Booking.query.order_by(Booking.id.desc()).first()
-    if last_booking:
-        try:
-            num = int(last_booking.booking_number[8:]) + 1
-        except:
-            num = 1
-    else:
+    last = Booking.query.order_by(Booking.id.desc()).first()
+    try:
+        num = int(last.booking_number[8:]) + 1 if last else 1
+    except Exception:
         num = 1
     if num > 9999:
         num = 1
-    return f"{prefix}{date_str}{str(num).zfill(4)}"
-
+    return f"BK{date_str}{str(num).zfill(4)}"
+ 
 def generate_transaction_number():
-    prefix = 'TRX'
     date_str = datetime.utcnow().strftime('%y%m%d')
-    last_transaction = Transaction.query.order_by(Transaction.id.desc()).first()
-    if last_transaction:
-        try:
-            num = int(last_transaction.transaction_number[9:]) + 1
-        except:
-            num = 1
-    else:
+    last = Transaction.query.order_by(Transaction.id.desc()).first()
+    try:
+        num = int(last.transaction_number[9:]) + 1 if last else 1
+    except Exception:
         num = 1
     if num > 9999:
         num = 1
-    return f"{prefix}{date_str}{str(num).zfill(4)}"
-
+    return f"TRX{date_str}{str(num).zfill(4)}"
+ 
 def calculate_trend(model, date_column, extra_filter=None, days=7):
-    """Real, data-driven trend for a dashboard stat card.
-
-    Rather than a raw week-over-week ratio (which explodes to things like
-    '1300%' when last week only had 1 record), this reports what share of
-    the ENTIRE dataset arrived in the current window - a bounded 0-100%
-    figure that scales sensibly however small or large the real user base
-    is. Direction (up/down/flat) still reflects whether this window grew
-    or shrank versus the one before it.
-    """
     now = datetime.utcnow()
     current_start = now - timedelta(days=days)
     previous_start = now - timedelta(days=days * 2)
-
     query = model.query
     if extra_filter is not None:
         query = query.filter(extra_filter)
-
     total_count = query.count()
     current_count = query.filter(date_column >= current_start).count()
     previous_count = query.filter(date_column >= previous_start, date_column < current_start).count()
-
     if current_count == previous_count:
         direction = 'flat'
     else:
         direction = 'up' if current_count > previous_count else 'down'
-
     percent = round((current_count / total_count) * 100) if total_count > 0 else 0
     return {'percent': percent, 'direction': direction}
-
+ 
 def create_notification(user_id, title, message, type='info'):
-    notification = Notification(
-        user_id=user_id,
-        title=title,
-        message=message,
-        type=type
-    )
+    notification = Notification(user_id=user_id, title=title, message=message, type=type)
     db.session.add(notification)
     db.session.commit()
     return notification
-
+ 
 def log_activity(user_id, action, details=None, ip_address=None):
-    log = ActivityLog(
-        user_id=user_id,
-        action=action,
-        details=details,
-        ip_address=ip_address or request.remote_addr
-    )
-    db.session.add(log)
+    db.session.add(ActivityLog(user_id=user_id, action=action, details=details,
+                               ip_address=ip_address or request.remote_addr))
     db.session.commit()
-
-# ==================== CREATE TABLES FUNCTION ====================
-
+    
+    
+# ==================== SCHEMA SELF-HEAL (MySQL) ====================
+ 
+def _try_sql(sql, ok_msg=None):
+    try:
+        db.session.execute(text(sql))
+        db.session.commit()
+        if ok_msg:
+            print(ok_msg)
+        return True
+    except Exception as e:
+        db.session.rollback()
+        return False
+ 
 def create_messages_table():
-    """Create messages table if it doesn't exist"""
     with app.app_context():
         try:
-            result = db.session.execute(text("SHOW TABLES LIKE 'messages'")).fetchone()
-            
-            if not result:
-                db.session.execute(text("""
-                    CREATE TABLE messages (
-                        id INT PRIMARY KEY AUTO_INCREMENT,
-                        sender_id INT NOT NULL,
-                        recipient_id INT NOT NULL,
-                        subject VARCHAR(200),
-                        content TEXT NOT NULL,
-                        is_read BOOLEAN DEFAULT FALSE,
-                        parent_id INT NULL,
-                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (sender_id) REFERENCES users(id),
-                        FOREIGN KEY (recipient_id) REFERENCES users(id),
-                        FOREIGN KEY (parent_id) REFERENCES messages(id)
-                    )
-                """))
-                db.session.commit()
-                print("✅ Messages table created successfully!")
-                return True
-            else:
-                print("ℹ️ Messages table already exists.")
-                return True
+            if not db.session.execute(text("SHOW TABLES LIKE 'messages'")).fetchone():
+                db.create_all()
+            return True
         except Exception as e:
-            print(f"❌ Error creating messages table: {e}")
             db.session.rollback()
+            print(f"Note: messages table check skipped: {e}")
             return False
-
+ 
 def create_support_tickets_table():
-    """Create support_tickets table if it doesn't exist"""
     with app.app_context():
         try:
-            result = db.session.execute(text("SHOW TABLES LIKE 'support_tickets'")).fetchone()
-            
-            if not result:
-                db.session.execute(text("""
-                    CREATE TABLE support_tickets (
-                        id INT PRIMARY KEY AUTO_INCREMENT,
-                        user_id INT NOT NULL,
-                        subject VARCHAR(200) NOT NULL,
-                        message TEXT NOT NULL,
-                        category VARCHAR(50) DEFAULT 'general',
-                        status VARCHAR(20) DEFAULT 'open',
-                        admin_response TEXT,
-                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users(id)
-                    )
-                """))
-                db.session.commit()
-                print("✅ Support tickets table created successfully!")
-                return True
-            else:
-                print("ℹ️ Support tickets table already exists.")
-                return True
+            if not db.session.execute(text("SHOW TABLES LIKE 'support_tickets'")).fetchone():
+                db.create_all()
+            return True
         except Exception as e:
-            print(f"❌ Error creating support tickets table: {e}")
             db.session.rollback()
+            print(f"Note: support_tickets check skipped: {e}")
             return False
-
+ 
 def update_payment_method_column():
-    """Update payment_method column to VARCHAR(50)"""
     with app.app_context():
-        try:
-            db.session.execute(text(
-                "ALTER TABLE transactions MODIFY COLUMN payment_method VARCHAR(50) NOT NULL"
-            ))
-            db.session.commit()
-            print("✅ Payment method column updated to VARCHAR(50)!")
-            return True
-        except Exception as e:
-            print(f"ℹ️ Payment method column already updated or error: {e}")
-            return False
-
+        _try_sql("ALTER TABLE transactions MODIFY COLUMN payment_method VARCHAR(50) NOT NULL")
+ 
 def add_receipt_image_column():
-    """Add receipt_image column to transactions if it doesn't exist"""
     with app.app_context():
-        try:
-            db.session.execute(text(
-                "ALTER TABLE transactions ADD COLUMN receipt_image VARCHAR(255) NULL"
-            ))
-            db.session.commit()
-            print("✅ Receipt image column added to transactions!")
-            return True
-        except Exception as e:
-            print(f"ℹ️ Receipt image column already exists or error: {e}")
-            return False
-
+        _try_sql("ALTER TABLE transactions ADD COLUMN receipt_image VARCHAR(255) NULL")
+ 
 def add_oauth_columns():
-    """Add Google/Facebook login columns to users if they don't exist.
-    Required by /login/google and /login/facebook - without these, OAuth
-    sign-in raises 'Unknown column' errors on any database created before
-    social login was added."""
     with app.app_context():
-        try:
-            db.session.execute(text(
-                "ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20) NULL, "
-                "ADD COLUMN oauth_id VARCHAR(255) NULL"
-            ))
-            db.session.commit()
-            print("✅ OAuth columns added to users!")
-        except Exception as e:
-            db.session.rollback()
-            print(f"ℹ️ OAuth columns already exist or error: {e}")
-        try:
-            db.session.execute(text(
-                "ALTER TABLE users ADD CONSTRAINT uq_users_oauth_identity "
-                "UNIQUE (oauth_provider, oauth_id)"
-            ))
-            db.session.commit()
-            print("✅ OAuth uniqueness constraint added to users!")
-        except Exception as e:
-            db.session.rollback()
-            print(f"ℹ️ OAuth uniqueness constraint already exists or error: {e}")
-
+        _try_sql("ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20) NULL, "
+                 "ADD COLUMN oauth_id VARCHAR(255) NULL")
+        _try_sql("ALTER TABLE users ADD CONSTRAINT uq_users_oauth_identity "
+                 "UNIQUE (oauth_provider, oauth_id)")
+ 
 def add_order_address_columns():
-    """Add the delivery-address snapshot columns to orders if they don't
-    exist. Required by the order-details view in /user/orders - without
-    these, every past order shows a blank delivery address."""
     with app.app_context():
-        columns = [
-            ("recipient_name", "VARCHAR(100) NULL"),
-            ("recipient_phone", "VARCHAR(20) NULL"),
-            ("address_line", "VARCHAR(255) NULL"),
-            ("city", "VARCHAR(50) NULL"),
-            ("province", "VARCHAR(50) NULL"),
-            ("postal_code", "VARCHAR(10) NULL"),
-            ("latitude", "DECIMAL(10,7) NULL"),
-            ("longitude", "DECIMAL(10,7) NULL"),
-        ]
-        added_any = False
-        for col_name, col_def in columns:
-            try:
-                db.session.execute(text(
-                    f"ALTER TABLE orders ADD COLUMN {col_name} {col_def}"
-                ))
-                db.session.commit()
-                added_any = True
-            except Exception as e:
-                db.session.rollback()
-                # Column already exists - expected on every run after the first.
-        if added_any:
-            print("✅ Delivery-address snapshot columns added to orders!")
-            # Backfill existing rows from the user's current profile so
-            # orders placed before this migration aren't left blank.
-            try:
-                db.session.execute(text("""
-                    UPDATE orders o
-                    JOIN users u ON u.id = o.user_id
-                    SET
-                        o.recipient_name = COALESCE(o.recipient_name, u.full_name),
-                        o.recipient_phone = COALESCE(o.recipient_phone, u.phone),
-                        o.address_line = COALESCE(o.address_line, u.address),
-                        o.city = COALESCE(o.city, u.city),
-                        o.province = COALESCE(o.province, u.province),
-                        o.postal_code = COALESCE(o.postal_code, u.postal_code),
-                        o.latitude = COALESCE(o.latitude, u.latitude),
-                        o.longitude = COALESCE(o.longitude, u.longitude)
-                    WHERE o.address_line IS NULL
-                """))
-                db.session.commit()
-                print("✅ Backfilled delivery addresses for existing orders!")
-            except Exception as e:
-                db.session.rollback()
-                print(f"ℹ️ Backfill skipped or error: {e}")
-        else:
-            print("ℹ️ Order address columns already exist")
-
+        cols = [("recipient_name", "VARCHAR(100) NULL"), ("recipient_phone", "VARCHAR(20) NULL"),
+                ("address_line", "VARCHAR(255) NULL"), ("city", "VARCHAR(50) NULL"),
+                ("province", "VARCHAR(50) NULL"), ("postal_code", "VARCHAR(10) NULL"),
+                ("latitude", "DECIMAL(10,7) NULL"), ("longitude", "DECIMAL(10,7) NULL")]
+        added = any([_try_sql(f"ALTER TABLE orders ADD COLUMN {n} {d}") for n, d in cols])
+        if added:
+            _try_sql("""UPDATE orders o JOIN users u ON u.id = o.user_id SET
+                o.recipient_name = COALESCE(o.recipient_name, u.full_name),
+                o.recipient_phone = COALESCE(o.recipient_phone, u.phone),
+                o.address_line = COALESCE(o.address_line, u.address),
+                o.city = COALESCE(o.city, u.city), o.province = COALESCE(o.province, u.province),
+                o.postal_code = COALESCE(o.postal_code, u.postal_code),
+                o.latitude = COALESCE(o.latitude, u.latitude),
+                o.longitude = COALESCE(o.longitude, u.longitude)
+                WHERE o.address_line IS NULL""", "Backfilled delivery addresses for existing orders.")
+ 
 def add_user_presence_columns():
-    """Add the last_active tracking column to users if it doesn't exist.
-    Powers the online/offline status and 'time ago' display in User
-    Management. Safe to run every startup - no-op once it's there."""
     with app.app_context():
-        try:
-            db.session.execute(text(
-                "ALTER TABLE users ADD COLUMN last_active DATETIME NULL"
-            ))
-            db.session.commit()
-            print("✅ last_active column added to users!")
-        except Exception as e:
-            db.session.rollback()
-            print(f"ℹ️ last_active column already exists or error: {e}")
-
-# How recently a user must have pinged the server to count as "online".
-# Paired with a ~25s heartbeat from the browser, so this comfortably
-# covers one missed beat without flickering between online/offline.
+        _try_sql("ALTER TABLE users ADD COLUMN last_active DATETIME NULL")
+ 
+def add_service_category_columns():
+    """Same columns as database/migrate_service_categories.sql, for DBs created before it."""
+    with app.app_context():
+        for name, d in [("slug", "VARCHAR(50) NULL UNIQUE"),
+                        ("color", "VARCHAR(20) NOT NULL DEFAULT '#2563eb'"),
+                        ("display_order", "INT NOT NULL DEFAULT 100"),
+                        ("tagline", "VARCHAR(200) NULL")]:
+            _try_sql(f"ALTER TABLE service_categories ADD COLUMN {name} {d}")
+ 
 PRESENCE_ONLINE_WINDOW_SECONDS = 60
-
+ 
 def format_time_ago(dt):
-    """Human-readable elapsed time - seconds/minutes/hours/days/weeks/
-    months/years ago - for a UTC datetime. Mirrors the JS formatter used
-    for live (no-refresh) updates in User Management."""
     if not dt:
         return None
-    seconds = int((datetime.utcnow() - dt).total_seconds())
-    if seconds < 0:
-        seconds = 0
-    if seconds < 5:
-        return 'just now'
-    if seconds < 60:
-        return f"{seconds} second{'s' if seconds != 1 else ''} ago"
+    seconds = max(0, int((datetime.utcnow() - dt).total_seconds()))
+    if seconds < 5: return 'just now'
+    if seconds < 60: return f"{seconds} second{'s' if seconds != 1 else ''} ago"
     minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    if minutes < 60: return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
     hours = minutes // 60
-    if hours < 24:
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    if hours < 24: return f"{hours} hour{'s' if hours != 1 else ''} ago"
     days = hours // 24
-    if days < 7:
-        return f"{days} day{'s' if days != 1 else ''} ago"
+    if days < 7: return f"{days} day{'s' if days != 1 else ''} ago"
     weeks = days // 7
-    if weeks < 5:
-        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    if weeks < 5: return f"{weeks} week{'s' if weeks != 1 else ''} ago"
     months = days // 30
-    if months < 12:
-        return f"{months} month{'s' if months != 1 else ''} ago"
+    if months < 12: return f"{months} month{'s' if months != 1 else ''} ago"
     years = days // 365
     return f"{years} year{'s' if years != 1 else ''} ago"
-
+ 
 def is_user_online(last_active):
-    if not last_active:
-        return False
-    return (datetime.utcnow() - last_active).total_seconds() <= PRESENCE_ONLINE_WINDOW_SECONDS
-
+    return bool(last_active) and (datetime.utcnow() - last_active).total_seconds() <= PRESENCE_ONLINE_WINDOW_SECONDS
+ 
 def get_user_presence(user):
     online = is_user_online(user.last_active)
-    return {
-        'is_online': online,
-        'status': 'online' if online else 'offline',
-        'last_active': user.last_active.strftime('%Y-%m-%dT%H:%M:%SZ') if user.last_active else None,
-        'last_active_display': 'Online now' if online else (
-            format_time_ago(user.last_active) if user.last_active else 'Never logged in'
-        )
-    }
-
+    return {'is_online': online, 'status': 'online' if online else 'offline',
+            'last_active': user.last_active.strftime('%Y-%m-%dT%H:%M:%SZ') if user.last_active else None,
+            'last_active_display': 'Online now' if online else (
+                format_time_ago(user.last_active) if user.last_active else 'Never logged in')}
+  
 # ==================== AUTH ROUTES ====================
-
 @app.route('/')
 def home():
     services = Service.query.filter_by(is_active=True).limit(6).all()
     categories = ServiceCategory.query.filter_by(is_active=True).all()
     return render_template('home.html', services=services, categories=categories)
-
+ 
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
 def login():
     if request.method == 'POST':
-        email = request.form.get('email')
+        email = (request.form.get('email') or '').strip()
         password = request.form.get('password')
-        
         user = User.query.filter_by(email=email).first()
         if user and user.check_password(password):
             if not user.is_active:
                 flash('Your account has been deactivated. Please contact support.', 'danger')
                 return render_template('auth/login.html')
-            
             session['user_id'] = user.id
             session['username'] = user.username
             session['role'] = user.role
-            
             log_activity(user.id, 'login', f'User logged in from {request.remote_addr}')
-            
             if user.role == 'admin':
                 return redirect(url_for('admin_dashboard'))
+            if user.role == 'technician':
+                return redirect(url_for('technician.dashboard'))
             return redirect(url_for('user_dashboard'))
-        else:
-            flash('Invalid email or password.', 'danger')
-    
+        flash('Invalid email or password.', 'danger')
     return render_template('auth/login.html')
-
+ 
 @app.route('/register', methods=['GET', 'POST'])
 @limiter.limit('5 per minute')
 def register():
     if request.method == 'POST':
         full_name = request.form.get('fullName')
-        email = request.form.get('email')
+        email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password')
         re_password = request.form.get('rePassword')
         phone = request.form.get('phone')
-        
+ 
         if not full_name or not email or not password:
             flash('All fields are required.', 'danger')
             return render_template('auth/register.html')
-        
         if password != re_password:
             flash('Passwords do not match.', 'danger')
             return render_template('auth/register.html')
-        
         if len(password) < 6:
             flash('Password must be at least 6 characters long.', 'danger')
             return render_template('auth/register.html')
-        
         if User.query.filter_by(email=email).first():
             flash('Email already registered.', 'danger')
             return render_template('auth/register.html')
-        
+ 
         username = email.split('@')[0]
         if User.query.filter_by(username=username).first():
             username = f"{username}{datetime.utcnow().strftime('%d%m%Y')}"
-        
-        user = User(
-            username=username,
-            email=email,
-            full_name=full_name,
-            phone=phone,
-            role='customer'
-        )
+ 
+        user = User(username=username, email=email, full_name=full_name, phone=phone, role='customer')
         user.set_password(password)
-        
         db.session.add(user)
         db.session.commit()
-        
-        create_notification(
-            user.id,
-            'Welcome to DEVTech!',
-            'Thank you for registering. Start booking your repair services today!',
-            'success'
-        )
-        
+        create_notification(user.id, 'Welcome to DEVTech!',
+                            'Thank you for registering. Start booking your repair services today!', 'success')
         flash('Registration successful! Please log in.', 'success')
         return redirect(url_for('login'))
-    
     return render_template('auth/register.html')
-
+ 
 @app.route('/logout')
 def logout():
     if 'user_id' in session:
@@ -1009,80 +752,53 @@ def logout():
     session.clear()
     flash('You have been logged out.', 'info')
     return redirect(url_for('home'))
-
-# ==================== SOCIAL LOGIN (Google / Facebook) ====================
-
+ 
+# ---- Social login ----
 def _unique_username_from_email(email):
-    """Build a username from an email, disambiguating on collision."""
     base = email.split('@')[0]
     username = base
     if User.query.filter_by(username=username).first():
         username = f"{base}{secrets.token_hex(3)}"
     return username
-
+ 
 def _login_or_create_oauth_user(provider, provider_id, email, full_name):
-    """Find (or create) the local user tied to a Google/Facebook identity,
-    then log them in the same way the normal email/password login does."""
     if not email:
         flash('We could not get an email address from your account. Please try a different sign-in method.', 'danger')
         return redirect(url_for('login'))
-
     user = User.query.filter_by(oauth_provider=provider, oauth_id=provider_id).first()
-
     is_new_user = False
     if not user:
-        # If someone already registered with this email the normal way,
-        # link this social identity to that existing account instead of
-        # creating a duplicate one.
         user = User.query.filter_by(email=email).first()
         if user:
             user.oauth_provider = user.oauth_provider or provider
             user.oauth_id = user.oauth_id or provider_id
         else:
-            user = User(
-                username=_unique_username_from_email(email),
-                email=email,
-                full_name=full_name or email.split('@')[0],
-                role='customer',
-                oauth_provider=provider,
-                oauth_id=provider_id,
-            )
-            # OAuth accounts don't have a local password; store an unusable
-            # random hash so password_hash stays non-null and the account
-            # can never be logged into with a guessed password.
+            user = User(username=_unique_username_from_email(email), email=email,
+                        full_name=full_name or email.split('@')[0], role='customer',
+                        oauth_provider=provider, oauth_id=provider_id)
             user.password_hash = bcrypt.generate_password_hash(secrets.token_urlsafe(32)).decode('utf-8')
             db.session.add(user)
             is_new_user = True
         db.session.commit()
-
         if is_new_user:
-            create_notification(
-                user.id,
-                'Welcome to DEVTech!',
-                'Thank you for registering. Start booking your repair services today!',
-                'success'
-            )
-
+            create_notification(user.id, 'Welcome to DEVTech!',
+                                'Thank you for registering. Start booking your repair services today!', 'success')
     if not user.is_active:
         flash('Your account has been deactivated. Please contact support.', 'danger')
         return redirect(url_for('login'))
-
     session['user_id'] = user.id
     session['username'] = user.username
     session['role'] = user.role
-
     log_activity(user.id, 'login', f'User logged in via {provider} from {request.remote_addr}')
     flash(f'Logged in with {provider.title()}.', 'success')
-
     if user.role == 'admin':
         return redirect(url_for('admin_dashboard'))
     return redirect(url_for('user_dashboard'))
-
+ 
 @app.route('/login/google')
 def google_login():
-    redirect_uri = url_for('google_callback', _external=True)
-    return oauth.google.authorize_redirect(redirect_uri)
-
+    return oauth.google.authorize_redirect(url_for('google_callback', _external=True))
+ 
 @app.route('/login/google/callback')
 def google_callback():
     try:
@@ -1090,23 +806,13 @@ def google_callback():
     except Exception:
         flash('Google sign-in was cancelled or failed. Please try again.', 'danger')
         return redirect(url_for('login'))
-
-    userinfo = token.get('userinfo')
-    if not userinfo:
-        userinfo = oauth.google.parse_id_token(token, nonce=None)
-
-    return _login_or_create_oauth_user(
-        provider='google',
-        provider_id=userinfo['sub'],
-        email=userinfo.get('email'),
-        full_name=userinfo.get('name'),
-    )
-
+    userinfo = token.get('userinfo') or oauth.google.parse_id_token(token, nonce=None)
+    return _login_or_create_oauth_user('google', userinfo['sub'], userinfo.get('email'), userinfo.get('name'))
+ 
 @app.route('/login/facebook')
 def facebook_login():
-    redirect_uri = url_for('facebook_callback', _external=True)
-    return oauth.facebook.authorize_redirect(redirect_uri)
-
+    return oauth.facebook.authorize_redirect(url_for('facebook_callback', _external=True))
+ 
 @app.route('/login/facebook/callback')
 def facebook_callback():
     try:
@@ -1115,554 +821,368 @@ def facebook_callback():
     except Exception:
         flash('Facebook sign-in was cancelled or failed. Please try again.', 'danger')
         return redirect(url_for('login'))
-
-    return _login_or_create_oauth_user(
-        provider='facebook',
-        provider_id=profile['id'],
-        email=profile.get('email'),
-        full_name=profile.get('name'),
-    )
-
+    return _login_or_create_oauth_user('facebook', profile['id'], profile.get('email'), profile.get('name'))
+ 
 @app.route('/admin/login', methods=['GET', 'POST'])
 @limiter.limit('5 per minute')
 def admin_login():
     if request.method == 'POST':
-        email = request.form.get('email')
+        email = (request.form.get('email') or '').strip()
         password = request.form.get('password')
-        
         user = User.query.filter_by(email=email).first()
         if user and user.check_password(password) and user.role == 'admin' and user.is_active:
             session['user_id'] = user.id
             session['username'] = user.username
             session['role'] = user.role
-            
             log_activity(user.id, 'admin_login', f'Admin logged in from {request.remote_addr}')
             flash('Welcome to Admin Dashboard!', 'success')
             return redirect(url_for('admin_dashboard'))
-        else:
-            flash('Invalid admin credentials or unauthorized access.', 'danger')
-    
+        flash('Invalid admin credentials or unauthorized access.', 'danger')
     return render_template('auth/admin_login.html')
+ 
+# ---- First-admin setup page (only exists while there is no admin) ----
+@app.route('/setup/first-admin', methods=['GET', 'POST'])
+@limiter.limit('10 per hour')
+def setup_first_admin():
+    if User.query.filter_by(role='admin').first():
+        abort(404)
+    expected = os.environ.get('SETUP_TOKEN', '')
+    if expected and not hmac.compare_digest(request.values.get('token', ''), expected):
+        abort(404)
+    errors, email, name = [], '', ''
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        name = request.form.get('name', '').strip()
+        pw, confirm = request.form.get('password', ''), request.form.get('confirm', '')
+        if '@' not in email: errors.append('Enter a valid email.')
+        if not name: errors.append('Enter your full name.')
+        if len(pw) < 8: errors.append('Password must be at least 8 characters.')
+        if pw != confirm: errors.append('Passwords do not match.')
+        if email and User.query.filter_by(email=email).first(): errors.append('That email is already registered.')
+        if not errors:
+            uname = email.split('@')[0]
+            if User.query.filter_by(username=uname).first():
+                uname += '_' + secrets.token_hex(3)
+            u = User(username=uname, email=email, full_name=name, role='admin', is_active=True)
+            u.set_password(pw)
+            db.session.add(u)
+            db.session.commit()
+            flash('Admin created. Sign in below.', 'success')
+            return redirect(url_for('admin_login'))
+    return render_template('setup_first_admin.html', errors=errors, email=email, name=name)
 
+ 
 # ==================== USER DASHBOARD ROUTES ====================
-
 @app.route('/user/dashboard')
 @login_required
 def user_dashboard():
     user_id = session.get('user_id')
     user = User.query.get(user_id)
-    bookings = Booking.query.filter_by(user_id=user_id).order_by(Booking.created_at.desc()).limit(5).all()
+    # Full list (was limited to 5, which capped every stat card at 5). Template slices [:3].
+    bookings = Booking.query.filter_by(user_id=user_id).order_by(Booking.created_at.desc()).all()
     transactions = Transaction.query.filter_by(user_id=user_id).order_by(Transaction.transaction_date.desc()).limit(5).all()
     notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
     unread_messages = 0
     try:
         unread_messages = Message.query.filter_by(recipient_id=user_id, is_read=False).count()
-    except Exception as e:
+    except Exception:
         pass
-    
-    return render_template('user/user_dashboard.html',
-                         user=user,
-                         bookings=bookings,
-                         transactions=transactions,
-                         notifications=notifications,
-                         unread_messages=unread_messages)
-
+    return render_template('user/user_dashboard.html', user=user, bookings=bookings,
+                           transactions=transactions, notifications=notifications,
+                           unread_messages=unread_messages)
+ 
 # ==================== BOOKING STATUS ROUTES ====================
-
+def _unread_notifs(user_id):
+    return Notification.query.filter_by(user_id=user_id, is_read=False)\
+        .order_by(Notification.created_at.desc()).limit(5).all()
+ 
 @app.route('/total-bookings')
 @login_required
 def total_bookings():
-    user_id = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=user_id).order_by(Booking.created_at.desc()).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    return render_template('user/total_bookings.html', 
-                         bookings=bookings, 
-                         notifications=notifications)
-
+    uid = session.get('user_id')
+    bookings = Booking.query.filter_by(user_id=uid).order_by(Booking.created_at.desc()).all()
+    return render_template('user/total_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
+ 
 @app.route('/completed-bookings')
 @login_required
 def completed_bookings():
-    user_id = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=user_id, status='completed').order_by(Booking.created_at.desc()).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    return render_template('user/completed_bookings.html', 
-                         bookings=bookings, 
-                         notifications=notifications)
-
+    uid = session.get('user_id')
+    bookings = Booking.query.filter_by(user_id=uid, status='completed').order_by(Booking.created_at.desc()).all()
+    return render_template('user/completed_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
+ 
 @app.route('/inprogress-bookings')
 @login_required
 def inprogress_bookings():
-    user_id = session.get('user_id')
-    bookings = Booking.query.filter(
-        Booking.user_id == user_id,
-        Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-    ).order_by(Booking.created_at.desc()).all()
-    
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    return render_template('user/inprogress_bookings.html', 
-                         bookings=bookings, 
-                         notifications=notifications)
-
+    uid = session.get('user_id')
+    bookings = Booking.query.filter(Booking.user_id == uid,
+                                    Booking.status.in_(['pending', 'confirmed', 'in_progress', 'on_hold'])
+                                    ).order_by(Booking.created_at.desc()).all()
+    return render_template('user/inprogress_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
+ 
 @app.route('/pending-bookings')
 @login_required
 def pending_bookings():
-    user_id = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=user_id, status='pending').order_by(Booking.created_at.desc()).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    return render_template('user/pending_bookings.html', 
-                         bookings=bookings, 
-                         notifications=notifications)
-
+    uid = session.get('user_id')
+    bookings = Booking.query.filter_by(user_id=uid, status='pending').order_by(Booking.created_at.desc()).all()
+    return render_template('user/pending_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
+ 
 @app.route('/rejected-requests')
 @login_required
 def rejected_requests():
-    user_id = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=user_id, status='cancelled').order_by(Booking.created_at.desc()).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    return render_template('user/rejected_requests.html', 
-                         bookings=bookings, 
-                         notifications=notifications)
-
+    uid = session.get('user_id')
+    bookings = Booking.query.filter_by(user_id=uid, status='cancelled').order_by(Booking.created_at.desc()).all()
+    return render_template('user/rejected_requests.html', bookings=bookings, notifications=_unread_notifs(uid))
+ 
 @app.route('/booking/<int:booking_id>/cancel', methods=['POST'])
 @login_required
 def cancel_booking(booking_id):
     user_id = session.get('user_id')
     booking = Booking.query.get_or_404(booking_id)
-    
     if booking.user_id != user_id:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
     if booking.status not in ['pending', 'confirmed']:
         return jsonify({'success': False, 'message': 'This booking cannot be cancelled'}), 400
-    
     booking.status = 'cancelled'
     booking.updated_at = datetime.utcnow()
     db.session.commit()
-    
-    create_notification(
-        user_id,
-        'Booking Cancelled',
-        f'Your booking {booking.booking_number} has been cancelled.',
-        'warning'
-    )
-    
+    create_notification(user_id, 'Booking Cancelled', f'Your booking {booking.booking_number} has been cancelled.', 'warning')
     return jsonify({'success': True, 'message': 'Booking cancelled successfully'})
 
 # ==================== NOTIFICATION ROUTES ====================
-
 @app.route('/notifications')
 @login_required
 def notifications():
     user_id = session.get('user_id')
-    notifications = Notification.query.filter_by(user_id=user_id).order_by(Notification.created_at.desc()).all()
-    
-    for notif in notifications:
-        if not notif.is_read:
-            notif.is_read = True
+    notifs = Notification.query.filter_by(user_id=user_id).order_by(Notification.created_at.desc()).all()
+    view = list(notifs)                     # render read-state as it was on arrival
+    rendered = render_template('user/notification.html', notifications=view)
+    for n in notifs:
+        if not n.is_read:
+            n.is_read = True
     db.session.commit()
-    
-    return render_template('user/notification.html', notifications=notifications)
-
-# Add this to app.py after the notification routes
-
+    return rendered
+ 
 @app.route('/api/notifications/unread-count')
 @login_required
 def api_notification_unread_count():
-    """Get unread notification count for the current user"""
-    user_id = session.get('user_id')
-    count = Notification.query.filter_by(user_id=user_id, is_read=False).count()
+    count = Notification.query.filter_by(user_id=session.get('user_id'), is_read=False).count()
     return jsonify({'count': count})
-
+ 
 @app.route('/notification/<int:notification_id>/read', methods=['POST'])
 @login_required
 def notification_read(notification_id):
-    user_id = session.get('user_id')
-    notification = Notification.query.get_or_404(notification_id)
-    
-    if notification.user_id != user_id:
+    n = Notification.query.get_or_404(notification_id)
+    if n.user_id != session.get('user_id'):
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
-    notification.is_read = True
+    n.is_read = True
     db.session.commit()
-    
     return jsonify({'success': True, 'message': 'Notification marked as read'})
-
+ 
 @app.route('/notification/mark-all-read', methods=['POST'])
 @login_required
 def notification_mark_all_read():
-    user_id = session.get('user_id')
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).all()
-    
-    for notif in notifications:
-        notif.is_read = True
+    Notification.query.filter_by(user_id=session.get('user_id'), is_read=False).update({'is_read': True})
     db.session.commit()
-    
     return jsonify({'success': True, 'message': 'All notifications marked as read'})
-
+ 
 @app.route('/notification/<int:notification_id>/delete', methods=['DELETE'])
 @login_required
 def notification_delete(notification_id):
-    user_id = session.get('user_id')
-    notification = Notification.query.get_or_404(notification_id)
-    
-    if notification.user_id != user_id:
+    n = Notification.query.get_or_404(notification_id)
+    if n.user_id != session.get('user_id'):
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
-    db.session.delete(notification)
+    db.session.delete(n)
     db.session.commit()
-    
     return jsonify({'success': True, 'message': 'Notification deleted'})
+ 
 
 # ==================== MESSAGE ROUTES ====================
-
+def _thread_filter(a, b):
+    return or_(and_(Message.sender_id == a, Message.recipient_id == b),
+               and_(Message.sender_id == b, Message.recipient_id == a))
+ 
 @app.route('/messages')
 @login_required
 def messages():
     user_id = session.get('user_id')
-    
     try:
         sent_to = db.session.query(Message.recipient_id).filter_by(sender_id=user_id).distinct().all()
         received_from = db.session.query(Message.sender_id).filter_by(recipient_id=user_id).distinct().all()
-        
         conversation_ids = set([r[0] for r in sent_to] + [r[0] for r in received_from])
         conversations = []
-        
         for uid in conversation_ids:
-            other_user = User.query.get(uid)
-            if other_user:
-                latest = Message.query.filter(
-                    or_(
-                        and_(Message.sender_id == user_id, Message.recipient_id == uid),
-                        and_(Message.sender_id == uid, Message.recipient_id == user_id)
-                    )
-                ).order_by(Message.created_at.desc()).first()
-                
-                unread_count = Message.query.filter_by(sender_id=uid, recipient_id=user_id, is_read=False).count()
-                
-                conversations.append({
-                    'id': uid,
-                    'name': other_user.full_name,
-                    'last_message': latest.content if latest else 'No messages',
-                    'last_time': latest.created_at if latest else datetime.utcnow(),
-                    'unread_count': unread_count,
-                    'is_active': False,
-                    'is_online': False
-                })
-        
+            other = User.query.get(uid)
+            if not other:
+                continue
+            latest = Message.query.filter(_thread_filter(user_id, uid)).order_by(Message.created_at.desc()).first()
+            conversations.append({
+                'id': uid, 'name': other.full_name,
+                'last_message': latest.content if latest else 'No messages',
+                'last_time': latest.created_at if latest else datetime.utcnow(),
+                'unread_count': Message.query.filter_by(sender_id=uid, recipient_id=user_id, is_read=False).count(),
+                'is_active': False, 'is_online': is_user_online(other.last_active)})
         conversations.sort(key=lambda x: x['last_time'], reverse=True)
-        
+ 
         selected_id = request.args.get('conv_id', type=int)
-        selected_conversation = None
-        messages_data = []
-        
+        selected_conversation, messages_data = None, []
         if selected_id:
             selected_conversation = next((c for c in conversations if c['id'] == selected_id), None)
             if selected_conversation:
                 selected_conversation['is_active'] = True
-                unread_messages = Message.query.filter_by(sender_id=selected_id, recipient_id=user_id, is_read=False).all()
-                for msg in unread_messages:
-                    msg.is_read = True
+                for m in Message.query.filter_by(sender_id=selected_id, recipient_id=user_id, is_read=False).all():
+                    m.is_read = True
                 db.session.commit()
-                
-                messages_data = Message.query.filter(
-                    or_(
-                        and_(Message.sender_id == user_id, Message.recipient_id == selected_id),
-                        and_(Message.sender_id == selected_id, Message.recipient_id == user_id)
-                    )
-                ).order_by(Message.created_at.asc()).all()
-        
+                rows = Message.query.filter(_thread_filter(user_id, selected_id)).order_by(Message.created_at.asc()).all()
+                messages_data = [SimpleNamespace(content=m.content, created_at=m.created_at,
+                                                 is_sent=(m.sender_id == user_id)) for m in rows]
         if not selected_conversation and conversations:
-            selected_conversation = conversations[0]
-            selected_conversation['is_active'] = True
-            return redirect(url_for('messages', conv_id=selected_conversation['id']))
-        
-        return render_template('user/messages.html', 
-                             conversations=conversations,
-                             selected_conversation=selected_conversation,
-                             messages=messages_data)
-    except Exception as e:
+            return redirect(url_for('messages', conv_id=conversations[0]['id']))
+        return render_template('user/messages.html', conversations=conversations,
+                               selected_conversation=selected_conversation, messages=messages_data)
+    except Exception:
+        db.session.rollback()
         flash('Messaging feature is being set up. Please try again later.', 'info')
-        return render_template('user/messages.html', 
-                             conversations=[], 
-                             selected_conversation=None, 
-                             messages=[])
-
+        return render_template('user/messages.html', conversations=[], selected_conversation=None, messages=[])
+ 
 @app.route('/messages/<int:conv_id>')
 @login_required
 def messages_conversation(conv_id):
     return redirect(url_for('messages', conv_id=conv_id))
-
+ 
 @app.route('/messages/<int:conv_id>/send', methods=['POST'])
 @login_required
 def message_send(conv_id):
     user_id = session.get('user_id')
-    data = request.get_json()
-    content = data.get('content', '').strip()
-    
+    content = ((request.get_json(silent=True) or {}).get('content') or '').strip()
     if not content:
         return jsonify({'success': False, 'message': 'Message content is required'}), 400
-    
+    if not User.query.get(conv_id):
+        return jsonify({'success': False, 'message': 'Recipient not found'}), 404
     try:
-        message = Message(
-            sender_id=user_id,
-            recipient_id=conv_id,
-            content=content,
-            is_read=False
-        )
-        db.session.add(message)
+        db.session.add(Message(sender_id=user_id, recipient_id=conv_id, content=content, is_read=False))
         db.session.commit()
-        
-        create_notification(
-            conv_id,
-            'New Message',
-            f'You have a new message from {User.query.get(user_id).full_name}',
-            'info'
-        )
-        
-        return jsonify({
-            'success': True, 
-            'message': 'Message sent',
-            'time': datetime.utcnow().strftime('%I:%M %p')
-        })
+        create_notification(conv_id, 'New Message',
+                            f'You have a new message from {User.query.get(user_id).full_name}', 'info')
+        return jsonify({'success': True, 'message': 'Message sent',
+                        'time': datetime.utcnow().strftime('%I:%M %p')})
     except Exception as e:
+        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
-
+ 
 @app.route('/messages/new', methods=['POST'])
 @login_required
 def message_new():
     user_id = session.get('user_id')
-    data = request.get_json()
-    recipient = data.get('recipient')
-    subject = data.get('subject')
-    content = data.get('content')
-    
+    data = request.get_json(silent=True) or {}
+    recipient, subject, content = data.get('recipient'), data.get('subject'), data.get('content')
     if not recipient or not subject or not content:
         return jsonify({'success': False, 'message': 'All fields are required'}), 400
-    
     try:
-        recipient_user = User.query.filter_by(role=recipient).first()
+        role = 'admin' if recipient in ('support', 'admin') else recipient   # "Support Team" -> an admin
+        recipient_user = User.query.filter_by(role=role, is_active=True).first()
         if not recipient_user:
             return jsonify({'success': False, 'message': 'Recipient not found'}), 404
-        
-        message = Message(
-            sender_id=user_id,
-            recipient_id=recipient_user.id,
-            subject=subject,
-            content=content,
-            is_read=False
-        )
-        db.session.add(message)
+        db.session.add(Message(sender_id=user_id, recipient_id=recipient_user.id,
+                               subject=subject, content=content, is_read=False))
         db.session.commit()
-        
-        create_notification(
-            recipient_user.id,
-            'New Message',
-            f'You have a new message from {User.query.get(user_id).full_name}: {subject}',
-            'info'
-        )
-        
+        create_notification(recipient_user.id, 'New Message',
+                            f'You have a new message from {User.query.get(user_id).full_name}: {subject}', 'info')
         return jsonify({'success': True, 'message': 'Message sent successfully'})
     except Exception as e:
+        db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
-
-# ==================== API ROUTES ====================
-
+ 
+# ==================== PUBLIC-ISH API ====================
 @app.route('/api/available-slots')
 def api_available_slots():
-    """Get available time slots for a specific date"""
     date = request.args.get('date')
-    
     if not date:
         return jsonify({'error': 'Date parameter required'}), 400
-    
     try:
         booking_date = datetime.strptime(date, '%Y-%m-%d').date()
-        
-        bookings = Booking.query.filter(
-            Booking.booking_date == booking_date,
-            Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-        ).all()
-        
+        bookings = Booking.query.filter(Booking.booking_date == booking_date,
+                                        Booking.status.in_(['pending', 'confirmed', 'in_progress'])).all()
         slot_counts = {}
-        for booking in bookings:
-            slot_key = booking.booking_time.strftime('%H:%M')
-            slot_counts[slot_key] = slot_counts.get(slot_key, 0) + 1
-        
-        all_slots = []
-        for hour in range(9, 18):
-            time_str = f"{hour:02d}:00"
-            display_hour = hour
-            am_pm = "AM" if hour < 12 else "PM"
-            if hour > 12:
-                display_hour = hour - 12
-            elif hour == 0:
-                display_hour = 12
-            
-            count = slot_counts.get(time_str, 0)
-            all_slots.append({
-                'time': time_str,
-                'booked_count': count,
-                'max_slots': 5,
-                'available': count < 5,
-                'display': f"{display_hour}:00 {am_pm}"
-            })
-        
-        return jsonify({
-            'date': date,
-            'slots': all_slots,
-            'total_bookings': len(bookings)
-        })
-        
+        for b in bookings:
+            k = b.booking_time.strftime('%H:%M')
+            slot_counts[k] = slot_counts.get(k, 0) + 1
+        slots = []
+        for hour in range(8, 18):
+            t = f"{hour:02d}:00"
+            disp = hour - 12 if hour > 12 else hour
+            count = slot_counts.get(t, 0)
+            slots.append({'time': t, 'booked_count': count, 'max_slots': 5, 'available': count < 5,
+                          'display': f"{disp}:00 {'AM' if hour < 12 else 'PM'}"})
+        return jsonify({'date': date, 'slots': slots, 'total_bookings': len(bookings)})
     except ValueError:
         return jsonify({'error': 'Invalid date format'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+ 
 @app.route('/api/service-categories')
 def api_service_categories():
-    """Get all service categories with their services"""
-    categories = ServiceCategory.query.filter_by(is_active=True).all()
     result = []
-    for cat in categories:
+    for cat in ServiceCategory.query.filter_by(is_active=True).order_by(ServiceCategory.display_order).all():
         services = Service.query.filter_by(category_id=cat.id, is_active=True).all()
-        result.append({
-            'id': cat.id,
-            'name': cat.name,
-            'icon': cat.icon or 'fa-tools',
-            'services': [{
-                'id': s.id,
-                'name': s.name,
-                'description': s.description,
-                'price': float(s.price),
-                'estimated_hours': s.estimated_hours
-            } for s in services]
-        })
+        result.append({'id': cat.id, 'name': cat.name, 'icon': cat.icon or 'fa-tools',
+                       'services': [{'id': s.id, 'name': s.name, 'description': s.description,
+                                     'price': float(s.price), 'estimated_hours': s.estimated_hours}
+                                    for s in services]})
     return jsonify(result)
-
+ 
 @app.route('/api/service/<int:service_id>')
 def api_service_detail(service_id):
-    """Get service details by ID"""
-    service = Service.query.get_or_404(service_id)
-    return jsonify({
-        'id': service.id,
-        'name': service.name,
-        'description': service.description,
-        'price': float(service.price),
-        'estimated_hours': service.estimated_hours,
-        'category': service.category.name if service.category else None
-    })
-
+    s = Service.query.get_or_404(service_id)
+    return jsonify({'id': s.id, 'name': s.name, 'description': s.description, 'price': float(s.price),
+                    'estimated_hours': s.estimated_hours, 'category': s.category.name if s.category else None})
+ 
 @app.route('/api/check-availability', methods=['POST'])
 def api_check_availability():
-    """Check if a time slot is available"""
-    data = request.get_json()
-    date = data.get('date')
-    time = data.get('time')
-    service_id = data.get('service_id')
-    
-    if not date or not time or not service_id:
+    data = request.get_json(silent=True) or {}
+    date, time_, service_id = data.get('date'), data.get('time'), data.get('service_id')
+    if not date or not time_ or not service_id:
         return jsonify({'error': 'Date, time, and service_id required'}), 400
-    
     try:
-        booking_date = datetime.strptime(date, '%Y-%m-%d').date()
-        booking_time = datetime.strptime(time, '%H:%M').time()
-        
-        count = Booking.query.filter(
-            Booking.booking_date == booking_date,
-            Booking.booking_time == booking_time,
-            Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-        ).count()
-        
-        return jsonify({
-            'available': count < 5,
-            'booked_count': count,
-            'max_slots': 5,
-            'remaining': 5 - count
-        })
-        
+        count = Booking.query.filter(Booking.booking_date == datetime.strptime(date, '%Y-%m-%d').date(),
+                                     Booking.booking_time == datetime.strptime(time_, '%H:%M').time(),
+                                     Booking.status.in_(['pending', 'confirmed', 'in_progress'])).count()
+        return jsonify({'available': count < 5, 'booked_count': count, 'max_slots': 5, 'remaining': 5 - count})
     except ValueError:
         return jsonify({'error': 'Invalid date or time format'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+ 
 @app.route('/api/check-slot')
 def api_check_slot():
-    date = request.args.get('date')
-    time = request.args.get('time')
-    
-    if not date or not time:
+    date, time_ = request.args.get('date'), request.args.get('time')
+    if not date or not time_:
         return jsonify({'error': 'Date and time parameters required'}), 400
-    
     try:
-        booking_date = datetime.strptime(date, '%Y-%m-%d').date()
-        booking_time = datetime.strptime(time, '%H:%M').time()
-        
-        booking = Booking.query.filter(
-            Booking.booking_date == booking_date,
-            Booking.booking_time == booking_time,
-            Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-        ).first()
-        
-        return jsonify({
-            'date': date,
-            'time': time,
-            'is_booked': booking is not None,
-            'booking_id': booking.id if booking else None
-        })
-        
+        booking = Booking.query.filter(Booking.booking_date == datetime.strptime(date, '%Y-%m-%d').date(),
+                                       Booking.booking_time == datetime.strptime(time_, '%H:%M').time(),
+                                       Booking.status.in_(['pending', 'confirmed', 'in_progress'])).first()
+        return jsonify({'date': date, 'time': time_, 'is_booked': booking is not None,
+                        'booking_id': booking.id if booking else None})
     except ValueError:
         return jsonify({'error': 'Invalid date or time format'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+ 
 @app.route('/api/booked-slots')
 def api_booked_slots():
     date = request.args.get('date')
-    
     if not date:
         return jsonify({'error': 'Date parameter required'}), 400
-    
     try:
         booking_date = datetime.strptime(date, '%Y-%m-%d').date()
-        
-        bookings = Booking.query.filter(
-            Booking.booking_date == booking_date,
-            Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-        ).all()
-        
-        booked_times = [b.booking_time.strftime('%H:%M') for b in bookings]
-        
-        return jsonify({
-            'date': date,
-            'booked_slots': booked_times,
-            'total_bookings': len(bookings)
-        })
-        
+        bookings = Booking.query.filter(Booking.booking_date == booking_date,
+                                        Booking.status.in_(['pending', 'confirmed', 'in_progress'])).all()
+        return jsonify({'date': date, 'booked_slots': [b.booking_time.strftime('%H:%M') for b in bookings],
+                        'total_bookings': len(bookings)})
     except ValueError:
         return jsonify({'error': 'Invalid date format'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+ 
 @app.route('/api/services')
 def api_services():
-    services = Service.query.filter_by(is_active=True).all()
-    return jsonify([{
-        'id': s.id,
-        'name': s.name,
-        'description': s.description,
-        'price': float(s.price),
-        'category': s.category.name if s.category else None,
-        'estimated_hours': s.estimated_hours
-    } for s in services])
-
-# ==================== SERVICE REQUEST ROUTE ====================
-
+    return jsonify([{'id': s.id, 'name': s.name, 'description': s.description, 'price': float(s.price),
+                     'category': s.category.name if s.category else None, 'estimated_hours': s.estimated_hours}
+                    for s in Service.query.filter_by(is_active=True).all()])
+ 
+# ==================== SERVICE REQUEST / CATALOG / BOOKING ====================
 @app.route('/user/service-request', methods=['GET', 'POST'])
 @login_required
 def request_service():
@@ -1675,541 +1195,451 @@ def request_service():
         booking_date = request.form.get('booking_date')
         booking_time = request.form.get('booking_time')
         is_in_shop = request.form.get('in_shop') == 'on'
-        # No payment method is collected on the booking form itself - the
-        # customer picks GCash/COD later, when they actually submit
-        # payment for this booking (see the /transactions payment route).
-        # The previous default here was the literal string 'C.A.R' (a
-        # leftover/typo, not a real payment method), which was getting
-        # permanently written into every new Transaction row and showing
-        # up as the payment method in the admin panel before any payment
-        # had even been made.
         payment_method = request.form.get('payment_method', 'unpaid')
-        
-        # Handle "Other" service
+ 
         if service_id == 'other':
             custom_service = request.form.get('custom_service', '').strip()
             if not custom_service:
                 flash('Please specify your service requirement.', 'danger')
                 return redirect(url_for('request_service'))
-            
-            custom_service_obj = Service.query.filter_by(name='Custom Service').first()
-            if not custom_service_obj:
-                default_category = ServiceCategory.query.first()
-                if not default_category:
-                    default_category = ServiceCategory(
-                        name='Custom Services',
-                        description='Custom service requests',
-                        icon='fa-tools',
-                        is_active=True
-                    )
-                    db.session.add(default_category)
+            obj = Service.query.filter_by(name='Custom Service').first()
+            if not obj:
+                cat = ServiceCategory.query.first()
+                if not cat:
+                    cat = ServiceCategory(name='Custom Services', description='Custom service requests',
+                                          icon='fa-tools', is_active=True)
+                    db.session.add(cat)
                     db.session.commit()
-                
-                custom_service_obj = Service(
-                    category_id=default_category.id,
-                    name='Custom Service',
-                    description='Custom service requested by user.',
-                    price=0.00,
-                    estimated_hours=1,
-                    is_active=True
-                )
-                db.session.add(custom_service_obj)
+                obj = Service(category_id=cat.id, name='Custom Service',
+                              description='Custom service requested by user.', price=0.00,
+                              estimated_hours=1, is_active=True)
+                db.session.add(obj)
                 db.session.commit()
-            
-            service_id_for_booking = custom_service_obj.id
-            
-            if description:
-                description = f"{description}\n\n📝 Custom Service: {custom_service}"
-            else:
-                description = f"📝 Custom Service: {custom_service}"
-            
+            service_id_for_booking = obj.id
+            description = f"{description}\n\n📝 Custom Service: {custom_service}" if description \
+                else f"📝 Custom Service: {custom_service}"
         else:
-            service = Service.query.get(service_id)
-            if not service:
+            if not Service.query.get(service_id):
                 flash('Invalid service selected.', 'danger')
                 return redirect(url_for('request_service'))
             service_id_for_booking = service_id
-        
-        # Handle "Other" device
+ 
         if device_type == 'Other':
             custom_device = request.form.get('custom_device', '').strip()
             if not custom_device:
                 flash('Please specify your device type.', 'danger')
                 return redirect(url_for('request_service'))
             device_type = custom_device
-        
-        # Validate required fields
-        if not service_id_for_booking:
-            flash('Please select a service.', 'danger')
-            return redirect(url_for('request_service'))
-        
         if not device_type:
             flash('Please select a device type.', 'danger')
             return redirect(url_for('request_service'))
-        
         if not booking_date or not booking_time:
             flash('Please select a booking date and time.', 'danger')
             return redirect(url_for('request_service'))
-        
         if not is_in_shop and not address:
             flash('Please provide an address for home service or select in-shop repair.', 'danger')
             return redirect(url_for('request_service'))
-        
+ 
         try:
             booking_date_obj = datetime.strptime(booking_date, '%Y-%m-%d').date()
             booking_time_obj = datetime.strptime(booking_time, '%H:%M').time()
         except ValueError:
             flash('Invalid date or time format.', 'danger')
             return redirect(url_for('request_service'))
-        
-        # Check slot availability (max 5 per slot)
-        slot_count = Booking.query.filter(
-            Booking.booking_date == booking_date_obj,
-            Booking.booking_time == booking_time_obj,
-            Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-        ).count()
-        
+ 
+        # Server-side location check for home service (client check alone is bypassable)
+        if not is_in_shop:
+            try:
+                lat = float(request.form.get('pinned_lat', ''))
+                lng = float(request.form.get('pinned_lng', ''))
+                if not (11.10 <= lat <= 11.36 and 124.90 <= lng <= 125.12):
+                    raise ValueError
+            except ValueError:
+                flash('Please pin your location on the map, inside Tacloban City.', 'danger')
+                return redirect(url_for('request_service'))
+ 
+        if datetime.combine(booking_date_obj, booking_time_obj) < datetime.now():
+            flash('That time has already passed. Please choose a later slot.', 'danger')
+            return redirect(url_for('request_service'))
+ 
+        slot_count = Booking.query.filter(Booking.booking_date == booking_date_obj,
+                                          Booking.booking_time == booking_time_obj,
+                                          Booking.status.in_(['pending', 'confirmed', 'in_progress'])).count()
         if slot_count >= 5:
             flash('This time slot is fully booked. Please choose another time.', 'danger')
             return redirect(url_for('request_service'))
-        
-        # Get the service for price
+ 
         service_obj = Service.query.get(service_id_for_booking)
-        if not service_obj:
-            flash('Invalid service selected.', 'danger')
-            return redirect(url_for('request_service'))
-        
         booking_number = generate_booking_number()
-        booking = Booking(
-            booking_number=booking_number,
-            user_id=user_id,
-            service_id=service_id_for_booking,
-            device_type=device_type,
-            description=description or 'No description provided',
-            address=address if not is_in_shop else 'In-shop repair',
-            booking_date=booking_date_obj,
-            booking_time=booking_time_obj,
-            is_in_shop=is_in_shop,
-            status='pending'
-        )
+        booking = Booking(booking_number=booking_number, user_id=user_id, service_id=service_id_for_booking,
+                          device_type=device_type, description=description or 'No description provided',
+                          address=address if not is_in_shop else 'In-shop repair',
+                          booking_date=booking_date_obj, booking_time=booking_time_obj,
+                          is_in_shop=is_in_shop, status='pending')
         db.session.add(booking)
         db.session.flush()
-        
-        transaction_number = generate_transaction_number()
-        transaction = Transaction(
-            transaction_number=transaction_number,
-            booking_id=booking.id,
-            user_id=user_id,
-            amount=service_obj.price,
-            payment_method=payment_method,
-            payment_status='pending'
-        )
-        db.session.add(transaction)
+        db.session.add(Transaction(transaction_number=generate_transaction_number(), booking_id=booking.id,
+                                   user_id=user_id, amount=service_obj.price,
+                                   payment_method=payment_method, payment_status='pending'))
         db.session.commit()
-        
-        create_notification(
-            user_id,
-            'Booking Created',
-            f'Your booking #{booking_number} has been created. Please complete the payment.',
-            'info'
-        )
-        
+        create_notification(user_id, 'Booking Created',
+                            f'Your booking #{booking_number} has been created. Please complete the payment.', 'info')
         flash(f'Booking created successfully! Booking #: {booking_number}', 'success')
         return redirect(url_for('user_transactions'))
-    
+ 
     services = Service.query.filter_by(is_active=True).all()
     categories = ServiceCategory.query.filter_by(is_active=True).all()
-    return render_template('user/request_service.html', services=services, categories=categories)
-
-# ==================== SERVICE CATALOG / BOOKING / DEVICE MONITOR ====================
-# These endpoints are referenced by templates/base/user_base.html (sidebar)
-# and the new user/*.html templates. request_service (above) is kept so any
-# older link or template that still points to it keeps working.
-
+    return render_template('user/request_service.html', services=services, categories=categories,
+                           notifications=_unread_notifs(session.get('user_id')))
+ 
 @app.route('/user/services')
 @login_required
 def service_catalog():
-    category_id = request.args.get('category', type=int)
-    query = Service.query.filter_by(is_active=True)
-    if category_id:
-        query = query.filter_by(category_id=category_id)
-    services = query.order_by(Service.name).all()
-    categories = ServiceCategory.query.filter_by(is_active=True).all()
-    return render_template('user/service_catalog.html',
-                           services=services,
-                           categories=categories,
-                           selected_category=category_id)
-
+    categories = ServiceCategory.query.filter_by(is_active=True)\
+        .order_by(ServiceCategory.display_order, ServiceCategory.name).all()
+    return render_template('user/service_catalog.html', categories=categories,
+                           notifications=_unread_notifs(session.get('user_id')))
+ 
 @app.route('/user/book', methods=['GET', 'POST'])
-@app.route('/user/book/<int:service_id>', methods=['GET', 'POST'])
+@app.route('/user/book/<category_slug>', methods=['GET', 'POST'])
 @login_required
-def book_appointment(service_id=None):
+def book_appointment(category_slug=None):
     if request.method == 'POST':
-        # Same validation, slot check, Booking + Transaction creation as before.
         return request_service()
-    selected_service = Service.query.get(service_id) if service_id else None
-    services = Service.query.filter_by(is_active=True).all()
-    categories = ServiceCategory.query.filter_by(is_active=True).all()
-    return render_template('user/book_appointment.html',
-                           services=services,
-                           categories=categories,
-                           selected_service=selected_service,
-                           service=selected_service)
-
+    category = None
+    if category_slug:
+        category = ServiceCategory.query.filter_by(slug=category_slug, is_active=True).first()
+        if not category and category_slug.startswith('cat-') and category_slug[4:].isdigit():
+            category = ServiceCategory.query.get(int(category_slug[4:]))
+        if not category:
+            abort(404)
+    q = Service.query.filter_by(is_active=True)
+    if category:
+        q = q.filter_by(category_id=category.id)
+    return render_template('user/book_appointment.html', services=q.order_by(Service.name).all(),
+                           category=category, notifications=_unread_notifs(session.get('user_id')))
+ 
+# ==================== DEVICE MONITOR ====================
+MONITOR_STAGES = [('pending', 'Requested', 'fa-inbox'), ('confirmed', 'Confirmed', 'fa-clipboard-check'),
+                  ('in_progress', 'On Repair', 'fa-screwdriver-wrench'), ('completed', 'Completed', 'fa-circle-check')]
+STATUS_LABELS = {'pending': 'Pending', 'confirmed': 'Confirmed', 'in_progress': 'On Repair',
+                 'on_hold': 'On Hold', 'completed': 'Completed', 'cancelled': 'Cancelled'}
+ 
 @app.route('/user/monitor-device')
+@app.route('/user/monitor-device/<int:booking_id>')
 @login_required
-def monitor_device():
-    return render_template('user/monitor_device.html')
+def monitor_device(booking_id=None):
+    uid = session['user_id']
+    if booking_id is None:
+        b = Booking.query.filter_by(user_id=uid).filter(
+                Booking.status.in_(['confirmed', 'in_progress', 'on_hold'])
+            ).order_by(Booking.created_at.desc()).first() \
+            or Booking.query.filter_by(user_id=uid).order_by(Booking.created_at.desc()).first()
+        if not b:
+            flash('You have no bookings to monitor yet.', 'info')
+            return redirect(url_for('total_bookings'))
+        return redirect(url_for('monitor_device', booking_id=b.id))
+    booking = Booking.query.get_or_404(booking_id)
+    if booking.user_id != uid:
+        abort(403)
+    return render_template('user/monitor_device.html', booking=booking, notifications=_unread_notifs(uid))
+ 
+@app.route('/api/booking/<int:booking_id>/monitor')
+@login_required
+def api_booking_monitor(booking_id):
+    from models.technician_models import JobLog, ServiceRating
+    b = Booking.query.get(booking_id)
+    if not b or b.user_id != session['user_id']:
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    keys = [s[0] for s in MONITOR_STAGES]
+    if b.status == 'cancelled': idx = 0
+    elif b.status == 'on_hold': idx = keys.index('in_progress')
+    else: idx = keys.index(b.status) if b.status in keys else 0
+ 
+    tech = None
+    if b.technician:
+        t = b.technician
+        avg, cnt = db.session.query(func.avg(ServiceRating.stars), func.count(ServiceRating.id))\
+            .filter(ServiceRating.technician_id == t.id).one()
+        tech = {'name': t.full_name, 'verified': bool(t.id_verified), 'role': 'Technician',
+                'initials': ''.join(w[0] for w in (t.full_name or '').split()[:2]).upper() or 'T',
+                'rating': round(float(avg), 1) if avg else 5.0, 'rating_count': cnt,
+                'phone': t.phone, 'email': t.email}
+    rating = ServiceRating.query.filter_by(booking_id=b.id).first()
+    logs = JobLog.query.filter_by(booking_id=b.id).order_by(JobLog.at.desc()).all()
+    txn = b.transaction
+    fmt = lambda d, f: d.strftime(f) if d else ''
+    return jsonify({
+        'ok': True,
+        'booking': {'number': b.booking_number, 'status': b.status,
+                    'statusLabel': STATUS_LABELS.get(b.status, b.status), 'service': b.service.name,
+                    'description': b.description, 'deviceType': b.device_type, 'isInShop': b.is_in_shop,
+                    'address': b.address, 'scheduledDate': fmt(b.booking_date, '%b %d, %Y'),
+                    'scheduledTime': fmt(b.booking_time, '%I:%M %p'),
+                    'createdAt': fmt(b.created_at, '%b %d, %Y %I:%M %p'),
+                    'updatedAt': fmt(b.updated_at, '%b %d, %Y %I:%M %p')},
+        'stages': [{'key': k, 'label': l, 'icon': i} for k, l, i in MONITOR_STAGES],
+        'stageIndex': idx,
+        'payment': {'method': txn.payment_method, 'status': txn.payment_status,
+                    'amount': float(txn.amount)} if txn else None,
+        'technician': tech,
+        'canRate': bool(b.status == 'completed' and b.technician_id and not rating),
+        'rating': {'stars': rating.stars, 'experience': rating.experience, 'improvement': rating.improvement,
+                   'submittedAt': fmt(rating.submitted_at, '%b %d, %Y')} if rating else None,
+        'timeline': [{'action': l.action, 'text': l.text, 'by': l.by_name, 'at': l.at}
+                     for l in logs if l.action in ('status', 'intake', 'approval', 'release')],
+    })
+ 
+@app.route('/api/booking/<int:booking_id>/rate', methods=['POST'])
+@login_required
+def api_booking_rate(booking_id):
+    from models.technician_models import ServiceRating
+    b = Booking.query.get(booking_id)
+    if not b or b.user_id != session['user_id']:
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    if b.status != 'completed' or not b.technician_id:
+        return jsonify({'ok': False, 'reason': 'Only completed jobs can be rated.'}), 400
+    if ServiceRating.query.filter_by(booking_id=b.id).first():
+        return jsonify({'ok': False, 'reason': 'You already rated this repair.'}), 400
+    d = request.get_json(silent=True) or {}
+    try:
+        stars = int(d.get('stars'))
+    except (TypeError, ValueError):
+        stars = 0
+    exp = (d.get('experience') or '').strip()
+    if not 1 <= stars <= 5:
+        return jsonify({'ok': False, 'reason': 'Choose 1 to 5 stars.'}), 400
+    if len(exp) < 15:
+        return jsonify({'ok': False, 'reason': 'Please describe your experience (15+ characters).'}), 400
+    db.session.add(ServiceRating(booking_id=b.id, technician_id=b.technician_id, customer_id=b.user_id,
+                                 stars=stars, experience=exp[:2000],
+                                 improvement=(d.get('improvement') or '').strip()[:2000]))
+    db.session.commit()
+    create_notification(b.technician_id, 'New Rating', f'{b.booking_number} was rated {stars}/5.', 'info')
+    return jsonify({'ok': True})
 
 # ==================== TRANSACTION ROUTES ====================
-
 @app.route('/user/transactions')
 @login_required
 def user_transactions():
-    user_id = session.get('user_id')
-    transactions = Transaction.query.filter_by(user_id=user_id).order_by(Transaction.transaction_date.desc()).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    return render_template('user/transactions.html', transactions=transactions, notifications=notifications)
-
+    uid = session.get('user_id')
+    transactions = Transaction.query.filter_by(user_id=uid).order_by(Transaction.transaction_date.desc()).all()
+    return render_template('user/transactions.html', transactions=transactions, notifications=_unread_notifs(uid))
+ 
 @app.route('/user/payments/<int:transaction_id>', methods=['POST'])
 @login_required
 def user_payment(transaction_id):
     user_id = session.get('user_id')
     transaction = Transaction.query.get_or_404(transaction_id)
-    
     if transaction.user_id != user_id:
         flash('Unauthorized access.', 'danger')
         return redirect(url_for('user_transactions'))
-    
+    if transaction.payment_status == 'confirmed':
+        flash('This payment is already confirmed.', 'info')
+        return redirect(url_for('user_transactions'))
+ 
     payment_method = request.form.get('payment_method')
     reference = request.form.get('reference_number')
     receipt_file = request.files.get('receipt_image')
-    
+ 
     if payment_method:
         transaction.payment_method = payment_method
-    
     if reference:
         if payment_method == 'GCash':
             transaction.gcash_reference = reference
         transaction.reference_number = reference
-    
-    # Handle receipt upload
+ 
     if receipt_file and receipt_file.filename:
-        if allowed_file(receipt_file.filename):
-            extension = receipt_file.filename.rsplit('.', 1)[1].lower()
-            is_valid, error_message = validate_uploaded_file(receipt_file, extension)
-            if not is_valid:
-                flash(error_message, 'danger')
-                return redirect(url_for('user_transactions'))
-
-            receipts_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts')
-            os.makedirs(receipts_dir, exist_ok=True)
-            
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-            # secrets.token_hex adds an unguessable component - without it,
-            # two receipts uploaded in the same second for the same
-            # transaction would silently overwrite each other on disk.
-            filename = secure_filename(
-                f"receipt_{transaction.transaction_number}_{timestamp}_{secrets.token_hex(4)}.{extension}"
-            )
-            filepath = os.path.join(receipts_dir, filename)
-            
-            receipt_file.save(filepath)
-            transaction.receipt_image = f"/static/uploads/receipts/{filename}"
-            flash('Receipt uploaded successfully.', 'success')
-        else:
+        if not allowed_file(receipt_file.filename):
             flash('Invalid file format. Please upload JPG, PNG, GIF, or PDF.', 'danger')
             return redirect(url_for('user_transactions'))
-    
+        extension = receipt_file.filename.rsplit('.', 1)[1].lower()
+        ok, err = validate_uploaded_file(receipt_file, extension)
+        if not ok:
+            flash(err, 'danger')
+            return redirect(url_for('user_transactions'))
+        receipts_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts')
+        os.makedirs(receipts_dir, exist_ok=True)
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        filename = secure_filename(f"receipt_{transaction.transaction_number}_{timestamp}_{secrets.token_hex(4)}.{extension}")
+        receipt_file.save(os.path.join(receipts_dir, filename))
+        transaction.receipt_image = f"/static/uploads/receipts/{filename}"
+        flash('Receipt uploaded successfully.', 'success')
+ 
     transaction.payment_status = 'pending'
+    transaction.rejection_reason = None
     transaction.updated_at = datetime.utcnow()
     db.session.commit()
-    
-    create_notification(
-        user_id,
-        'Payment Submitted',
-        f'Your payment for transaction #{transaction.transaction_number} has been submitted for verification.',
-        'info'
-    )
-    
+    create_notification(user_id, 'Payment Submitted',
+                        f'Your payment for transaction #{transaction.transaction_number} has been submitted for verification.', 'info')
     flash('Payment submitted. Please wait for admin confirmation.', 'success')
     return redirect(url_for('user_transactions'))
 
 # ==================== SUPPORT ROUTE ====================
-
 @app.route('/support', methods=['GET', 'POST'])
 @login_required
 def support():
+    user_id = session.get('user_id')
     if request.method == 'POST':
-        user_id = session.get('user_id')
-        subject = request.form.get('subject')
-        message = request.form.get('message')
+        subject, message = request.form.get('subject'), request.form.get('message')
         category = request.form.get('category')
-        
         if not subject or not message:
             flash('Please fill in all required fields.', 'danger')
             return redirect(url_for('support'))
-        
-        ticket = SupportTicket(
-            user_id=user_id,
-            subject=subject,
-            message=message,
-            category=category or 'general'
-        )
-        db.session.add(ticket)
+        db.session.add(SupportTicket(user_id=user_id, subject=subject, message=message[:1000],
+                                     category=category or 'general'))
         db.session.commit()
-        
         admin = User.query.filter_by(role='admin').first()
         if admin:
-            create_notification(
-                admin.id,
-                'New Support Ticket',
-                f'New support ticket from {User.query.get(user_id).full_name}: {subject}',
-                'info'
-            )
-        
+            create_notification(admin.id, 'New Support Ticket',
+                                f'New support ticket from {User.query.get(user_id).full_name}: {subject}', 'info')
         flash('Your support ticket has been submitted. We will get back to you shortly.', 'success')
         return redirect(url_for('support'))
-    
-    user_id = session.get('user_id')
     tickets = SupportTicket.query.filter_by(user_id=user_id).order_by(SupportTicket.created_at.desc()).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    return render_template('user/support.html', tickets=tickets, notifications=notifications)
+    return render_template('user/support.html', tickets=tickets, notifications=_unread_notifs(user_id))
 
 # ==================== PROFILE ROUTE ====================
-
 @app.route('/user/profile', methods=['GET', 'POST'])
 @login_required
 def user_profile():
     user_id = session.get('user_id')
     user = User.query.get(user_id)
-    
     if request.method == 'POST':
         full_name = request.form.get('full_name', '').strip()
-        phone = request.form.get('phone', '').strip()
-        address = request.form.get('address', '').strip()
-        city = request.form.get('city', '').strip()
-        province = request.form.get('province', '').strip()
-        postal_code = request.form.get('postal_code', '').strip()
         birth_date = request.form.get('birth_date', '')
-        
         current_password = request.form.get('current_password', '')
         new_password = request.form.get('new_password', '')
         confirm_password = request.form.get('confirm_password', '')
-        
+ 
         if not full_name:
             flash('Full name is required.', 'danger')
             return redirect(url_for('user_profile'))
-        
         user.full_name = full_name
-        user.phone = phone
-        user.address = address
-        user.city = city
-        user.province = province
-        user.postal_code = postal_code
-        
+        user.phone = request.form.get('phone', '').strip()
+        user.address = request.form.get('address', '').strip()
+        user.city = request.form.get('city', '').strip()
+        user.province = request.form.get('province', '').strip()
+        user.postal_code = request.form.get('postal_code', '').strip()
         if birth_date:
             try:
                 user.birth_date = datetime.strptime(birth_date, '%Y-%m-%d').date()
             except ValueError:
                 flash('Invalid birth date format.', 'danger')
                 return redirect(url_for('user_profile'))
-        
+ 
         if new_password or confirm_password or current_password:
             if not current_password:
-                flash('Current password is required to change password.', 'danger')
-                return redirect(url_for('user_profile'))
-            
+                flash('Current password is required to change password.', 'danger'); return redirect(url_for('user_profile'))
             if not user.check_password(current_password):
-                flash('Current password is incorrect.', 'danger')
-                return redirect(url_for('user_profile'))
-            
+                flash('Current password is incorrect.', 'danger'); return redirect(url_for('user_profile'))
             if not new_password or not confirm_password:
-                flash('New password and confirmation are required.', 'danger')
-                return redirect(url_for('user_profile'))
-            
+                flash('New password and confirmation are required.', 'danger'); return redirect(url_for('user_profile'))
             if new_password != confirm_password:
-                flash('New passwords do not match.', 'danger')
-                return redirect(url_for('user_profile'))
-            
+                flash('New passwords do not match.', 'danger'); return redirect(url_for('user_profile'))
             if len(new_password) < 6:
-                flash('New password must be at least 6 characters long.', 'danger')
-                return redirect(url_for('user_profile'))
-            
+                flash('New password must be at least 6 characters long.', 'danger'); return redirect(url_for('user_profile'))
             user.set_password(new_password)
             flash('Password updated successfully!', 'success')
-        
+ 
         db.session.commit()
-        
-        create_notification(
-            user_id,
-            'Profile Updated',
-            'Your profile information has been updated successfully.',
-            'success'
-        )
-        
+        create_notification(user_id, 'Profile Updated', 'Your profile information has been updated successfully.', 'success')
         flash('Profile updated successfully!', 'success')
         log_activity(user_id, 'profile_update', 'User updated profile information')
         return redirect(url_for('user_profile'))
-    
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    return render_template('user/profile.html', user=user, notifications=notifications)
+    return render_template('user/profile.html', user=user, notifications=_unread_notifs(user_id))
 
 # ==================== API USER ROUTES ====================
-
 @app.route('/api/user/activity-log')
 @login_required
 def api_user_activity_log():
-    user_id = session.get('user_id')
-    logs = ActivityLog.query.filter_by(user_id=user_id)\
-        .order_by(ActivityLog.created_at.desc()).limit(50).all()
-    
-    return jsonify([{
-        'action': log.action,
-        'details': log.details,
-        'ip_address': log.ip_address,
-        'created_at': log.created_at.strftime('%Y-%m-%d %H:%M:%S')
-    } for log in logs])
-
+    logs = ActivityLog.query.filter_by(user_id=session.get('user_id')).order_by(ActivityLog.created_at.desc()).limit(50).all()
+    return jsonify([{'action': l.action, 'details': l.details, 'ip_address': l.ip_address,
+                     'created_at': l.created_at.strftime('%Y-%m-%d %H:%M:%S')} for l in logs])
+ 
 @app.route('/api/user/download-data')
 @login_required
 def api_user_download_data():
-    user_id = session.get('user_id')
-    user = User.query.get(user_id)
-    
-    data = {
+    user = User.query.get(session.get('user_id'))
+    return jsonify({
         'user': user.to_dict(),
-        'bookings': [{
-            'booking_number': b.booking_number,
-            'service': b.service.name,
-            'device_type': b.device_type,
-            'status': b.status,
-            'booking_date': b.booking_date.strftime('%Y-%m-%d'),
-            'booking_time': b.booking_time.strftime('%H:%M'),
-            'created_at': b.created_at.strftime('%Y-%m-%d %H:%M:%S')
-        } for b in user.bookings],
-        'transactions': [{
-            'transaction_number': t.transaction_number,
-            'amount': float(t.amount),
-            'payment_method': t.payment_method,
-            'payment_status': t.payment_status,
-            'transaction_date': t.transaction_date.strftime('%Y-%m-%d %H:%M:%S')
-        } for t in user.transactions]
-    }
-    
-    return jsonify(data)
-
+        'bookings': [{'booking_number': b.booking_number, 'service': b.service.name,
+                      'device_type': b.device_type, 'status': b.status,
+                      'booking_date': b.booking_date.strftime('%Y-%m-%d'),
+                      'booking_time': b.booking_time.strftime('%H:%M'),
+                      'created_at': b.created_at.strftime('%Y-%m-%d %H:%M:%S')} for b in user.bookings],
+        'transactions': [{'transaction_number': t.transaction_number, 'amount': float(t.amount),
+                          'payment_method': t.payment_method, 'payment_status': t.payment_status,
+                          'transaction_date': t.transaction_date.strftime('%Y-%m-%d %H:%M:%S')}
+                         for t in user.transactions]})
+ 
 @app.route('/api/user/delete-account', methods=['POST'])
 @login_required
 def api_user_delete_account():
     user_id = session.get('user_id')
     user = User.query.get(user_id)
-    
-    active_bookings = Booking.query.filter_by(user_id=user_id).filter(
-        Booking.status.in_(['pending', 'confirmed', 'in_progress'])
-    ).count()
-    
-    if active_bookings > 0:
-        return jsonify({
-            'success': False,
-            'message': 'Cannot delete account with active bookings. Please cancel all bookings first.'
-        }), 400
-    
+    active = Booking.query.filter_by(user_id=user_id).filter(
+        Booking.status.in_(['pending', 'confirmed', 'in_progress', 'on_hold'])).count()
+    if active > 0:
+        return jsonify({'success': False, 'message': 'Cannot delete account with active bookings. Please cancel all bookings first.'}), 400
+    if user.role == 'admin' and User.query.filter_by(role='admin').count() <= 1:
+        return jsonify({'success': False, 'message': 'The last admin account cannot be deleted.'}), 400
     log_activity(user_id, 'account_deleted', 'User deleted account')
-    db.session.delete(user)
-    db.session.commit()
+    try:
+        db.session.delete(user)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': 'This account has order/booking history and cannot be deleted. Contact support.'}), 400
     session.clear()
-    
-    return jsonify({
-        'success': True,
-        'message': 'Account deleted successfully.'
-    })
-
+    return jsonify({'success': True, 'message': 'Account deleted successfully.'})
+ 
 @app.route('/api/user/update-preferences', methods=['POST'])
 @login_required
 def api_user_update_preferences():
     user_id = session.get('user_id')
-    data = request.get_json()
-    
-    preferences = UserPreference.query.filter_by(user_id=user_id).first()
-    if not preferences:
-        preferences = UserPreference(user_id=user_id)
-        db.session.add(preferences)
-    
-    preferences.language = data.get('language', 'en')
-    preferences.theme = data.get('theme', 'light')
-    preferences.email_notifications = data.get('email_notifications', True)
-    preferences.sms_notifications = data.get('sms_notifications', False)
-    preferences.booking_reminders = data.get('booking_reminders', True)
-    
+    data = request.get_json(silent=True) or {}
+    p = UserPreference.query.filter_by(user_id=user_id).first()
+    if not p:
+        p = UserPreference(user_id=user_id)
+        db.session.add(p)
+    p.language = data.get('language', 'en')
+    p.theme = data.get('theme', 'light')
+    p.email_notifications = data.get('email_notifications', True)
+    p.sms_notifications = data.get('sms_notifications', False)
+    p.booking_reminders = data.get('booking_reminders', True)
     db.session.commit()
-    
-    return jsonify({
-        'success': True,
-        'message': 'Preferences updated successfully.'
-    })
-
+    return jsonify({'success': True, 'message': 'Preferences updated successfully.'})
+ 
 @app.route('/api/user/verify-email', methods=['POST'])
 @login_required
 def api_user_verify_email():
-    user_id = session.get('user_id')
-    user = User.query.get(user_id)
-    
-    token = secrets.token_urlsafe(32)
-    
-    return jsonify({
-        'success': True,
-        'message': 'Verification email sent. Please check your inbox.'
-    })
-
+    # TODO: no mail backend is configured, so nothing is actually sent yet.
+    return jsonify({'success': False, 'message': 'Email verification is not available yet.'}), 501
+ 
 @app.route('/api/user/theme', methods=['POST'])
 @login_required
 def api_user_update_theme():
     user_id = session.get('user_id')
-    data = request.get_json()
-    theme = data.get('theme', 'light')
-    
+    theme = (request.get_json(silent=True) or {}).get('theme', 'light')
     if theme not in ['light', 'dark', 'system']:
         return jsonify({'success': False, 'message': 'Invalid theme'}), 400
-    
-    preferences = UserPreference.query.filter_by(user_id=user_id).first()
-    if not preferences:
-        preferences = UserPreference(user_id=user_id)
-        db.session.add(preferences)
-    
-    preferences.theme = theme
+    p = UserPreference.query.filter_by(user_id=user_id).first()
+    if not p:
+        p = UserPreference(user_id=user_id)
+        db.session.add(p)
+    p.theme = theme
     db.session.commit()
-    
-    return jsonify({
-        'success': True,
-        'message': 'Theme updated successfully',
-        'theme': theme
-    })
-
+    return jsonify({'success': True, 'message': 'Theme updated successfully', 'theme': theme})
+ 
 @app.route('/api/user/preferences', methods=['GET'])
 @login_required
 def api_user_get_preferences():
-    user_id = session.get('user_id')
-    preferences = UserPreference.query.filter_by(user_id=user_id).first()
-    
-    if not preferences:
-        return jsonify({
-            'language': 'en',
-            'theme': 'light',
-            'email_notifications': True,
-            'sms_notifications': False,
-            'booking_reminders': True
-        })
-    
-    return jsonify({
-        'language': preferences.language,
-        'theme': preferences.theme,
-        'email_notifications': preferences.email_notifications,
-        'sms_notifications': preferences.sms_notifications,
-        'booking_reminders': preferences.booking_reminders
-    })
-
+    p = UserPreference.query.filter_by(user_id=session.get('user_id')).first()
+    if not p:
+        return jsonify({'language': 'en', 'theme': 'light', 'email_notifications': True,
+                        'sms_notifications': False, 'booking_reminders': True})
+    return jsonify({'language': p.language, 'theme': p.theme, 'email_notifications': p.email_notifications,
+                    'sms_notifications': p.sms_notifications, 'booking_reminders': p.booking_reminders})
 # ==================== SHOP ROUTES ====================
 
 @cache.cached(timeout=60, key_prefix='active_products')

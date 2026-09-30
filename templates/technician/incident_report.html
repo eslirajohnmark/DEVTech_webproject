@@ -5,3 +5,8 @@
 {% block meta_page %}incidents{% endblock %}
 {% block meta_title %}Incident Reports{% endblock %}
 {% block meta_subtitle %}Safety and security during service{% endblock %}
+
+{% block extra_js %}
+<script type="module" nonce="{{ tech_nonce }}"
+        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% endblock %}

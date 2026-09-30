@@ -2,6 +2,10 @@
 
 {% block title %}Monitor Device{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/user-monitor.css') }}" />
+{% endblock %}
+
 {% block content %}
 
 <div class="user-top-bar">
@@ -11,8 +15,8 @@
                 <i class="fas fa-arrow-left"></i> Back to My Bookings
             </a>
         </p>
-        <h1>Repair Status</h1>
-        <p>Live view of your device — updates automatically.</p>
+        <h1>Monitor Device</h1>
+        <p>Live status of your repair — updates automatically.</p>
     </div>
     <div class="user-top-actions">
         <button class="user-icon-btn" id="refreshBtn" title="Refresh">
@@ -28,7 +32,7 @@
 </div>
 
 <div id="monitorRoot">
-    <div class="user-monitor-loading">
+    <div class="usr-hero-skeleton">
         <i class="fas fa-spinner fa-spin"></i>
         <p>Loading repair status…</p>
     </div>

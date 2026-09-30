@@ -5,3 +5,8 @@
 {% block meta_page %}my_jobs{% endblock %}
 {% block meta_title %}My Jobs{% endblock %}
 {% block meta_subtitle %}Service requests assigned to you{% endblock %}
+
+{% block extra_js %}
+<script type="module" nonce="{{ tech_nonce }}"
+        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% endblock %}

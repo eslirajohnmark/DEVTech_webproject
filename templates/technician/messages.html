@@ -5,3 +5,8 @@
 {% block meta_page %}messages{% endblock %}
 {% block meta_title %}Messages{% endblock %}
 {% block meta_subtitle %}Customers and administrators{% endblock %}
+
+{% block extra_js %}
+<script type="module" nonce="{{ tech_nonce }}"
+        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% endblock %}

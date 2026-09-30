@@ -1,8 +1,12 @@
 {% extends 'base/technician_base.html' %}
-{% set page_module = 'service-report' %}
 
 {% block title %}Service Report{% endblock %}
-{% block meta_page %}reports{% endblock %}
+{% block meta_page %}service_report{% endblock %}
 {% block meta_title %}Service Report{% endblock %}
-{% block meta_subtitle %}Record and submit service details{% endblock %}
-{% block meta_job_id %}{{ current or 0 }}{% endblock %}
+{% block meta_subtitle %}Record and submit service details to the admin{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/technician/tech-data.js') }}"></script>
+<script src="{{ url_for('static', filename='js/technician/tech-shell.js') }}"></script>
+<script src="{{ url_for('static', filename='js/technician/pages/service_report.js') }}"></script>
+{% endblock %}

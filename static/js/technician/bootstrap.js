@@ -1,27 +1,33 @@
-/* ============================================================================
- * bootstrap.js — reads page metadata from <meta> tags.
- *
- * Every technician template declares:
- *   <meta name="tech-page"     content="dashboard" />
- *   <meta name="tech-title"    content="Dashboard" />
- *   <meta name="tech-subtitle" content="Your workload at a glance" />
- *   <meta name="tech-user-id"  content="42" />
- *   <meta name="tech-job-id"   content="0" />
- *
- * Page controllers read Bootstrap.page / .title / .jobId instead of
- * inline <script> blocks. That's what lets the CSP drop 'unsafe-inline'
- * on /technician/* routes.
- * ==========================================================================*/
+/* bootstrap.js */
+import * as Shell from './shell/index.js';
+import * as Router from './router.js';
+import * as Theme from './theme.js';
 
-function meta(name) {
-    const el = document.querySelector('meta[name="' + name + '"]');
-    return el ? el.getAttribute('content') : null;
-}
+(async () => {
+    Theme.init && Theme.init();
 
-export const Bootstrap = {
-    page:     meta('tech-page')     || 'dashboard',
-    userId:   parseInt(meta('tech-user-id') || '0', 10),
-    jobId:    parseInt(meta('tech-job-id')  || '0', 10),
-    title:    meta('tech-title')    || 'Technician Portal',
-    subtitle: meta('tech-subtitle') || '',
-};
+    const meta = {
+        page: document.querySelector('meta[name="page_module"]')?.content || 'dashboard',
+        title: document.querySelector('meta[name="meta_title"]')?.content || '',
+        subtitle: document.querySelector('meta[name="meta_subtitle"]')?.content || '',
+        jobId: document.querySelector('meta[name="meta_job_id"]')?.content || '',
+    };
+
+    // Login/registration render into the whole page, not the shell.
+    const publicPages = ['login', 'registration'];
+    if (publicPages.includes(meta.page)) {
+        const mod = Router.resolve(meta.page);
+        if (mod && mod.init) mod.init();
+        return;
+    }
+
+    const tech = await Shell.init(meta);
+    if (!tech) return;
+
+    const mod = Router.resolve(meta.page);
+    if (mod && mod.init) {
+        await mod.init(tech, meta.jobId);
+    } else {
+        Shell.content().innerHTML = '<p class="tech-hint">Unknown page.</p>';
+    }
+})();

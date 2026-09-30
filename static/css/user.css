@@ -11853,24 +11853,238 @@ html, body {
     overflow-x: hidden;
 }
 
+/* ==========================================================================
+   LAYOUT FIX — Dashboard shell, sidebar, and mini-profile
+   Replaces earlier duplicated/conflicting rules at lines ~30, ~979, ~11856.
+   ========================================================================== */
+
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;      /* kill the outer page scrollbar */
+}
+
 .user-dashboard-wrapper {
+    display: flex;
+    height: 100vh;
+    min-height: 100vh;
     width: 100%;
+    background: var(--user-bg);
+    color: var(--user-text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow: hidden;      /* inner containers scroll, not the wrapper */
 }
 
 .user-main-content {
-    width: 100%;
+    flex: 1;
+    min-width: 0;                        /* allows children to shrink properly */
+    padding: 2rem 2.5rem 3rem;
+    height: 100vh;
+    overflow-y: auto;                    /* main content scrolls on its own */
+    overflow-x: hidden;
     box-sizing: border-box;
+    /* remove the previous max-width: calc(100% - 270px); it's redundant
+       once the sidebar has a fixed width in a flex parent */
 }
 
-.user-ts-container,
-.user-profile-card,
-.usr-grid-panel {
-    width: 100%;
+/* --------------------------------------------------------------------------
+   SIDEBAR
+   -------------------------------------------------------------------------- */
+
+.user-sidebar {
+    width: 270px;
+    flex-shrink: 0;
+    background: var(--user-card);
+    border-right: 1px solid var(--user-border);
+    padding: 1.5rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow-y: auto;                    /* sidebar scrolls independently */
+    overflow-x: hidden;
     box-sizing: border-box;
+    /* thin scrollbar */
+    scrollbar-width: thin;
 }
+.user-sidebar::-webkit-scrollbar { width: 6px; }
+.user-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 999px;
+}
+.user-sidebar::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55);
+}
+.user-sidebar::-webkit-scrollbar-track { background: transparent; }
+
+.user-sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--user-border);
+    margin-bottom: 1.5rem;
+    flex-shrink: 0;
+}
+
+.user-logo-icon {
+    width: 44px;
+    height: 44px;
+    background: var(--user-primary);
+    border-radius: var(--user-radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.4rem;
+    flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   MINI PROFILE — stacked layout: avatar + name on top, promo card below
+   -------------------------------------------------------------------------- */
+
+.user-profile-mini {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    padding: 0.9rem 0.9rem;
+    background: var(--user-bg);
+    border-radius: var(--user-radius-sm);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--user-border);
+    flex-shrink: 0;
+}
+
+.user-avatar-mini {
+    font-size: 2.2rem;
+    color: var(--user-text-muted);
+    flex-shrink: 0;
+}
+
+.user-profile-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.user-profile-name {
+    font-weight: 600;
+    color: var(--user-text-primary);
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.user-profile-role {
+    font-size: 0.75rem;
+    color: var(--user-text-muted);
+}
+
+/* Promo card sits below the avatar/name row inside .user-profile-mini */
+.user-sidebar-promo {
+    margin: 0;
+    padding: 0.9rem 0.8rem;
+    text-align: center;
+    border-radius: 10px;
+    background: rgba(37, 99, 235, 0.06);
+    border: 1px dashed rgba(37, 99, 235, 0.25);
+}
+.user-sidebar-promo-mark {
+    display: block;
+    font-size: 1.1rem;
+    color: var(--user-primary);
+    opacity: 0.85;
+    margin-bottom: 0.35rem;
+}
+.user-sidebar-promo h5 {
+    margin: 0 0 0.3rem;
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--user-text-primary);
+}
+.user-sidebar-promo p {
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--user-text-muted);
+    letter-spacing: 0.01em;
+}
+
+/* --------------------------------------------------------------------------
+   NAV MENU
+   -------------------------------------------------------------------------- */
+
+.user-nav-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex: 1;
+    padding-bottom: 0.5rem;
+}
+
+.user-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.7rem 1rem;
+    border-radius: var(--user-radius-sm);
+    color: var(--user-text-secondary);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.9rem;
+    transition: var(--user-transition);
+}
+
+/* --------------------------------------------------------------------------
+   MOBILE — collapse sidebar into a top bar (matches existing .user-menu-toggle)
+   -------------------------------------------------------------------------- */
 
 @media (max-width: 768px) {
+    html, body { overflow: auto; }
+
+    .user-dashboard-wrapper {
+        flex-direction: column;
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+
+    .user-sidebar {
+        width: 100%;
+        height: auto;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        padding: 0.8rem 1rem;
+        border-right: none;
+        border-bottom: 1px solid var(--user-border);
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        overflow: visible;
+    }
+
     .user-main-content {
-        max-width: 100%;
+        height: auto;
+        overflow: visible;
+        padding: 1.2rem 1rem 2rem;
+    }
+
+    .user-profile-mini {
+        width: 100%;
+        order: 3;
+        margin-top: 0.75rem;
+        margin-bottom: 0;
+    }
+
+    .user-nav-menu {
+        width: 100%;
+        order: 4;
+        display: none;                  /* hidden until menu-toggle clicked */
+    }
+    .user-nav-menu.open {
+        display: flex;
     }
 }

@@ -80,6 +80,9 @@
                 <a href="{{ url_for('total_bookings') }}" class="user-nav-item {% if request.endpoint == 'total_bookings' %}active{% endif %}">
                     <i class="fas fa-calendar-check"></i> My Bookings
                 </a>
+                <a href="{{ url_for('monitor_device') }}" class="user-nav-item {% if request.endpoint == 'monitor_device' %}active{% endif %}">
+                    <i class="fas fa-satellite-dish"></i> Monitor Device
+                </a>
                 <a href="{{ url_for('service_catalog') }}" class="user-nav-item {% if request.endpoint in ['service_catalog','book_appointment'] %}active{% endif %}">
                     <i class="fas fa-calendar-alt"></i> Service Request
                 </a>

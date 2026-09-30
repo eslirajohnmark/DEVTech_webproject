@@ -1,161 +1,91 @@
-"""Seed demo technician accounts and one sample booking chain.
-
-Usage:
-    python -m scripts.seed_technician           # create if missing
-    python -m scripts.seed_technician --reset   # wipe tech data first
-
-Safe to re-run — every insert checks for an existing row first.
 """
-import argparse
-from datetime import datetime
+scripts/seed_technician.py
+Creates technician rows in the real `users` table. Safe to re-run:
+if a technician with the same username already exists, it updates the
+password instead of raising.
 
-from app import app, db, User, Booking, ServiceCategory, Service
+Run from the project root:
+    python -m scripts.seed_technician
+"""
+from app import app, db, User
 
-
-DEFAULT_TECHS = [
+# Edit this list to match the technicians you want to create.
+TECHNICIANS = [
     {
-        'username': 'TECH-0001',
-        'email':    'carlos@devtech.local',
-        'full_name': 'Carlos Mendoza',
-        'password': '1234',
+        "username":     "TECH-0001",
+        "email":        "carlos.mendoza@devtech.local",
+        "full_name":    "Carlos Mendoza",
+        "phone":        "09171234567",
+        "password":     "TechPass123",
+        "id_type":      "National ID",
+        "id_number":    "PSN-1234-5678",   # admin-only audit record
+        "id_verified":  True,               # so they can be assigned to bookings
     },
     {
-        'username': 'TECH-0002',
-        'email':    'sarah@devtech.local',
-        'full_name': 'Sarah Lim',
-        'password': '1234',
+        "username":     "TECH-0002",
+        "email":        "sarah.lim@devtech.local",
+        "full_name":    "Sarah Lim",
+        "phone":        "09172345678",
+        "password":     "TechPass456",
+        "id_type":      "Driver's License",
+        "id_number":    "N01-23-456789",
+        "id_verified":  True,
     },
 ]
 
-DEFAULT_CUSTOMER = {
-    'username': 'customer1',
-    'email':    'customer@devtech.local',
-    'full_name': 'Maria Santos',
-    'password': 'customer1234',
-}
 
+def upsert(technician):
+    existing = User.query.filter_by(username=technician["username"]).first()
 
-def _ensure_tech(spec):
-    existing = User.query.filter_by(username=spec['username']).first()
     if existing:
-        print(f'  skip  {spec["username"]} (already exists)')
-        return existing
-    u = User(
-        username=spec['username'],
-        email=spec['email'],
-        full_name=spec['full_name'],
-        role='technician',
-        is_active=True,
-        id_verified=True,
-    )
-    u.set_password(spec['password'])
-    db.session.add(u)
+        # Ensure role and active are correct even if the row was created
+        # manually or by an earlier script version.
+        existing.role      = "technician"
+        existing.is_active = True
+        existing.full_name = technician["full_name"]
+        existing.email     = technician["email"]
+        existing.phone     = technician.get("phone")
+        if technician.get("id_type"):
+            existing.id_type   = technician["id_type"]
+            existing.id_number = technician["id_number"]
+            existing.id_verified    = technician.get("id_verified", False)
+            existing.id_verified_at = (
+                __import__("datetime").datetime.utcnow()
+                if technician.get("id_verified") else None
+            )
+        existing.set_password(technician["password"])
+        action = "updated"
+    else:
+        u = User(
+            username  = technician["username"],
+            email     = technician["email"],
+            full_name = technician["full_name"],
+            phone     = technician.get("phone"),
+            role      = "technician",
+            is_active = True,
+            id_type   = technician.get("id_type"),
+            id_number = technician.get("id_number"),
+            id_verified = technician.get("id_verified", False),
+        )
+        u.set_password(technician["password"])
+        if technician.get("id_verified"):
+            from datetime import datetime
+            u.id_verified_at = datetime.utcnow()
+        db.session.add(u)
+        action = "created"
+
     db.session.commit()
-    print(f'  add   {spec["username"]}  pw={spec["password"]}')
-    return u
-
-
-def _ensure_customer(spec):
-    existing = User.query.filter_by(username=spec['username']).first()
-    if existing:
-        print(f'  skip  {spec["username"]} (already exists)')
-        return existing
-    u = User(
-        username=spec['username'],
-        email=spec['email'],
-        full_name=spec['full_name'],
-        role='customer',
-        is_active=True,
-    )
-    u.set_password(spec['password'])
-    db.session.add(u)
-    db.session.commit()
-    print(f'  add   {spec["username"]}  pw={spec["password"]}')
-    return u
-
-
-def _ensure_sample_booking(tech, customer):
-    if not tech or not customer:
-        return
-    if Booking.query.filter_by(booking_number='BK-SEED-0001').first():
-        print('  skip  sample booking (already exists)')
-        return
-
-    cat = ServiceCategory.query.first()
-    if not cat:
-        cat = ServiceCategory(name='Hardware Repair',
-                              icon='fa-server', is_active=True)
-        db.session.add(cat)
-        db.session.flush()
-
-    svc = Service.query.filter_by(category_id=cat.id).first()
-    if not svc:
-        svc = Service(category_id=cat.id, name='Screen Repair',
-                      price=1000, estimated_hours=1, is_active=True)
-        db.session.add(svc)
-        db.session.flush()
-
-    b = Booking(
-        booking_number='BK-SEED-0001',
-        user_id=customer.id,
-        service_id=svc.id,
-        device_type='Laptop',
-        description='Cracked screen',
-        address='123 Rizal Ave',
-        booking_date=datetime.utcnow().date(),
-        booking_time=datetime.utcnow().time(),
-        status='confirmed',
-        is_in_shop=True,
-        technician_id=tech.id,
-        assigned_at=datetime.utcnow(),
-    )
-    db.session.add(b)
-    db.session.commit()
-    print(f'  add   sample booking {b.booking_number}')
+    print(f"  [{action}] {technician['username']:<10}  "
+          f"{technician['full_name']:<20}  password={technician['password']}")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--reset', action='store_true',
-                        help='Delete all existing tech data first')
-    args = parser.parse_args()
-
     with app.app_context():
-        if args.reset:
-            from models.technician_models import (
-                IntakeRecord, ServiceReport, IncidentReport,
-                ApprovalRequest, JobLog, UploadedFile, ServiceRating,
-            )
-            for model in (ServiceRating, UploadedFile, JobLog,
-                          ApprovalRequest, IncidentReport,
-                          ServiceReport, IntakeRecord):
-                model.query.delete()
-            Booking.query.filter(
-                Booking.booking_number.like('BK-SEED-%')
-            ).delete()
-            User.query.filter(User.username.like('TECH-%')).delete()
-            db.session.commit()
-            print('Reset: removed existing tech data.')
-
-        print('Seeding technicians...')
-        techs = [_ensure_tech(s) for s in DEFAULT_TECHS]
-
-        print('Seeding customer...')
-        customer = _ensure_customer(DEFAULT_CUSTOMER)
-
-        print('Seeding sample booking...')
-        _ensure_sample_booking(techs[0], customer)
-
-        print()
-        print('Done.')
-        print()
-        print('Technician logins:')
-        for s in DEFAULT_TECHS:
-            print(f'  {s["username"]} / {s["password"]}')
-        print(f'  {DEFAULT_CUSTOMER["username"]} / {DEFAULT_CUSTOMER["password"]}  (customer)')
-        print()
-        print('Sign in at /technician/login')
+        print("Seeding technician accounts …")
+        for t in TECHNICIANS:
+            upsert(t)
+        print("Done.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

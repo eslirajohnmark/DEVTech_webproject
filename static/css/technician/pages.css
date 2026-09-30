@@ -1,8 +1,8 @@
 /* ============================================================================
- * PAGES — auth split, single-column login, messaging
+ * PAGES — login / registration / messaging
  * ==========================================================================*/
 
-/* ---------- generic centred login (registration, single-column) ---------- */
+/* ---------- CENTERED LOGIN (single-column fallback) ---------- */
 .tech-login-page {
     min-height: 100vh;
     display: grid;
@@ -10,8 +10,8 @@
     padding: 1.5rem;
     background: var(--t-bg);
     background-image:
-        radial-gradient(900px 620px at 8% -8%,    rgba(244, 63, 94, 0.28),  transparent 60%),
-        radial-gradient(1000px 700px at 92% 6%,   rgba(250, 204, 21, 0.22), transparent 62%),
+        radial-gradient(900px 620px at 8% -8%,   rgba(244, 63, 94, 0.28),  transparent 60%),
+        radial-gradient(1000px 700px at 92% 6%,  rgba(250, 204, 21, 0.22), transparent 62%),
         radial-gradient(1100px 800px at 50% 110%, rgba(59, 130, 246, 0.30), transparent 62%);
     background-attachment: fixed;
 }
@@ -24,7 +24,9 @@
     border: 1px solid var(--t-glass-edge);
     border-radius: var(--t-r-xl);
     padding: 2rem 1.75rem 1.6rem;
-    box-shadow: inset 0 1px 0 var(--t-glass-shine), var(--t-shadow-lg);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        var(--t-shadow-lg);
 }
 .tech-login-card--wide { max-width: 580px; padding: 2.2rem 2rem 1.7rem; }
 
@@ -35,12 +37,15 @@
     border-radius: var(--t-r-lg);
     display: grid; place-items: center;
     background: linear-gradient(135deg,
-        var(--t-red) 0%, var(--t-yellow) 50%, var(--t-blue) 100%);
+        var(--t-red)    0%,
+        var(--t-yellow) 50%,
+        var(--t-blue)   100%);
     color: #0a0f22;
     font-size: 1.5rem;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32),
-                0 12px 40px rgba(244, 63, 94, 0.32),
-                0 12px 40px rgba(59, 130, 246, 0.32);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.32),
+        0 12px 40px rgba(244, 63, 94, 0.32),
+        0 12px 40px rgba(59, 130, 246, 0.32);
 }
 .tech-login-brand h1 { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.02em; }
 .tech-login-brand h1 span { color: var(--t-yellow); }
@@ -66,7 +71,7 @@
     border: 1px solid var(--t-glass-edge-2);
 }
 
-/* ---------- split auth ---------- */
+/* ---------- SPLIT LOGIN ---------- */
 .tech-login-page--split {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -75,12 +80,11 @@
     min-height: 100vh;
     background: var(--t-bg);
     background-image:
-        radial-gradient(900px 620px at 8% -8%,    rgba(244, 63, 94, 0.28),  transparent 60%),
-        radial-gradient(1000px 700px at 92% 6%,   rgba(250, 204, 21, 0.22), transparent 62%),
+        radial-gradient(900px 620px at 8% -8%,   rgba(244, 63, 94, 0.28),  transparent 60%),
+        radial-gradient(1000px 700px at 92% 6%,  rgba(250, 204, 21, 0.22), transparent 62%),
         radial-gradient(1100px 800px at 50% 110%, rgba(59, 130, 246, 0.30), transparent 62%);
     background-attachment: fixed;
 }
-
 .tech-auth-hero {
     background:
         radial-gradient(720px 440px at 20% 15%, rgba(244, 63, 94, 0.24),  transparent 62%),
@@ -120,7 +124,9 @@
 }
 .tech-auth-hero-title span {
     background: linear-gradient(120deg,
-        var(--t-red) 0%, var(--t-yellow) 50%, var(--t-blue) 100%);
+        var(--t-red) 0%,
+        var(--t-yellow) 50%,
+        var(--t-blue) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -178,7 +184,6 @@
     color: var(--t-text-muted);
     margin-top: 0.2rem;
 }
-
 .tech-auth-row {
     display: flex;
     align-items: center;
@@ -195,10 +200,8 @@
     font-size: 0.78rem;
 }
 .tech-check--inline:hover { background: transparent; }
-.tech-check--inline:has(input:checked) {
-    background: transparent;
-    border-color: transparent;
-}
+.tech-check--inline:has(input:checked) { background: transparent; border-color: transparent; }
+
 .tech-auth-link {
     font-size: 0.78rem;
     color: var(--t-text-muted);
@@ -220,11 +223,13 @@
 }
 .tech-auth-divider::before,
 .tech-auth-divider::after {
-    content: ''; flex: 1; height: 1px;
+    content: '';
+    flex: 1;
+    height: 1px;
     background: var(--t-glass-edge-2);
 }
 
-/* ---------- input with icon ---------- */
+/* ---------- INPUT WITH ICON ---------- */
 .tech-input-icon {
     position: relative;
     display: flex;
@@ -232,7 +237,8 @@
 }
 .tech-input-icon > i {
     position: absolute;
-    left: 0.85rem; top: 50%;
+    left: 0.85rem;
+    top: 50%;
     transform: translateY(-50%);
     color: var(--t-text-muted);
     font-size: 0.85rem;
@@ -250,12 +256,15 @@
 }
 .tech-password-toggle {
     position: absolute;
-    right: 0.35rem; top: 50%;
+    right: 0.35rem;
+    top: 50%;
     transform: translateY(-50%);
-    width: 34px; height: 34px;
+    width: 34px;
+    height: 34px;
     border-radius: var(--t-r-sm);
     color: var(--t-text-muted);
-    display: grid; place-items: center;
+    display: grid;
+    place-items: center;
     transition: color var(--t-ease), background var(--t-ease);
     z-index: 2;
 }
@@ -269,7 +278,7 @@
     font-weight: 600;
 }
 
-/* ---------- password meter ---------- */
+/* ---------- PASSWORD METER ---------- */
 .tech-pw-meter {
     display: flex;
     align-items: center;
@@ -277,7 +286,8 @@
     margin-top: 0.55rem;
 }
 .tech-pw-bar {
-    flex: 1; height: 6px;
+    flex: 1;
+    height: 6px;
     background: var(--t-glass-3);
     border-radius: 99px;
     overflow: hidden;
@@ -285,7 +295,9 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .tech-pw-bar > span {
-    display: block; height: 100%; width: 0;
+    display: block;
+    height: 100%;
+    width: 0;
     border-radius: 99px;
     background: var(--t-neutral);
     transition: width 0.3s var(--t-ease), background 0.3s var(--t-ease);
@@ -310,7 +322,7 @@
 .tech-pw-meter[data-tone="good"]   .tech-pw-label { color: #93c5fd; }
 .tech-pw-meter[data-tone="strong"] .tech-pw-label { color: var(--t-yellow); }
 
-/* ---------- banners ---------- */
+/* ---------- LOGIN BANNERS ---------- */
 .tech-login-error {
     display: none;
     padding: 0.7rem 0.9rem;
@@ -327,6 +339,7 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .tech-login-error.is-shown { display: flex; }
+
 .tech-login-success {
     display: none;
     padding: 0.75rem 0.95rem;
@@ -346,7 +359,7 @@
 .tech-login-success.is-shown { display: flex; }
 .tech-login-success i { flex-shrink: 0; font-size: 0.95rem; }
 
-/* ---------- messages ---------- */
+/* ---------- MESSAGING ---------- */
 .tech-msg-layout {
     display: grid;
     grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
@@ -363,8 +376,9 @@
     border-radius: var(--t-r-lg);
     overflow-y: auto;
     height: 100%;
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 8px 32px rgba(0, 0, 0, 0.28);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 8px 32px rgba(0, 0, 0, 0.28);
 }
 .tech-thread {
     display: flex;
@@ -380,7 +394,8 @@
 .tech-thread:hover { background: var(--t-glass-2); }
 .tech-thread.is-active {
     background: linear-gradient(90deg,
-        rgba(59, 130, 246, 0.22), rgba(59, 130, 246, 0.05));
+        rgba(59, 130, 246, 0.22),
+        rgba(59, 130, 246, 0.05));
     box-shadow: inset 3px 0 0 var(--t-blue);
 }
 .tech-thread-avatar {
@@ -409,11 +424,7 @@
     color: var(--t-text-muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.tech-thread-time {
-    font-size: 0.67rem;
-    color: var(--t-text-muted);
-    flex-shrink: 0;
-}
+.tech-thread-time { font-size: 0.67rem; color: var(--t-text-muted); flex-shrink: 0; }
 .tech-thread-unread {
     background: linear-gradient(135deg, var(--t-yellow), var(--t-yellow-dark));
     color: #0a0f22;
@@ -425,6 +436,7 @@
     display: grid; place-items: center;
     box-shadow: 0 4px 12px rgba(250, 204, 21, 0.42);
 }
+
 .tech-msg-pane {
     background: var(--t-glass);
     backdrop-filter: var(--t-blur);
@@ -435,8 +447,9 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
-    box-shadow: inset 0 1px 0 var(--t-glass-shine),
-                0 8px 32px rgba(0, 0, 0, 0.28);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        0 8px 32px rgba(0, 0, 0, 0.28);
 }
 .tech-msg-head {
     padding: 0.9rem 1.1rem;
@@ -474,12 +487,13 @@
 .tech-bubble.from-tech {
     align-self: flex-end;
     background: linear-gradient(135deg, var(--t-blue), var(--t-blue-dark));
-    color: #fff;
+    color: #ffffff;
     border-bottom-right-radius: 4px;
     font-weight: 500;
     border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28),
-                0 8px 24px rgba(59, 130, 246, 0.32);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.28),
+        0 8px 24px rgba(59, 130, 246, 0.32);
 }
 .tech-bubble.from-customer,
 .tech-bubble.from-admin {

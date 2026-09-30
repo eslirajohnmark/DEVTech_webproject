@@ -6,3 +6,8 @@
 {% block meta_title %}Device Intake{% endblock %}
 {% block meta_subtitle %}Record condition and accessories received{% endblock %}
 {% block meta_job_id %}{{ current or 0 }}{% endblock %}
+
+{% block extra_js %}
+<script type="module" nonce="{{ tech_nonce }}"
+        src="{{ url_for('static', filename='js/technician/bootstrap.js') }}"></script>
+{% endblock %}

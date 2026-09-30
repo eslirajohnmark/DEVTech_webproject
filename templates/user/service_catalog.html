@@ -3,9 +3,7 @@
 {% block title %}Service Request{% endblock %}
 
 {% block extra_css %}
-<style>
-    .user-catalog-hero { background: linear-gradient(120deg, #0a1538 0%, #1e3a8a 60%, #1e40af 100%); }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/user-catalog.css') }}" />
 {% endblock %}
 
 {% block content %}
@@ -47,14 +45,14 @@
     {% for cat in categories %}
     <a href="{{ url_for('book_appointment', category_slug=cat.slug) }}"
        class="user-catalog-card"
-       style="--cat-color: {{ cat.color }};">
+       style="--cat-color: {{ cat.color or '#2563eb' }};">
         <div class="user-catalog-card-icon">
-            <i class="fas {{ cat.icon or 'fa-tools' }}"></i>
+            <i class="fas fa-{{ (cat.icon or 'tools')|replace('fa-', '') }}"></i>
             <span class="user-catalog-card-num">{{ loop.index }}</span>
         </div>
         <div class="user-catalog-card-body">
             <h3>{{ cat.name }}</h3>
-            <p>{{ cat.description }}</p>
+            <p>{{ cat.description or 'Browse services in this category.' }}</p>
             <span class="user-catalog-card-link">
                 View Services <i class="fas fa-arrow-right"></i>
             </span>
@@ -80,14 +78,16 @@
     <div class="user-catalog-services" id="catalogServices">
         {% for cat in categories %}
         <article class="user-catalog-svc-card" data-category="{{ cat.slug }}">
-            <header class="user-catalog-svc-head" style="background: {{ cat.color }};">
-                <i class="fas {{ cat.icon or 'fa-tools' }}"></i>
+            <header class="user-catalog-svc-head" style="background: {{ cat.color or '#2563eb' }};">
+                <i class="fas fa-{{ (cat.icon or 'tools')|replace('fa-', '') }}"></i>
                 <h4>{{ loop.index }}. {{ cat.name }}</h4>
             </header>
             <div class="user-catalog-svc-body">
                 <ul>
                     {% for svc in cat.services %}
                     <li>{{ svc.name }}</li>
+                    {% else %}
+                    <li style="color:var(--user-text-muted); font-style:italic;">No services listed yet.</li>
                     {% endfor %}
                 </ul>
                 {% if cat.tagline %}
@@ -98,6 +98,12 @@
                 {% endif %}
             </div>
         </article>
+        {% else %}
+        <div class="user-empty-state" style="grid-column: 1 / -1; padding: 2rem; text-align: center;">
+            <i class="fas fa-inbox" style="font-size: 2rem; opacity: 0.4;"></i>
+            <h3 style="margin-top: 0.75rem;">No Service Categories Yet</h3>
+            <p style="color: var(--user-text-muted);">Service categories will appear here once they're added.</p>
+        </div>
         {% endfor %}
     </div>
 </section>
@@ -114,9 +120,11 @@
         <a href="{{ url_for('support') }}" class="user-btn-secondary">
             <i class="fas fa-comment-dots"></i> Chat Support
         </a>
-        <a href="{{ url_for('book_appointment', category_slug='hardware') }}" class="user-btn-primary">
+        {% if categories %}
+        <a href="{{ url_for('book_appointment', category_slug=categories[0].slug) }}" class="user-btn-primary">
             <i class="fas fa-calendar-check"></i> Book Appointment
         </a>
+        {% endif %}
     </div>
 </section>
 

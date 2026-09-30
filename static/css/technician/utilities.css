@@ -1,5 +1,5 @@
 /* ============================================================================
- * UTILITIES — tiny single-purpose helpers
+ * UTILITIES — small single-purpose helpers
  * ==========================================================================*/
 .u-flex     { display: flex; }
 .u-flex-col { display: flex; flex-direction: column; }

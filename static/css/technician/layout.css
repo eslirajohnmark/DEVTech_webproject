@@ -1,5 +1,5 @@
 /* ============================================================================
- * LAYOUT — shell grid, sidebar, topbar, content column
+ * LAYOUT — shell, sidebar, topbar, bell
  * ==========================================================================*/
 .tech-layout {
     display: grid;
@@ -22,7 +22,8 @@
 }
 
 .tech-scrim {
-    position: fixed; inset: 0;
+    position: fixed;
+    inset: 0;
     background: rgba(4, 8, 20, 0.62);
     backdrop-filter: var(--t-blur-sm);
     -webkit-backdrop-filter: var(--t-blur-sm);
@@ -33,7 +34,6 @@
 }
 .tech-scrim.is-visible { opacity: 1; pointer-events: auto; }
 
-/* ----- sidebar ----- */
 .tech-sidebar {
     background: var(--t-glass);
     backdrop-filter: var(--t-blur-lg);
@@ -60,13 +60,16 @@
     border-bottom: 1px solid var(--t-glass-edge-2);
     margin-bottom: 1rem;
 }
+
 .tech-brand-mark {
     width: 42px; height: 42px;
     flex-shrink: 0;
     display: grid; place-items: center;
     border-radius: var(--t-r-md);
     background: linear-gradient(135deg,
-        var(--t-red) 0%, var(--t-yellow) 50%, var(--t-blue) 100%);
+        var(--t-red)    0%,
+        var(--t-yellow) 50%,
+        var(--t-blue)   100%);
     color: #0a0f22;
     font-size: 1.05rem;
     box-shadow:
@@ -74,6 +77,7 @@
         0 8px 24px rgba(59, 130, 246, 0.28),
         inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
+
 .tech-brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .tech-brand-name { font-weight: 800; font-size: 1.02rem; letter-spacing: -0.02em; }
 .tech-brand-name span { color: var(--t-yellow); }
@@ -115,6 +119,7 @@
         0 0 0 1px var(--t-blue-line),
         0 8px 24px rgba(59, 130, 246, 0.18);
 }
+
 .tech-whoami-avatar {
     width: 40px; height: 40px;
     flex-shrink: 0;
@@ -122,15 +127,17 @@
     border-radius: 50%;
     background: linear-gradient(135deg, var(--t-blue), var(--t-blue-dark));
     border: 1px solid rgba(255, 255, 255, 0.18);
-    color: #fff;
+    color: #ffffff;
     font-weight: 700;
     font-size: 0.82rem;
     letter-spacing: 0.02em;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
+
 .tech-whoami-text { display: flex; flex-direction: column; min-width: 0; }
 .tech-whoami-name {
-    font-weight: 650; font-size: 0.85rem;
+    font-weight: 650;
+    font-size: 0.85rem;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tech-whoami-role {
@@ -138,6 +145,7 @@
     color: var(--t-text-muted);
     display: flex; align-items: center; gap: 0.32rem;
 }
+
 .tech-dot { font-size: 0.42rem; }
 .tech-dot.available { color: var(--t-yellow); }
 .tech-dot.on_field  { color: var(--t-warn); }
@@ -168,8 +176,9 @@
 }
 .tech-nav-item.is-active {
     background: linear-gradient(90deg,
-        rgba(59, 130, 246, 0.22), rgba(59, 130, 246, 0.08));
-    color: #fff;
+        rgba(59, 130, 246, 0.22),
+        rgba(59, 130, 246, 0.08));
+    color: #ffffff;
     font-weight: 650;
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.16),
@@ -179,24 +188,28 @@
 .tech-nav-item.is-active::before {
     content: '';
     position: absolute;
-    left: -0.85rem; top: 50%; transform: translateY(-50%);
+    left: -0.85rem;
+    top: 50%; transform: translateY(-50%);
     width: 3px; height: 22px;
     border-radius: 0 3px 3px 0;
     background: linear-gradient(180deg, var(--t-yellow), var(--t-blue));
     box-shadow: 0 0 12px var(--t-blue);
 }
+
 .tech-nav-badge {
     margin-left: auto;
     background: linear-gradient(135deg, var(--t-yellow), var(--t-yellow-dark));
     color: #0a0f22;
     font-size: 0.66rem;
     font-weight: 800;
-    min-width: 19px; height: 19px;
+    min-width: 19px;
+    height: 19px;
     padding: 0 5px;
     border-radius: 99px;
     display: grid; place-items: center;
     box-shadow: 0 4px 12px rgba(250, 204, 21, 0.42);
 }
+
 .tech-logout {
     margin-top: auto;
     border-top: 1px solid var(--t-glass-edge-2);
@@ -212,7 +225,6 @@
     box-shadow: inset 0 1px 0 var(--t-glass-shine);
 }
 
-/* ----- topbar ----- */
 .tech-topbar {
     display: flex;
     align-items: center;
@@ -241,9 +253,8 @@
     color: var(--t-text-muted);
     margin-top: 0.1rem;
 }
-.tech-topbar-actions {
-    display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0;
-}
+.tech-topbar-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+
 .tech-menu-btn {
     display: none;
     width: 38px; height: 38px;
@@ -308,7 +319,6 @@
 }
 .tech-today i { color: var(--t-yellow); }
 
-/* ----- bell panel ----- */
 .tech-bell-wrap { position: relative; }
 .tech-bell-panel {
     position: absolute;
@@ -320,7 +330,9 @@
     -webkit-backdrop-filter: var(--t-blur-lg);
     border: 1px solid var(--t-glass-edge);
     border-radius: var(--t-r-lg);
-    box-shadow: inset 0 1px 0 var(--t-glass-shine), var(--t-shadow-lg);
+    box-shadow:
+        inset 0 1px 0 var(--t-glass-shine),
+        var(--t-shadow-lg);
     overflow: hidden;
     z-index: 70;
     max-height: 70vh;
@@ -353,7 +365,8 @@
 .tech-bell-item span { font-size: 0.68rem; color: var(--t-text-muted); }
 .tech-bell-item.is-unread {
     background: linear-gradient(90deg,
-        rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.03));
+        rgba(59, 130, 246, 0.14),
+        rgba(59, 130, 246, 0.03));
     box-shadow: inset 2px 0 0 var(--t-blue);
 }
 .tech-bell-item.is-unread i { color: var(--t-blue); }

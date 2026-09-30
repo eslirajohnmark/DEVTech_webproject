@@ -1,0 +1,456 @@
+/* ==========================================================================
+   DEVTech · User Service Catalog
+   Static page styles for templates/user/service_catalog.html
+   Depends on CSS variables defined in user.css (--user-bg, --user-card,
+   --user-border, --user-text-primary, --user-text-muted, etc.)
+   ========================================================================== */
+
+/* ---------- Hero ---------- */
+
+.user-catalog-hero {
+    background: linear-gradient(120deg, #0a1538 0%, #1e3a8a 60%, #1e40af 100%);
+    color: #ffffff;
+    border-radius: 18px;
+    padding: 2.75rem 2.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    margin-bottom: 2rem;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 18px 40px rgba(10, 21, 56, 0.28);
+}
+
+.user-catalog-hero::after {
+    /* subtle radial highlight in the corner */
+    content: "";
+    position: absolute;
+    top: -40%;
+    right: -10%;
+    width: 420px;
+    height: 420px;
+    background: radial-gradient(circle, rgba(255,255,255,0.14), transparent 70%);
+    pointer-events: none;
+}
+
+.user-catalog-hero-text {
+    max-width: 620px;
+    position: relative;
+    z-index: 1;
+}
+
+.user-catalog-hero-text h2 {
+    font-size: 1.95rem;
+    font-weight: 800;
+    line-height: 1.2;
+    margin: 0 0 0.6rem;
+    letter-spacing: -0.01em;
+}
+
+.user-catalog-hero-text p {
+    font-size: 0.98rem;
+    color: rgba(255, 255, 255, 0.85);
+    margin: 0 0 1.25rem;
+    line-height: 1.5;
+}
+
+.user-catalog-hero-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.user-catalog-hero-badges span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.user-catalog-hero-badges span i {
+    font-size: 0.85rem;
+}
+
+.user-catalog-hero-art {
+    font-size: 6.5rem;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+}
+
+/* ---------- Category Grid ---------- */
+
+.user-catalog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.2rem;
+    margin-bottom: 2.5rem;
+}
+
+.user-catalog-card {
+    display: block;
+    background: var(--user-card);
+    border: 1px solid var(--user-border);
+    border-left: 4px solid var(--cat-color, #2563eb);
+    border-radius: 14px;
+    padding: 1.4rem 1.4rem 1.2rem;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.18s ease, box-shadow 0.18s ease,
+                border-color 0.18s ease;
+    position: relative;
+}
+
+.user-catalog-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.10);
+}
+
+.user-catalog-card:focus-visible {
+    outline: 2px solid var(--cat-color, #2563eb);
+    outline-offset: 3px;
+}
+
+.user-catalog-card-icon {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.85rem;
+}
+
+.user-catalog-card-icon > i {
+    font-size: 1.75rem;
+    color: var(--cat-color, #2563eb);
+    line-height: 1;
+}
+
+.user-catalog-card-num {
+    background: var(--cat-color, #2563eb);
+    color: #ffffff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 0.18rem 0.6rem;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+}
+
+.user-catalog-card-body h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 0 0 0.4rem;
+    color: var(--user-text-primary);
+    line-height: 1.3;
+}
+
+.user-catalog-card-body p {
+    font-size: 0.85rem;
+    color: var(--user-text-muted);
+    line-height: 1.5;
+    margin: 0 0 0.9rem;
+}
+
+.user-catalog-card-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--cat-color, #2563eb);
+    transition: gap 0.15s ease;
+}
+
+.user-catalog-card:hover .user-catalog-card-link {
+    gap: 0.55rem;
+}
+
+/* ---------- All Services Section ---------- */
+
+.user-catalog-all {
+    margin-bottom: 2.5rem;
+}
+
+.user-catalog-all-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.3rem;
+}
+
+.user-catalog-all-head h2 {
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin: 0 0 0.25rem;
+    color: var(--user-text-primary);
+    letter-spacing: -0.01em;
+}
+
+.user-catalog-all-head p {
+    font-size: 0.88rem;
+    color: var(--user-text-muted);
+    margin: 0;
+}
+
+.user-catalog-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.user-catalog-pill {
+    background: var(--user-bg);
+    border: 1px solid var(--user-border);
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--user-text-secondary, var(--user-text-muted));
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s ease, color 0.15s ease,
+                border-color 0.15s ease;
+    white-space: nowrap;
+}
+
+.user-catalog-pill:hover {
+    border-color: #2563eb;
+    color: #2563eb;
+}
+
+.user-catalog-pill.is-active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+
+.user-catalog-pill:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+/* ---------- Service Cards Grid ---------- */
+
+.user-catalog-services {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 1.2rem;
+}
+
+.user-catalog-svc-card {
+    background: var(--user-card);
+    border: 1px solid var(--user-border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.user-catalog-svc-card:hover {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+}
+
+.user-catalog-svc-head {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.9rem 1.1rem;
+    color: #ffffff;
+}
+
+.user-catalog-svc-head > i {
+    font-size: 1rem;
+    opacity: 0.95;
+}
+
+.user-catalog-svc-head h4 {
+    margin: 0;
+    font-size: 0.98rem;
+    font-weight: 700;
+    letter-spacing: 0.005em;
+    color: #ffffff;
+}
+
+.user-catalog-svc-body {
+    padding: 1rem 1.1rem 1.1rem;
+}
+
+.user-catalog-svc-body ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.user-catalog-svc-body li {
+    padding: 0.45rem 0;
+    border-bottom: 1px dashed var(--user-border);
+    font-size: 0.88rem;
+    color: var(--user-text-secondary, var(--user-text-primary));
+    line-height: 1.45;
+}
+
+.user-catalog-svc-body li:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.user-catalog-svc-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
+    padding: 0.65rem 0.8rem;
+    background: var(--user-bg);
+    border-radius: 8px;
+    font-size: 0.78rem;
+    color: var(--user-text-muted);
+    line-height: 1.5;
+}
+
+.user-catalog-svc-note i {
+    color: #2563eb;
+    margin-top: 0.1rem;
+    flex-shrink: 0;
+}
+
+/* ---------- Footer Strip ---------- */
+
+.user-catalog-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    background: var(--user-card);
+    border: 1px solid var(--user-border);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.user-catalog-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    min-width: 0;
+}
+
+.user-catalog-footer-left > i {
+    font-size: 1.7rem;
+    color: #2563eb;
+    flex-shrink: 0;
+}
+
+.user-catalog-footer-left strong {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--user-text-primary);
+    margin-bottom: 0.15rem;
+}
+
+.user-catalog-footer-left p {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--user-text-muted);
+    line-height: 1.45;
+}
+
+.user-catalog-footer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    flex-shrink: 0;
+}
+
+/* ---------- Dark Theme Tweaks ---------- */
+
+[data-theme="dark"] .user-catalog-hero {
+    /* Slightly deeper gradient for dark mode to avoid the section glowing
+       brighter than the rest of the dark UI. */
+    background: linear-gradient(120deg, #061024 0%, #142a63 60%, #16357a 100%);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .user-catalog-svc-card,
+[data-theme="dark"] .user-catalog-card,
+[data-theme="dark"] .user-catalog-footer {
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="dark"] .user-catalog-pill {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .user-catalog-pill:hover {
+    background: rgba(37, 99, 235, 0.15);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 900px) {
+    .user-catalog-hero {
+        padding: 2rem 1.6rem;
+    }
+    .user-catalog-hero-text h2 {
+        font-size: 1.6rem;
+    }
+    .user-catalog-hero-art {
+        font-size: 5rem;
+    }
+    .user-catalog-all-head {
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 640px) {
+    .user-catalog-hero {
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+        padding: 1.75rem 1.4rem;
+        border-radius: 14px;
+    }
+    .user-catalog-hero-art {
+        display: none;
+    }
+    .user-catalog-hero-text h2 {
+        font-size: 1.4rem;
+    }
+    .user-catalog-hero-badges span {
+        font-size: 0.72rem;
+        padding: 0.35rem 0.75rem;
+    }
+    .user-catalog-grid {
+        grid-template-columns: 1fr;
+    }
+    .user-catalog-services {
+        grid-template-columns: 1fr;
+    }
+    .user-catalog-footer {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .user-catalog-footer-actions {
+        width: 100%;
+    }
+    .user-catalog-footer-actions > * {
+        flex: 1;
+        justify-content: center;
+    }
+    .user-catalog-pill {
+        font-size: 0.74rem;
+        padding: 0.35rem 0.75rem;
+    }
+}

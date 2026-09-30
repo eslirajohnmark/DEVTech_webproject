@@ -6,16 +6,13 @@
     <meta name="theme-color" content="#070b18" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
 
-    <meta name="tech-page"     content="{% block meta_page %}dashboard{% endblock %}" />
-    <meta name="tech-title"    content="{% block meta_title %}Technician Portal{% endblock %}" />
-    <meta name="tech-subtitle" content="{% block meta_subtitle %}{% endblock %}" />
-    <meta name="tech-user-id"  content="{{ session.get('user_id', 0) }}" />
-    <meta name="tech-job-id"   content="{% block meta_job_id %}0{% endblock %}" />
+    <meta name="page_module"   content="{% block meta_page %}dashboard{% endblock %}" />
+    <meta name="meta_title"    content="{% block meta_title %}Technician Portal{% endblock %}" />
+    <meta name="meta_subtitle" content="{% block meta_subtitle %}{% endblock %}" />
+    <meta name="meta_job_id"   content="{% block meta_job_id %}0{% endblock %}" />
 
     <title>DEVTech · {% block title %}Technician{% endblock %}</title>
-
     <link rel="icon" href="{{ url_for('static', filename='images/favicon.svg') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
@@ -31,7 +28,9 @@
     <div class="tech-layout" id="techLayout"></div>
     {% endblock %}
 
-    {% include 'technician/_scripts.html' %}
-    {% block extra_scripts %}{% endblock %}
+    <script src="{{ url_for('static', filename='js/technician/tech-data.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/technician/tech-shell.js') }}"></script>
+
+    {% block extra_js %}{% endblock %}
 </body>
 </html>
