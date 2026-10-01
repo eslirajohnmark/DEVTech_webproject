@@ -90,12 +90,16 @@ def _intake_dict(r):
 @technician_required
 def me():
     u = User.query.get(session['user_id'])
+    rating, _rating_count = technician_rating(u.id)
+    completed_jobs = Booking.query.filter(
+        Booking.technician_id == u.id,
+        Booking.status.in_(FINISHED_STATUSES)
+    ).count()
     return jsonify({'ok': True, 'technician': {
         'id': u.id, 'username': u.username, 'name': u.full_name,
         'email': u.email, 'phone': u.phone, 'role': u.role,
-        'rating': 5.0,
-        'completedJobs': Booking.query.filter_by(
-            technician_id=u.id, status='completed').count(),
+        'rating': rating or 5.0,
+        'completedJobs': completed_jobs,
         'availability': 'available',
         'avatarInitials': ''.join(
             w[0] for w in (u.full_name or '').split()[:2]).upper() or 'TT',
@@ -426,25 +430,33 @@ def job_report(job_id):
         action = body.get('action', 'submit')
 
         r = ServiceReport.query.filter_by(booking_id=job_id).first()
-        # GUARD
+
+        # Submitted reports are permanently read-only.
+        if r and r.status == 'submitted':
+            msg = 'This report was already submitted and is read-only.'
+            if is_form:
+                flash(msg, 'danger')
+                return redirect(url_for('technician.report_form', job_id=job_id))
+            return jsonify({'ok': False, 'reason': msg}), 400
+
         if not r:
             r = ServiceReport(booking_id=job_id, created_at=_now())
             db.session.add(r)
 
-        r.technician_id   = session['user_id']
-        r.status          = 'submitted' if action == 'submit' else 'draft'
-        r.updated_at      = _now()
-        if action == 'submit':
+        r.technician_id = session['user_id']
+        r.status = 'submitted' if action == 'submit' else 'draft'
+        r.updated_at = _now()
+        if r.status == 'submitted' and not r.submitted_at:
             r.submitted_at = _now()
-        r.diagnosis       = body.get('diagnosis', '')
-        r.tests           = body.get('tests', '')
-        r.work_performed  = body.get('workPerformed', '')
-        r.hours_spent     = float(body.get('hoursSpent') or 0)
-        r.outcome         = body.get('outcome', 'fixed')
-        r.outcome_notes   = body.get('outcomeNotes', '')
+        r.diagnosis = body.get('diagnosis', '')
+        r.tests = body.get('tests', '')
+        r.work_performed = body.get('workPerformed', '')
+        r.hours_spent = float(body.get('hoursSpent') or 0)
+        r.outcome = body.get('outcome', 'fixed')
+        r.outcome_notes = body.get('outcomeNotes', '')
         r.recommendations = body.get('recommendations', '')
-        r.photos_note     = body.get('photosNote', '')
-        r.admin_note      = body.get('adminNote', '')
+        r.photos_note = body.get('photosNote', '')
+        r.admin_note = body.get('adminNote', '')
 
         db.session.add(JobLog(
             booking_id=job_id, at=_now(),
@@ -452,6 +464,15 @@ def job_report(job_id):
             action='report', text=f'Service report {r.status}.',
         ))
         db.session.commit()
+
+        if r.status == 'submitted':
+            for a in User.query.filter_by(role='admin', is_active=True).all():
+                create_notification(
+                    a.id,
+                    'Service Report Submitted',
+                    f'{b.booking_number}: report submitted by {session.get("username")}.',
+                    'info'
+                )
 
         if is_form:
             flash(f'Report {r.status}.', 'success')
@@ -470,6 +491,7 @@ def job_report(job_id):
         'recommendations': r.recommendations,
         'photosNote': r.photos_note, 'adminNote': r.admin_note,
     }})
+
 
 # ---------------------------------------------------------------------------
 # INCIDENTS
@@ -515,6 +537,14 @@ def incidents():
         )
         db.session.add(r)
         db.session.commit()
+
+        for a in User.query.filter_by(role='admin', is_active=True).all():
+            create_notification(
+                a.id,
+                'Incident Reported',
+                f'Incident #{r.id} was reported by {session.get("username", "Technician")}.',
+                'warning'
+            )
 
         if is_form:
             flash(f'Incident {r.id} submitted to management.', 'success')

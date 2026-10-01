@@ -13,7 +13,7 @@ from datetime import datetime
 from functools import wraps
 from services.job_status import ACTIVE_STATUSES, FINISHED_STATUSES
 from models.technician_models import technician_rating
-from app import db, User, Booking
+from app import db, User, Booking, create_notification
 from models.technician_models import (
     IntakeRecord, ServiceReport, IncidentReport, JobLog,
 )
@@ -301,6 +301,11 @@ def messages():
 
         if other_id:
             other = User.query.get(other_id)
+            if other and not (
+                other.role == 'admin' or
+                Booking.query.filter_by(technician_id=tid, user_id=other.id).first()
+            ):
+                abort(403)
             if other:
                 Message.query.filter_by(
                     sender_id=other_id, recipient_id=tid, is_read=False
@@ -357,14 +362,22 @@ def message_send(other_user_id):
         flash('Message cannot be empty.', 'danger')
         return redirect(url_for('technician.messages', thread=other_user_id))
 
-    if not User.query.get(other_user_id):
-        abort(404)
+    other = User.query.get_or_404(other_user_id)
+    if not (other.role == 'admin' or
+            Booking.query.filter_by(technician_id=tid, user_id=other.id).first()):
+        abort(403)
 
     db.session.add(Message(
         sender_id=tid, recipient_id=other_user_id,
         content=content, is_read=False,
     ))
     db.session.commit()
+
+    create_notification(
+        other.id, 'New Message',
+        f'You have a new message from {User.query.get(tid).full_name}',
+        'info'
+    )
 
     return redirect(url_for('technician.messages', thread=other_user_id))
 

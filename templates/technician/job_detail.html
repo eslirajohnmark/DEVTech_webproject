@@ -5,81 +5,150 @@
 {% block meta_subtitle %}{{ job.service.name }}{% endblock %}
 
 {% set stages = job_stages %}
-{% set tone = {'pending':'info','confirmed':'info','diagnosis_pending':'warn','in_progress':'warn',
-               'completed':'ok','released':'ok','on_hold':'danger','cancelled':'danger'}.get(job.status,'neutral') %}
+
+{% set tone = {
+    'pending':'info',
+    'confirmed':'info',
+    'diagnosis_pending':'warn',
+    'in_progress':'warn',
+    'completed':'ok',
+    'released':'ok',
+    'on_hold':'danger',
+    'cancelled':'danger'
+}.get(job.status, 'neutral') %}
+
 {% set status_text = status_labels.get(job.status, job.status|title) %}
-<span class="tech-pill tech-pill--{{ tone }}"><i class="fas fa-circle"></i> {{ status_text }}</span>
+{% set meta = (tone, status_text) %}
 
 {% set stage_keys = stages|map(attribute=0)|list %}
 {% set current_index = stage_keys.index(job.status) if job.status in stage_keys else 0 %}
 
+{% block content %}
+
 <section class="tech-job-detail">
 
     <a href="{{ url_for('technician.my_jobs') }}" class="tech-back">
-        <i class="fas fa-arrow-left"></i> Back to My Jobs
+        <i class="fas fa-arrow-left"></i>
+        Back to My Jobs
     </a>
 
     <section class="tech-card" style="margin-bottom:1.1rem;">
+
         <div class="tech-card-head" style="margin-bottom:0.9rem;">
+
             <div style="min-width:0;">
-                <span class="tech-job-id">{{ job.booking_number }}</span>
-                <h2 style="font-size:1.16rem; font-weight:750; letter-spacing:-0.02em; margin-top:0.15rem;">
+
+                <span class="tech-job-id">
+                    {{ job.booking_number }}
+                </span>
+
+                <h2 style="
+                    font-size:1.16rem;
+                    font-weight:750;
+                    letter-spacing:-0.02em;
+                    margin-top:0.15rem;
+                ">
                     {{ job.service.name }}
                 </h2>
-                <p style="font-size:0.82rem; color:var(--t-text-muted); margin-top:0.15rem;">
-                    {{ job.user.full_name }} &middot; {{ job.device_type }}
+
+                <p style="
+                    font-size:0.82rem;
+                    color:var(--t-text-muted);
+                    margin-top:0.15rem;
+                ">
+                    {{ job.user.full_name }}
+                    &middot;
+                    {{ job.device_type }}
                 </p>
+
             </div>
+
             <div class="tech-job-badges">
+
                 <span class="tech-pill tech-pill--{{ meta[0] }}">
-                    <i class="fas fa-circle"></i> {{ meta[1] }}
+                    <i class="fas fa-circle"></i>
+                    {{ meta[1] }}
                 </span>
+
             </div>
+
         </div>
 
         <div class="tech-track">
+
             {% for key, label, icon in stages %}
-                {% set state = 'is-done' if loop.index0 < current_index
-                              else ('is-current' if loop.index0 == current_index else '') %}
+
+                {% set state =
+                    'is-done'
+                    if loop.index0 < current_index
+                    else (
+                        'is-current'
+                        if loop.index0 == current_index
+                        else ''
+                    )
+                %}
+
                 <div class="tech-stage {{ state }}">
+
                     <div class="tech-stage-dot">
+
                         {% if loop.index0 < current_index %}
                             <i class="fas fa-check"></i>
                         {% else %}
                             <i class="fas {{ icon }}"></i>
                         {% endif %}
+
                     </div>
-                    <div class="tech-stage-name">{{ label }}</div>
+
+                    <div class="tech-stage-name">
+                        {{ label }}
+                    </div>
+
                 </div>
+
             {% endfor %}
+
         </div>
+
     </section>
 
     <div class="tech-grid-2" style="align-items:start;">
 
-        <!-- ==================== LEFT COLUMN ==================== -->
         <div>
+
             <section class="tech-card" style="margin-bottom:1.1rem;">
+
                 <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-user"></i> Customer</h3>
+
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-user"></i>
+                        Customer
+                    </h3>
+
                 </div>
+
                 <div class="tech-kv">
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Name</span>
                         <span class="tech-kv-val">{{ job.user.full_name }}</span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Phone</span>
                         <span class="tech-kv-val">{{ job.user.phone or '—' }}</span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Email</span>
                         <span class="tech-kv-val">{{ job.user.email }}</span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Service address</span>
                         <span class="tech-kv-val">{{ job.address or '—' }}</span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Scheduled</span>
                         <span class="tech-kv-val">
@@ -88,10 +157,12 @@
                             {{ job.booking_time.strftime('%I:%M %p') if job.booking_time else '—' }}
                         </span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Amount</span>
                         <span class="tech-kv-val">₱{{ '%.2f'|format(job.service.price) }}</span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Payment</span>
                         <span class="tech-kv-val">
@@ -100,153 +171,298 @@
                             {{ job.transaction.payment_status if job.transaction else '—' }}
                         </span>
                     </div>
+
                 </div>
+
             </section>
 
             <section class="tech-card" style="margin-bottom:1.1rem;">
+
                 <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-laptop"></i> Device &amp; Reported Problem</h3>
+
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-laptop"></i>
+                        Device &amp; Reported Problem
+                    </h3>
+
                 </div>
+
                 <div class="tech-kv" style="margin-bottom:1rem;">
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Device type</span>
                         <span class="tech-kv-val">{{ job.device_type }}</span>
                     </div>
+
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Service mode</span>
-                        <span class="tech-kv-val">{{ 'In-Shop' if job.is_in_shop else 'Home Service' }}</span>
+                        <span class="tech-kv-val">
+                            {{ 'In-Shop' if job.is_in_shop else 'Home Service' }}
+                        </span>
                     </div>
+
                 </div>
+
                 <div>
-                    <span class="tech-kv-key">Problem described by the customer</span>
-                    <p style="font-size:0.85rem; line-height:1.6; margin-top:0.2rem;">
+
+                    <span class="tech-kv-key">
+                        Problem described by the customer
+                    </span>
+
+                    <p style="
+                        font-size:0.85rem;
+                        line-height:1.6;
+                        margin-top:0.2rem;
+                    ">
                         {{ job.description }}
                     </p>
+
                 </div>
+
             </section>
 
             <section class="tech-card" style="margin-bottom:1.1rem;">
+
                 <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-stethoscope"></i> Diagnosis</h3>
+
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-stethoscope"></i>
+                        Diagnosis
+                    </h3>
+
                     {% if report and report.diagnosis %}
-                        <span class="tech-pill tech-pill--ok"><i class="fas fa-check"></i> Recorded</span>
+                        <span class="tech-pill tech-pill--ok">
+                            <i class="fas fa-check"></i>
+                            Recorded
+                        </span>
                     {% endif %}
+
                 </div>
-                <form id="diagnosisForm" method="POST"
-                      action="{{ url_for('technician_api.save_diagnosis', job_id=job.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <textarea class="tech-textarea" name="diagnosis" rows="4"
-                              placeholder="Describe the fault you found (e.g., 'Panel confirmed cracked. Backlight and ribbon cable test OK, so only the LCD assembly needs replacing.')"
-                              {% if job.status not in ('confirmed', 'diagnosis_pending') %}readonly{% endif %}>{{ report.diagnosis if report else '' }}</textarea>
+
+                <form
+                    id="diagnosisForm"
+                    method="POST"
+                    action="{{ url_for('technician_api.save_diagnosis', job_id=job.id) }}"
+                >
+
+                    <input
+                        type="hidden"
+                        name="csrf_token"
+                        value="{{ csrf_token() }}"
+                    >
+
+                    <textarea
+                        class="tech-textarea"
+                        name="diagnosis"
+                        rows="4"
+                        placeholder="Describe the fault you found (e.g., 'Panel confirmed cracked. Backlight and ribbon cable test OK, so only the LCD assembly needs replacing.')"
+                        {% if job.status not in ('confirmed', 'diagnosis_pending') %}readonly{% endif %}
+                    >{{ report.diagnosis if report else '' }}</textarea>
+
                     {% if job.status in ('confirmed', 'diagnosis_pending') %}
-                    <button type="submit" class="tech-btn tech-btn--primary"
-                            style="margin-top:0.6rem;">
-                        <i class="fas fa-save"></i> Save Diagnosis
-                    </button>
+                        <button
+                            type="submit"
+                            class="tech-btn tech-btn--primary"
+                            style="margin-top:0.6rem;"
+                        >
+                            <i class="fas fa-save"></i>
+                            Save Diagnosis
+                        </button>
                     {% endif %}
+
                 </form>
+
             </section>
 
             <section class="tech-card" style="margin-bottom:1.1rem;">
+
                 <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-box-archive"></i> Device Intake</h3>
+
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-box-archive"></i>
+                        Device Intake
+                    </h3>
+
                     {% if intake %}
-                    <span class="tech-pill tech-pill--ok">
-                        <i class="fas fa-check"></i> Recorded
-                    </span>
+                        <span class="tech-pill tech-pill--ok">
+                            <i class="fas fa-check"></i>
+                            Recorded
+                        </span>
                     {% endif %}
+
                 </div>
+
                 {% if intake %}
+
                     <div class="tech-kv" style="margin-bottom:0.85rem;">
+
                         <div class="tech-kv-item">
                             <span class="tech-kv-key">Recorded</span>
                             <span class="tech-kv-val">{{ intake.recorded_at }}</span>
                         </div>
+
                         <div class="tech-kv-item">
                             <span class="tech-kv-key">Condition</span>
                             <span class="tech-kv-val">{{ intake.condition|title }}</span>
                         </div>
+
                         <div class="tech-kv-item">
                             <span class="tech-kv-key">Powers on</span>
                             <span class="tech-kv-val">{{ 'Yes' if intake.powers_on else 'No' }}</span>
                         </div>
+
                         <div class="tech-kv-item">
                             <span class="tech-kv-key">Password supplied</span>
                             <span class="tech-kv-val">{{ 'Yes' if intake.has_password else 'No' }}</span>
                         </div>
+
                     </div>
+
                     {% if intake.condition_notes %}
-                    <div>
-                        <span class="tech-kv-key">Condition notes</span>
-                        <p style="font-size:0.82rem; line-height:1.55; margin-top:0.2rem;">
-                            {{ intake.condition_notes }}
-                        </p>
-                    </div>
+                        <div>
+                            <span class="tech-kv-key">Condition notes</span>
+                            <p style="
+                                font-size:0.82rem;
+                                line-height:1.55;
+                                margin-top:0.2rem;
+                            ">
+                                {{ intake.condition_notes }}
+                            </p>
+                        </div>
                     {% endif %}
+
                 {% else %}
-                    <p style="font-size:0.8rem; color:var(--t-text-muted);">
+
+                    <p style="
+                        font-size:0.8rem;
+                        color:var(--t-text-muted);
+                    ">
                         No intake record yet.
                     </p>
+
                 {% endif %}
+
             </section>
+
         </div>
 
-        <!-- ==================== RIGHT COLUMN ==================== -->
         <div>
-            <!-- 👇 MOVED: Activity Log now sits at the top of the right column, beside Device & Reported Problem -->
+
             <section class="tech-card" style="margin-bottom:1.1rem;">
+
                 <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-clock-rotate-left"></i> Activity Log</h3>
-                    <span class="tech-chip">{{ logs|length }}</span>
+
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-clock-rotate-left"></i>
+                        Activity Log
+                    </h3>
+
+                    <span class="tech-chip">
+                        {{ logs|length }}
+                    </span>
+
                 </div>
+
                 {% if logs %}
-                <div class="tech-timeline">
-                    {% for entry in logs %}
-                    <div class="tech-tl-item" data-action="{{ entry.action }}">
-                        <p class="tech-tl-text">{{ entry.text }}</p>
-                        <p class="tech-tl-meta">
-                            <strong>{{ entry.by_name }}</strong> &middot; {{ entry.at }}
-                        </p>
+
+                    <div class="tech-timeline">
+
+                        {% for entry in logs %}
+
+                            <div
+                                class="tech-tl-item"
+                                data-action="{{ entry.action }}"
+                            >
+
+                                <p class="tech-tl-text">
+                                    {{ entry.text }}
+                                </p>
+
+                                <p class="tech-tl-meta">
+                                    <strong>{{ entry.by_name }}</strong>
+                                    &middot;
+                                    {{ entry.at }}
+                                </p>
+
+                            </div>
+
+                        {% endfor %}
+
                     </div>
-                    {% endfor %}
-                </div>
+
                 {% else %}
-                <p style="font-size:0.8rem; color:var(--t-text-muted);">
-                    No activity recorded yet.
-                </p>
+
+                    <p style="
+                        font-size:0.8rem;
+                        color:var(--t-text-muted);
+                    ">
+                        No activity recorded yet.
+                    </p>
+
                 {% endif %}
+
             </section>
 
             <section class="tech-card" style="margin-bottom:1.1rem;">
+
                 <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-bolt"></i> Actions</h3>
+
+                    <h3 class="tech-card-title">
+                        <i class="fas fa-bolt"></i>
+                        Actions
+                    </h3>
+
                 </div>
-                <div style="display:flex; flex-direction:column; gap:0.5rem;">
+
+                <div style="
+                    display:flex;
+                    flex-direction:column;
+                    gap:0.5rem;
+                ">
 
                     {% if job.status != 'released' and job.status != 'cancelled' %}
-                    <form method="POST"
-                          action="{{ url_for('technician_api.advance_job', job_id=job.id) }}"
-                          style="margin:0;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="tech-btn tech-btn--primary tech-btn--wide"
-                                style="justify-content:flex-start;" type="submit">
-                            <i class="fas fa-forward"></i>
-                            Advance to next stage
-                        </button>
-                    </form>
+
+                        <form
+                            method="POST"
+                            action="{{ url_for('technician_api.advance_job', job_id=job.id) }}"
+                            style="margin:0;"
+                        >
+
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="{{ csrf_token() }}"
+                            >
+
+                            <button
+                                class="tech-btn tech-btn--primary tech-btn--wide"
+                                style="justify-content:flex-start;"
+                                type="submit"
+                            >
+                                <i class="fas fa-forward"></i>
+                                Advance to next stage
+                            </button>
+
+                        </form>
+
                     {% endif %}
 
-                    <a class="tech-btn tech-btn--ghost tech-btn--wide"
-                       style="justify-content:flex-start;"
-                       href="{{ url_for('technician.intake_form', job_id=job.id) }}">
+                    <a
+                        class="tech-btn tech-btn--ghost tech-btn--wide"
+                        style="justify-content:flex-start;"
+                        href="{{ url_for('technician.intake_form', job_id=job.id) }}"
+                    >
                         <i class="fas fa-box-archive"></i>
                         {{ 'View / edit intake' if intake else 'Record device intake' }}
                     </a>
 
-                    <a class="tech-btn tech-btn--ghost tech-btn--wide"
-                       style="justify-content:flex-start;"
-                       href="{{ url_for('technician.report_form', job_id=job.id) }}">
+                    <a
+                        class="tech-btn tech-btn--ghost tech-btn--wide"
+                        style="justify-content:flex-start;"
+                        href="{{ url_for('technician.report_form', job_id=job.id) }}"
+                    >
                         <i class="fas fa-file-lines"></i>
+
                         {% if report and report.status == 'submitted' %}
                             View service report
                         {% elif report and report.status == 'draft' %}
@@ -254,45 +470,121 @@
                         {% else %}
                             Write service report
                         {% endif %}
+
                     </a>
 
-                    <a class="tech-btn tech-btn--danger tech-btn--wide"
-                       style="justify-content:flex-start;"
-                       href="{{ url_for('technician.incidents', job=job.id) }}">
-                        <i class="fas fa-shield-halved"></i> Report an incident
+                    <a
+                        class="tech-btn tech-btn--ghost tech-btn--wide"
+                        style="justify-content:flex-start;"
+                        href="{{ url_for('technician.messages', thread=job.user_id) }}"
+                    >
+                        <i class="fas fa-comments"></i>
+                        Message customer
+                    </a>
+
+                    <a
+                        class="tech-btn tech-btn--danger tech-btn--wide"
+                        style="justify-content:flex-start;"
+                        href="{{ url_for('technician.incidents', job=job.id) }}"
+                    >
+                        <i class="fas fa-shield-halved"></i>
+                        Report an incident
                     </a>
 
                 </div>
+
             </section>
 
             {% if report %}
-            <section class="tech-card" style="margin-bottom:1.1rem;">
-                <div class="tech-card-head">
-                    <h3 class="tech-card-title"><i class="fas fa-file-lines"></i> Service Report</h3>
-                    <span class="tech-pill tech-pill--{{ 'ok' if report.status == 'submitted' else 'warn' }}">
-                        {{ report.status|title }}
-                    </span>
-                </div>
-                {% if report.diagnosis %}
-                <div>
-                    <span class="tech-kv-key">Diagnosis</span>
-                    <p style="font-size:0.82rem; line-height:1.55; margin-top:0.2rem;">
-                        {{ report.diagnosis }}
-                    </p>
-                </div>
-                {% endif %}
-                {% if report.work_performed %}
-                <div style="margin-top:0.7rem;">
-                    <span class="tech-kv-key">Work performed</span>
-                    <p style="font-size:0.82rem; line-height:1.55; margin-top:0.2rem;">
-                        {{ report.work_performed }}
-                    </p>
-                </div>
-                {% endif %}
-            </section>
+
+                <section class="tech-card" style="margin-bottom:1.1rem;">
+
+                    <div class="tech-card-head">
+
+                        <h3 class="tech-card-title">
+                            <i class="fas fa-file-lines"></i>
+                            Service Report
+                        </h3>
+
+                        <span class="tech-pill tech-pill--{{ 'ok' if report.status == 'submitted' else 'warn' }}">
+                            {{ report.status|title }}
+                        </span>
+
+                    </div>
+
+                    {% if report.diagnosis %}
+                        <div>
+                            <span class="tech-kv-key">Diagnosis</span>
+                            <p style="
+                                font-size:0.82rem;
+                                line-height:1.55;
+                                margin-top:0.2rem;
+                            ">
+                                {{ report.diagnosis }}
+                            </p>
+                        </div>
+                    {% endif %}
+
+                    {% if report.work_performed %}
+                        <div style="margin-top:0.7rem;">
+                            <span class="tech-kv-key">Work performed</span>
+                            <p style="
+                                font-size:0.82rem;
+                                line-height:1.55;
+                                margin-top:0.2rem;
+                            ">
+                                {{ report.work_performed }}
+                            </p>
+                        </div>
+                    {% endif %}
+
+                    {% if report.outcome %}
+                        <div style="margin-top:0.7rem;">
+                            <span class="tech-kv-key">Outcome</span>
+                            <p style="
+                                font-size:0.82rem;
+                                line-height:1.55;
+                                margin-top:0.2rem;
+                            ">
+                                {{ report.outcome|title }}
+                            </p>
+                        </div>
+                    {% endif %}
+
+                    {% if report.outcome_notes %}
+                        <div style="margin-top:0.7rem;">
+                            <span class="tech-kv-key">Outcome notes</span>
+                            <p style="
+                                font-size:0.82rem;
+                                line-height:1.55;
+                                margin-top:0.2rem;
+                            ">
+                                {{ report.outcome_notes }}
+                            </p>
+                        </div>
+                    {% endif %}
+
+                    {% if report.recommendations %}
+                        <div style="margin-top:0.7rem;">
+                            <span class="tech-kv-key">Recommendations</span>
+                            <p style="
+                                font-size:0.82rem;
+                                line-height:1.55;
+                                margin-top:0.2rem;
+                            ">
+                                {{ report.recommendations }}
+                            </p>
+                        </div>
+                    {% endif %}
+
+                </section>
+
             {% endif %}
+
         </div>
+
     </div>
 
 </section>
+
 {% endblock %}

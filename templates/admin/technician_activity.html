@@ -1,0 +1,98 @@
+{% extends "base/admin_base.html" %}
+{% block title %}Technician Activity{% endblock %}
+{% block content %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Technician Activity</h1>
+        <p>Review technician incidents, submitted service reports, and customer ratings.</p>
+    </div>
+</div>
+
+<section class="admin-grid-panel" style="margin-bottom:1.25rem;">
+    <div class="admin-panel-header">
+        <h3 class="admin-panel-title"><i class="fas fa-shield-halved"></i> Incident Reports</h3>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="admin-table">
+            <thead><tr>
+                <th>ID</th><th>Technician</th><th>Job</th><th>Type</th>
+                <th>Severity</th><th>Description</th><th>Status</th><th>Action</th>
+            </tr></thead>
+            <tbody>
+            {% for i in incidents %}
+            <tr>
+                <td>#{{ i.id }}</td>
+                <td>{{ users[i.technician_id].full_name if i.technician_id in users else '—' }}</td>
+                <td>{{ bookings[i.booking_id].booking_number if i.booking_id in bookings else '—' }}</td>
+                <td>{{ i.type|title }}</td>
+                <td>{{ i.severity|title }}</td>
+                <td style="max-width:320px;">{{ i.description }}</td>
+                <td>{{ i.status|title }}</td>
+                <td>
+                    {% if i.status != 'resolved' %}
+                    <form method="POST" action="{{ url_for('admin_incident_review', incident_id=i.id) }}" style="display:flex;gap:.35rem;flex-wrap:wrap;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        {% if i.status != 'reviewing' %}<button class="admin-btn admin-btn-secondary" name="status" value="reviewing" type="submit">Review</button>{% endif %}
+                        <button class="admin-btn admin-btn-approve" name="status" value="resolved" type="submit">Resolve</button>
+                    </form>
+                    {% else %}<span style="color:var(--success);">Resolved</span>{% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" style="text-align:center;padding:1.5rem;">No incident reports.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="admin-grid-panel" style="margin-bottom:1.25rem;">
+    <div class="admin-panel-header">
+        <h3 class="admin-panel-title"><i class="fas fa-file-lines"></i> Submitted Service Reports</h3>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="admin-table">
+            <thead><tr><th>ID</th><th>Job</th><th>Technician</th><th>Submitted</th><th>Diagnosis</th><th>Outcome</th></tr></thead>
+            <tbody>
+            {% for r in reports %}
+            <tr>
+                <td>#{{ r.id }}</td>
+                <td>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</td>
+                <td>{{ users[r.technician_id].full_name if r.technician_id in users else '—' }}</td>
+                <td>{{ r.submitted_at or '—' }}</td>
+                <td style="max-width:320px;">{{ r.diagnosis or '—' }}</td>
+                <td>{{ r.outcome|title if r.outcome else '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" style="text-align:center;padding:1.5rem;">No submitted service reports.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="admin-grid-panel">
+    <div class="admin-panel-header">
+        <h3 class="admin-panel-title"><i class="fas fa-star"></i> Customer Ratings</h3>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="admin-table">
+            <thead><tr><th>Job</th><th>Technician</th><th>Customer</th><th>Rating</th><th>Experience</th><th>Submitted</th></tr></thead>
+            <tbody>
+            {% for r in ratings %}
+            <tr>
+                <td>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</td>
+                <td>{{ users[r.technician_id].full_name if r.technician_id in users else '—' }}</td>
+                <td>{{ users[r.customer_id].full_name if r.customer_id in users else '—' }}</td>
+                <td>{{ r.stars }}/5</td>
+                <td style="max-width:320px;">{{ r.experience or '—' }}</td>
+                <td>{{ r.submitted_at or '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" style="text-align:center;padding:1.5rem;">No ratings yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

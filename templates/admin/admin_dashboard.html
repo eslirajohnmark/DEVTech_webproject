@@ -11,10 +11,10 @@
         <p>Overview of your system operations</p>
     </div>
     <div class="admin-top-actions">
-        <a href="{{ url_for('admin_requests') }}" class="admin-icon-btn" title="{{ pending_bookings + pending_payments }} item(s) need your attention">
+        <a href="{{ url_for('admin_requests') }}" class="admin-icon-btn" title="{{ pending_bookings + pending_payments + open_incidents }} item(s) need your attention">
             <i class="fas fa-bell"></i>
-            {% if pending_bookings + pending_payments > 0 %}
-            <span class="admin-badge">{{ pending_bookings + pending_payments }}</span>
+            {% if pending_bookings + pending_payments + open_incidents > 0 %}
+            <span class="admin-badge">{{ pending_bookings + pending_payments + open_incidents }}</span>
             {% endif %}
         </a>
         <button class="admin-icon-btn" onclick="location.reload()" title="Refresh dashboard data">

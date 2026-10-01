@@ -1020,6 +1020,23 @@ def notification_delete(notification_id):
 def _thread_filter(a, b):
     return or_(and_(Message.sender_id == a, Message.recipient_id == b),
                and_(Message.sender_id == b, Message.recipient_id == a))
+
+def _can_message(user_id, other_id):
+    other = User.query.get(other_id)
+    me = User.query.get(user_id)
+    if not other or not me or other.id == me.id:
+        return False
+    if other.role == 'admin' or me.role == 'admin':
+        return True
+    if other.role == 'technician':
+        return Booking.query.filter_by(
+            user_id=user_id, technician_id=other_id
+        ).first() is not None
+    if other.role == 'customer' and me.role == 'technician':
+        return Booking.query.filter_by(
+            user_id=other_id, technician_id=user_id
+        ).first() is not None
+    return False
  
 @app.route('/messages')
 @login_required
@@ -1047,6 +1064,14 @@ def messages():
         selected_conversation, messages_data = None, []
         if selected_id:
             selected_conversation = next((c for c in conversations if c['id'] == selected_id), None)
+            if not selected_conversation and _can_message(user_id, selected_id):
+                other = User.query.get(selected_id)
+                selected_conversation = {
+                    'id': other.id, 'name': other.full_name,
+                    'last_message': '', 'last_time': datetime.utcnow(),
+                    'unread_count': 0, 'is_active': True,
+                    'is_online': is_user_online(other.last_active)
+                }
             if selected_conversation:
                 selected_conversation['is_active'] = True
                 for m in Message.query.filter_by(sender_id=selected_id, recipient_id=user_id, is_read=False).all():
@@ -1076,8 +1101,8 @@ def message_send(conv_id):
     content = ((request.get_json(silent=True) or {}).get('content') or '').strip()
     if not content:
         return jsonify({'success': False, 'message': 'Message content is required'}), 400
-    if not User.query.get(conv_id):
-        return jsonify({'success': False, 'message': 'Recipient not found'}), 404
+    if not _can_message(user_id, conv_id):
+        return jsonify({'success': False, 'message': 'You cannot message this user.'}), 403
     try:
         db.session.add(Message(sender_id=user_id, recipient_id=conv_id, content=content, is_read=False))
         db.session.commit()
@@ -1098,10 +1123,22 @@ def message_new():
     if not recipient or not subject or not content:
         return jsonify({'success': False, 'message': 'All fields are required'}), 400
     try:
-        role = 'admin' if recipient in ('support', 'admin') else recipient   # "Support Team" -> an admin
-        recipient_user = User.query.filter_by(role=role, is_active=True).first()
-        if not recipient_user:
-            return jsonify({'success': False, 'message': 'Recipient not found'}), 404
+        if recipient == 'technician':
+            b = Booking.query.filter(
+                Booking.user_id == user_id,
+                Booking.technician_id.isnot(None)
+            ).order_by(Booking.created_at.desc()).first()
+            recipient_user = b.technician if b else None
+            if not recipient_user:
+                return jsonify({
+                    'success': False,
+                    'message': 'No technician has been assigned to your bookings yet.'
+                }), 404
+        else:
+            role = 'admin' if recipient in ('support', 'admin') else recipient
+            recipient_user = User.query.filter_by(role=role, is_active=True).first()
+            if not recipient_user:
+                return jsonify({'success': False, 'message': 'Recipient not found'}), 404
         db.session.add(Message(sender_id=user_id, recipient_id=recipient_user.id,
                                subject=subject, content=content, is_read=False))
         db.session.commit()
@@ -2309,6 +2346,8 @@ def get_cached_dashboard_stats():
 @admin_required
 def admin_dashboard():
     stats = get_cached_dashboard_stats()
+    from models.technician_models import IncidentReport
+    open_incidents = IncidentReport.query.filter_by(status='open').count()
 
     recent_bookings = Booking.query.order_by(Booking.created_at.desc()).limit(5).all()
     recent_users = User.query.order_by(User.created_at.desc()).limit(5).all()
@@ -2322,6 +2361,7 @@ def admin_dashboard():
                          pending_bookings=stats['pending_bookings'],
                          total_transactions=stats['total_transactions'],
                          pending_payments=stats['pending_payments'],
+                         open_incidents=open_incidents,
                          total_revenue=stats['total_revenue'],
                          recent_bookings=recent_bookings,
                          recent_users=recent_users,
@@ -3250,6 +3290,61 @@ def admin_analytics():
                          returning_customers=returning_customers,
                          top_customers=top_customers)
     
+@app.route('/admin/technician-activity')
+@admin_required
+def admin_technician_activity():
+    from models.technician_models import IncidentReport, ServiceReport, ServiceRating
+
+    incidents = IncidentReport.query.order_by(IncidentReport.reported_at.desc()).limit(100).all()
+    reports = ServiceReport.query.filter_by(status='submitted')\
+        .order_by(ServiceReport.submitted_at.desc()).limit(50).all()
+    ratings = ServiceRating.query.order_by(ServiceRating.submitted_at.desc()).limit(50).all()
+
+    uids, bids = set(), set()
+    for i in incidents:
+        uids.add(i.technician_id)
+        if i.booking_id:
+            bids.add(i.booking_id)
+    for r in reports:
+        uids.add(r.technician_id)
+        if r.booking_id:
+            bids.add(r.booking_id)
+    for r in ratings:
+        uids.update([r.technician_id, r.customer_id])
+        if r.booking_id:
+            bids.add(r.booking_id)
+
+    users = {u.id: u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {}
+    bookings = {b.id: b for b in Booking.query.filter(Booking.id.in_(bids)).all()} if bids else {}
+
+    return render_template(
+        'admin/technician_activity.html',
+        incidents=incidents, reports=reports, ratings=ratings,
+        users=users, bookings=bookings
+    )
+
+@app.route('/admin/incidents/<int:incident_id>/review', methods=['POST'])
+@admin_required
+def admin_incident_review(incident_id):
+    from models.technician_models import IncidentReport
+
+    r = IncidentReport.query.get_or_404(incident_id)
+    status = request.form.get('status')
+    if status not in ('reviewing', 'resolved'):
+        flash('Invalid status.', 'danger')
+        return redirect(url_for('admin_technician_activity'))
+
+    r.status = status
+    r.reviewed_by = session.get('username')
+    r.reviewed_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    db.session.commit()
+    create_notification(
+        r.technician_id, 'Incident Report Updated',
+        f'Your incident report #{r.id} is now: {status}.', 'info'
+    )
+    flash('Incident updated.', 'success')
+    return redirect(url_for('admin_technician_activity'))
+
 @app.route('/admin/settings')
 @admin_required
 def admin_settings():
@@ -3286,13 +3381,6 @@ def internal_error(error):
 
 def init_db():
     with app.app_context():
-        try:
-            db.session.execute(text('DROP TABLE IF EXISTS system_settings'))
-            db.session.commit()
-            print("Dropped existing system_settings table")
-        except Exception as e:
-            print(f"Note: {e}")
-        
         db.create_all()
         print("Tables created successfully")
         
@@ -3312,6 +3400,7 @@ def init_db():
         add_oauth_columns()
         add_order_address_columns()
         add_user_presence_columns()
+        add_service_category_columns()
         
         # Create admin user
         admin = User.query.filter_by(email='admin@devtech.com').first()

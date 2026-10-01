@@ -52,6 +52,9 @@
                 <a href="{{ url_for('admin_requests') }}" class="admin-nav-item {% if request.endpoint == 'admin_requests' %}admin-active{% endif %}">
                     <i class="fas fa-clipboard-list"></i> Service Requests
                 </a>
+                <a href="{{ url_for('admin_technician_activity') }}" class="admin-nav-item {% if request.endpoint == 'admin_technician_activity' %}admin-active{% endif %}">
+                    <i class="fas fa-screwdriver-wrench"></i> Technician Activity
+                </a>
                 <a href="{{ url_for('admin_payments') }}" class="admin-nav-item {% if request.endpoint == 'admin_payments' %}admin-active{% endif %}">
                     <i class="fas fa-credit-card"></i> Payment Confirmation
                 </a>
