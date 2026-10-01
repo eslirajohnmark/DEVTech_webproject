@@ -10,14 +10,14 @@ from flask import (
 from datetime import datetime
 from functools import wraps
 import json
-from services.job_status import NEXT_STATUS, STATUS_LABELS
-from app import db, User, Booking
 from models.technician_models import (
     IntakeRecord, ServiceReport, IncidentReport, JobLog,
     UploadedFile,
 )
+from app import db, User, Booking, create_notification
+from services.job_status import NEXT_STATUS, STATUS_LABELS, FINISHED_STATUSES
 from models.technician_models import technician_rating
-rating, _ = technician_rating(u.id)
+
 
 
 technician_api_bp = Blueprint('technician_api', __name__)
@@ -274,6 +274,8 @@ def advance_job(job_id):
              'released': 'Device released to customer.'}
     actions = {'diagnosis_pending': 'intake', 'in_progress': 'status',
                'completed': 'status', 'released': 'release'}
+    if b.status == 'in_progress' and not (report and report.status == 'submitted'):
+        return fail('Submit your service report before marking the device ready.')
 
     b.status = nxt
     b.updated_at = datetime.utcnow()
@@ -316,17 +318,36 @@ def save_diagnosis(job_id):
     is_form = not request.is_json
     body = request.form if is_form else (request.get_json(silent=True) or {})
     diagnosis = (body.get('diagnosis') or '').strip()
-    if not diagnosis:
+
+    def fail(msg):
         if is_form:
-            flash('Diagnosis text is required.', 'danger')
+            flash(msg, 'danger')
             return redirect(url_for('technician.job_detail', job_id=b.id))
-        return jsonify({'ok': False, 'reason': 'Diagnosis text is required.'}), 400
-    # ... existing report/JobLog code unchanged ...
+        return jsonify({'ok': False, 'reason': msg}), 400
+
+    if not diagnosis:
+        return fail('Diagnosis text is required.')
+    if b.status not in ('confirmed', 'diagnosis_pending'):
+        return fail('Diagnosis can only be edited before the repair starts.')
+
+    r = ServiceReport.query.filter_by(booking_id=b.id)\
+        .order_by(ServiceReport.id.desc()).first()
+    if not r:
+        r = ServiceReport(booking_id=b.id, technician_id=session['user_id'],
+                          status='draft', created_at=_now())
+        db.session.add(r)
+    r.diagnosis = diagnosis
+    r.updated_at = _now()
+    db.session.add(JobLog(booking_id=b.id, at=_now(),
+                          by_name=session.get('username', 'Technician'),
+                          action='diagnosis', text='Diagnosis recorded.'))
     db.session.commit()
+
     if is_form:
         flash('Diagnosis saved.', 'success')
         return redirect(url_for('technician.job_detail', job_id=b.id))
     return jsonify({'ok': True, 'diagnosis': diagnosis})
+
 
 @technician_api_bp.route('/jobs/<int:job_id>/logs')
 @technician_required
@@ -334,7 +355,9 @@ def job_logs(job_id):
     b = Booking.query.get_or_404(job_id)
     if b.technician_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
-    ...
+    logs = JobLog.query.filter_by(booking_id=b.id).order_by(JobLog.id.desc()).all()
+    return jsonify({'ok': True, 'logs': [
+        {'action': l.action, 'text': l.text, 'by': l.by_name, 'at': l.at} for l in logs]})
 # ---------------------------------------------------------------------------
 # INTAKE
 # ---------------------------------------------------------------------------
@@ -403,6 +426,7 @@ def job_report(job_id):
         action = body.get('action', 'submit')
 
         r = ServiceReport.query.filter_by(booking_id=job_id).first()
+        # GUARD
         if not r:
             r = ServiceReport(booking_id=job_id, created_at=_now())
             db.session.add(r)

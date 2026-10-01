@@ -60,7 +60,7 @@
             <i class="fas fa-check-circle"></i>
         </div>
         <div class="user-stat-info">
-            <span class="user-stat-number">{{ bookings|selectattr('status', 'equalto', 'completed')|list|length }}</span>
+            <span class="user-stat-number">{{ bookings|selectattr('status', 'in', ['completed','released'])|list|length }}</span>
             <span class="user-stat-label">Completed</span>
         </div>
         <span class="user-stat-trend up"><i class="fas fa-arrow-up"></i> 22%</span>
@@ -72,7 +72,7 @@
             <i class="fas fa-clock"></i>
         </div>
         <div class="user-stat-info">
-            <span class="user-stat-number">{{ bookings|selectattr('status', 'in', ['pending', 'confirmed', 'in_progress'])|list|length }}</span>
+            <span class="user-stat-number">{{ bookings|selectattr('status', 'in', ['pending','confirmed','diagnosis_pending','in_progress','on_hold'])|list|length }}</span>
             <span class="user-stat-label">In Progress</span>
         </div>
         <span class="user-stat-trend down"><i class="fas fa-arrow-down"></i> 5%</span>

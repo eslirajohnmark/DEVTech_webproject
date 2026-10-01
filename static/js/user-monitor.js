@@ -26,14 +26,13 @@
     }
 
     function statusPillTone(label) {
-        var map = {
-            'Pending':    'amber',
-            'Confirmed':  'blue',
-            'On Repair':  'purple',
-            'On Hold':    'red',
-            'Completed':  'green',
-            'Cancelled':  'neutral'
-        };
+        var map = { 'Requested':'amber',
+            'Assigned':'blue',
+            'Diagnosis':'purple',
+            'On Repair':'purple',
+            'Ready for Collection':'green',
+            'Released':'green','On Hold':'red',
+            'Cancelled':'neutral' };
         return map[label] || 'neutral';
     }
 
@@ -135,8 +134,8 @@
                 (data.repair
                     ? '<div class="usr-note"><div class="usr-note-label">Technician findings</div><p>' + esc(data.repair.diagnosis) + '</p>' +
                     (data.repair.recommendations ? '<div class="usr-note-label" style="margin-top:.6rem">Recommendations</div><p>' + esc(data.repair.recommendations) + '</p>' : '') +
-                    '</div>' : '')
-            '</section>';
+                     '</div>' : '')
+             '</section>';
 
         function devRow(icon, label, value) {
             return '<div class="usr-dev-row">' +

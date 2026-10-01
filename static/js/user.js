@@ -9,6 +9,21 @@
  * class - this was the one missing piece connecting the hamburger button
  * to that behavior; the button's onclick had nothing to call before.
  */
+
+(function () {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    const token = meta ? meta.getAttribute('content') : null;
+    const orig = window.fetch;
+    window.fetch = function (input, init) {
+        init = init || {};
+        const m = (init.method || 'GET').toUpperCase();
+        if (token && ['POST','PUT','PATCH','DELETE'].includes(m)) {
+          init.headers = Object.assign({}, init.headers, {'X-CSRFToken': token});
+        }
+        return orig(input, init);
+    };
+})();
+
 function toggleMobileMenu() {
     const menu = document.getElementById('mobileNavMenu');
     if (menu) menu.classList.toggle('open');

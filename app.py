@@ -954,9 +954,6 @@ def rejected_requests():
 def cancel_booking(booking_id):
     user_id = session.get('user_id')
     booking = Booking.query.get_or_404(booking_id)
-    if booking.technician_id:
-        create_notification(booking.technician_id, 'Job Cancelled',
-            f'{booking.booking_number} was cancelled by the customer.', 'warning')
     if booking.user_id != user_id:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     if booking.status not in ['pending', 'confirmed']:
@@ -964,6 +961,10 @@ def cancel_booking(booking_id):
     booking.status = 'cancelled'    
     booking.updated_at = datetime.utcnow()
     db.session.commit()
+    if booking.technician_id:
+        create_notification(booking.technician_id, 'Job Cancelled',
+        f'{booking.booking_number} was cancelled by the customer.', 'warning')
+        
     create_notification(user_id, 'Booking Cancelled', f'Your booking {booking.booking_number} has been cancelled.', 'warning')
     return jsonify({'success': True, 'message': 'Booking cancelled successfully'})
 
@@ -1339,10 +1340,6 @@ def book_appointment(category_slug=None):
                            category=category, notifications=_unread_notifs(session.get('user_id')))
  
 # ==================== DEVICE MONITOR ====================
-MONITOR_STAGES = [('pending', 'Requested', 'fa-inbox'), ('confirmed', 'Confirmed', 'fa-clipboard-check'),
-                  ('in_progress', 'On Repair', 'fa-screwdriver-wrench'), ('completed', 'Completed', 'fa-circle-check')]
-STATUS_LABELS = {'pending': 'Pending', 'confirmed': 'Confirmed', 'in_progress': 'On Repair',
-                 'on_hold': 'On Hold', 'completed': 'Completed', 'cancelled': 'Cancelled'}
  
 @app.route('/user/monitor-device')
 @app.route('/user/monitor-device/<int:booking_id>')
@@ -1366,56 +1363,63 @@ def monitor_device(booking_id=None):
 @app.route('/api/booking/<int:booking_id>/monitor')
 @login_required
 def api_booking_monitor(booking_id):
-    from models.technician_models import ServiceReport
-    rep = ServiceReport.query.filter_by(booking_id=b.id).order_by(ServiceReport.id.desc()).first()
-    done = bool(rep and rep.status == 'submitted')
-    repair = ({'diagnosis': rep.diagnosis,
-           'outcome': rep.outcome if done else None,
-           'recommendations': rep.recommendations if done else None}
-          if rep and rep.diagnosis else None)
-    from models.technician_models import JobLog, ServiceRating
+    from models.technician_models import JobLog, ServiceRating, ServiceReport, technician_rating
     b = Booking.query.get(booking_id)
     if not b or b.user_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
-    keys = [s[0] for s in MONITOR_STAGES]
-    if b.status == 'cancelled': idx = 0
-    elif b.status == 'on_hold': idx = keys.index('in_progress')
-    else: idx = keys.index(b.status) if b.status in keys else 0
- 
+
+    keys = [s[0] for s in STAGES]
+    if b.status == 'cancelled':   idx = 0
+    elif b.status == 'on_hold':   idx = keys.index('in_progress')
+    else:                         idx = keys.index(b.status) if b.status in keys else 0
+
+    rep = ServiceReport.query.filter_by(booking_id=b.id).order_by(ServiceReport.id.desc()).first()
+    done = bool(rep and rep.status == 'submitted')
+    repair = {'diagnosis': rep.diagnosis,
+              'outcome': rep.outcome if done else None,
+              'recommendations': rep.recommendations if done else None} \
+             if rep and rep.diagnosis else None
+
     tech = None
     if b.technician:
         t = b.technician
-        avg, cnt = db.session.query(func.avg(ServiceRating.stars), func.count(ServiceRating.id))\
-            .filter(ServiceRating.technician_id == t.id).one()
-        tech = {'name': t.full_name, 'verified': bool(t.id_verified), 'role': 'Technician',
+        avg, cnt = technician_rating(t.id)
+        tech = {'id': t.id, 'name': t.full_name, 'verified': bool(t.id_verified),
+                'role': 'Technician',
                 'initials': ''.join(w[0] for w in (t.full_name or '').split()[:2]).upper() or 'T',
-                'rating': round(float(avg), 1) if avg else 5.0, 'rating_count': cnt,
+                'rating': avg or 5.0, 'rating_count': cnt,
                 'phone': t.phone, 'email': t.email}
+
     rating = ServiceRating.query.filter_by(booking_id=b.id).first()
-    logs = JobLog.query.filter_by(booking_id=b.id).order_by(JobLog.at.desc()).all()
+    logs = JobLog.query.filter_by(booking_id=b.id).order_by(JobLog.id.desc()).all()
     txn = b.transaction
     fmt = lambda d, f: d.strftime(f) if d else ''
     return jsonify({
         'ok': True,
         'booking': {'number': b.booking_number, 'status': b.status,
-                    'statusLabel': STATUS_LABELS.get(b.status, b.status), 'service': b.service.name,
-                    'description': b.description, 'deviceType': b.device_type, 'isInShop': b.is_in_shop,
-                    'address': b.address, 'scheduledDate': fmt(b.booking_date, '%b %d, %Y'),
+                    'statusLabel': STATUS_LABELS.get(b.status, b.status),
+                    'service': b.service.name, 'description': b.description,
+                    'deviceType': b.device_type, 'isInShop': b.is_in_shop,
+                    'address': b.address,
+                    'scheduledDate': fmt(b.booking_date, '%b %d, %Y'),
                     'scheduledTime': fmt(b.booking_time, '%I:%M %p'),
                     'createdAt': fmt(b.created_at, '%b %d, %Y %I:%M %p'),
                     'updatedAt': fmt(b.updated_at, '%b %d, %Y %I:%M %p')},
-        'stages': [{'key': k, 'label': l, 'icon': i} for k, l, i in MONITOR_STAGES],
+        'stages': [{'key': k, 'label': l, 'icon': i} for k, l, i in STAGES],
         'stageIndex': idx,
         'payment': {'method': txn.payment_method, 'status': txn.payment_status,
                     'amount': float(txn.amount)} if txn else None,
         'technician': tech,
-        'canRate': bool(b.status == 'completed' and b.technician_id and not rating),
-        'rating': {'stars': rating.stars, 'experience': rating.experience, 'improvement': rating.improvement,
+        'repair': repair,
+        'canRate': bool(b.status in FINISHED_STATUSES and b.technician_id and not rating),
+        'rating': {'stars': rating.stars, 'experience': rating.experience,
+                   'improvement': rating.improvement,
                    'submittedAt': fmt(rating.submitted_at, '%b %d, %Y')} if rating else None,
         'timeline': [{'action': l.action, 'text': l.text, 'by': l.by_name, 'at': l.at}
-                     for l in logs if l.action in ('status', 'intake', 'approval', 'release')],
+                     for l in logs
+                     if l.action in ('assign', 'status', 'intake', 'diagnosis', 'approval', 'release')],
     })
- 
+    
 @app.route('/api/booking/<int:booking_id>/rate', methods=['POST'])
 @login_required
 def api_booking_rate(booking_id):
@@ -1423,7 +1427,7 @@ def api_booking_rate(booking_id):
     b = Booking.query.get(booking_id)
     if not b or b.user_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
-    if b.status != 'completed' or not b.technician_id:
+    if b.status not in FINISHED_STATUSES or not b.technician_id:
         return jsonify({'ok': False, 'reason': 'Only completed jobs can be rated.'}), 400
     if ServiceRating.query.filter_by(booking_id=b.id).first():
         return jsonify({'ok': False, 'reason': 'You already rated this repair.'}), 400
@@ -2424,6 +2428,11 @@ def api_admin_create_user():
     full_name = (data.get('full_name') or '').strip()
     phone = (data.get('phone') or '').strip()
     role = (data.get('role') or 'customer').strip()
+    
+    if role == 'technician':
+        nums = [int(u.username[5:]) for u in User.query.filter(User.username.like('TECH-%')).all()
+                if u.username[5:].isdigit()]
+        username = f"TECH-{(max(nums) + 1 if nums else 1):04d}"
 
     missing = [label for label, value in [
         ('username', username), ('email', email), ('password', password), ('full name', full_name)
@@ -2733,73 +2742,62 @@ def admin_requests():
 @app.route('/admin/requests/<int:booking_id>/status', methods=['POST'])
 @admin_required
 def admin_request_status(booking_id):
+    from models.technician_models import JobLog
     booking = Booking.query.get_or_404(booking_id)
     new_status = request.form.get('status')
-    rejection_reason = request.form.get('reason', '')
+    reason = request.form.get('reason', '')
     technician_id = request.form.get('technician_id', type=int)
-    
-    if new_status in ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']:
+    now = datetime.utcnow()
+    stamp = now.strftime('%Y-%m-%d %H:%M:%S')
+    admin_name = session.get('username', 'Admin')
 
-        # Approving a request requires assigning a technician who has
-        # actually passed identity verification - this is the real-world
-        # safety rule: an unverified account should never be dispatched to
-        # a customer's home or handed their device.
-        if new_status == 'confirmed':
-            if not technician_id:
-                flash('Please select a technician to assign before approving this request.', 'danger')
-                return redirect(url_for('admin_requests'))
+    if new_status not in ('confirmed', 'cancelled'):
+        flash('Repair progress is updated by the assigned technician.', 'warning')
+        return redirect(url_for('admin_requests'))
 
-            technician = User.query.filter_by(id=technician_id, role='technician').first()
-            if not technician:
-                flash('Selected technician not found.', 'danger')
-                return redirect(url_for('admin_requests'))
-            if not technician.id_verified:
-                flash(f'{technician.full_name} has not completed identity verification yet and cannot be assigned. Verify their ID in User Management first.', 'danger')
-                return redirect(url_for('admin_requests'))
-
-            booking.technician_id = technician.id
-            booking.assigned_at = datetime.utcnow()
-
-        booking.status = new_status
-        booking.updated_at = datetime.utcnow()
+    if new_status == 'confirmed':
+        if booking.status != 'pending':
+            flash('Only pending requests can be approved.', 'danger')
+            return redirect(url_for('admin_requests'))
+        tech = User.query.filter_by(id=technician_id, role='technician', is_active=True).first() if technician_id else None
+        if not tech:
+            flash('Please select a technician before approving.', 'danger')
+            return redirect(url_for('admin_requests'))
+        if not tech.id_verified:
+            flash(f'{tech.full_name} is not identity-verified yet. Verify them in User Management first.', 'danger')
+            return redirect(url_for('admin_requests'))
+        booking.technician_id = tech.id
+        booking.assigned_at = now
+        db.session.add(JobLog(booking_id=booking.id, at=stamp, by_name=admin_name,
+                              action='assign', text=f'Approved and assigned to {tech.full_name}.'))
+        booking.status = 'confirmed'
+        booking.updated_at = now
         db.session.commit()
-        
-        # Create notification for the user
-        if new_status == 'cancelled':
-            notification_title = 'Booking Rejected'
-            notification_message = f'Your booking #{booking.booking_number} has been rejected.'
-            if rejection_reason:
-                notification_message += f'\n\nReason: {rejection_reason}'
-            notification_type = 'error'
-        elif new_status == 'confirmed' and booking.technician:
-            tech = booking.technician
-            # Note what's deliberately left out: the technician's ID number
-            # or ID type is never included here. Customers see a name, a
-            # verified badge, and a contact number - never the document
-            # itself, matching how Grab/TaskRabbit-style platforms handle
-            # this in practice.
-            verified_badge = 'Verified ✓' if tech.id_verified else 'Pending verification'
-            notification_title = 'Booking Approved - Technician Assigned'
-            notification_message = (
-                f'Your booking #{booking.booking_number} has been approved!\n\n'
-                f'Assigned Technician: {tech.full_name} ({verified_badge})\n'
-                f'Contact: {tech.phone or "Available through the app messages"}\n\n'
-                f'They will reach out to coordinate the service.'
-            )
-            notification_type = 'success'
-        else:
-            notification_title = 'Booking Status Updated'
-            notification_message = f'Your booking #{booking.booking_number} status is now: {new_status.capitalize()}'
-            notification_type = 'info'
-        
-        create_notification(
-            booking.user_id,
-            notification_title,
-            notification_message,
-            notification_type
-        )
-        
-        flash(f'Booking status updated to {new_status.capitalize()}.', 'success')
+        create_notification(booking.user_id, 'Booking Approved - Technician Assigned',
+            f'Your booking #{booking.booking_number} has been approved!\n\n'
+            f'Assigned Technician: {tech.full_name} (Verified ✓)\n'
+            f'Contact: {tech.phone or "Available through Messages"}', 'success')
+        create_notification(tech.id, 'New Job Assigned',
+            f'{booking.booking_number} - {booking.service.name} on '
+            f'{booking.booking_date.strftime("%b %d")} at {booking.booking_time.strftime("%I:%M %p")}.', 'info')
+        flash('Request approved and technician notified.', 'success')
+    else:
+        if booking.status in FINISHED_STATUSES or booking.status == 'cancelled':
+            flash('This booking can no longer be rejected.', 'danger')
+            return redirect(url_for('admin_requests'))
+        booking.status = 'cancelled'
+        booking.updated_at = now
+        db.session.add(JobLog(booking_id=booking.id, at=stamp, by_name=admin_name,
+                              action='status', text=f'Rejected by admin. {reason}'.strip()))
+        db.session.commit()
+        msg = f'Your booking #{booking.booking_number} has been rejected.'
+        if reason:
+            msg += f'\n\nReason: {reason}'
+        create_notification(booking.user_id, 'Booking Rejected', msg, 'error')
+        if booking.technician_id:
+            create_notification(booking.technician_id, 'Job Cancelled',
+                                f'{booking.booking_number} was cancelled by an admin.', 'warning')
+        flash('Request rejected.', 'warning')
     return redirect(url_for('admin_requests'))
 
 @app.route('/api/admin/booking/<int:booking_id>')
@@ -2869,13 +2867,6 @@ def admin_payment_confirm(transaction_id):
     transaction.payment_status = 'confirmed'
     transaction.updated_at = datetime.utcnow()
     db.session.commit()
-    
-    if transaction.booking_id:
-        booking = Booking.query.get(transaction.booking_id)
-        if booking:
-            booking.status = 'confirmed'
-            booking.updated_at = datetime.utcnow()
-            db.session.commit()
     
     create_notification(
         transaction.user_id,

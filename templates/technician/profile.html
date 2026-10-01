@@ -38,6 +38,9 @@
                         <i class="fas fa-clock"></i> Verification pending
                     </span>
                     {% endif %}
+                    <span class="tech-chip"><i class="fas fa-star" style="color:var(--t-yellow);"></i>
+                        {% if rating %}{{ rating }} / 5 ({{ rating_count }}){% else %}No ratings yet{% endif %}
+                    </span>
                     <span class="tech-chip">
                         <i class="fas fa-calendar-check"></i>
                         Joined {{ tech.created_at.strftime('%b %d, %Y') if tech.created_at else '—' }}

@@ -9,6 +9,11 @@
         <h1>My Bookings</h1>
         <p>View and manage all your repair bookings</p>
     </div>
+    {% if booking.technician_id %}
+    <a href="{{ url_for('monitor_device', booking_id=booking.id) }}" class="user-action-btn-sm view-btn" title="Track repair">
+        <i class="fas fa-satellite-dish"></i>
+    </a>
+    {% endif %}
     <div class="user-top-actions">
         <a href="{{ url_for('request_service') }}" class="user-btn-primary">
             <i class="fas fa-plus"></i> New Booking

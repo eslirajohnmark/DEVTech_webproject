@@ -41,6 +41,7 @@
         <!-- Contact Form -->
         <div class="user-support-form">
             <h2><i class="fas fa-paper-plane"></i> Send a Support Request</h2>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <form method="POST" action="{{ url_for('support') }}" id="supportForm">
                 <div class="user-form-group">
                     <label for="category">Category <span class="user-required-star">*</span></label>

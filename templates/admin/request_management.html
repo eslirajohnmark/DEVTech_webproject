@@ -73,8 +73,10 @@
             <option value="all">All Status</option>
             <option value="pending">Pending</option>
             <option value="confirmed">Confirmed</option>
+            <option value="diagnosis_pending">Diagnosis Pending</option>
             <option value="in_progress">In Progress</option>
             <option value="completed">Completed</option>
+            <option value="released">Released</option>
             <option value="cancelled">Cancelled</option>
         </select>
         <button class="admin-btn admin-btn-secondary" onclick="resetFilters()">
@@ -116,18 +118,11 @@
                     <button class="admin-btn admin-btn-sm admin-btn-reject" onclick="openRejectModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
                         <i class="fas fa-times"></i> Reject
                     </button>
-                {% elif booking.status == 'confirmed' %}
-                    <form method="POST" action="{{ url_for('admin_request_status', booking_id=booking.id) }}" style="display:inline;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="status" value="in_progress">
-                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Start</button>
-                    </form>
-                {% elif booking.status == 'in_progress' %}
-                    <form method="POST" action="{{ url_for('admin_request_status', booking_id=booking.id) }}" style="display:inline;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="status" value="completed">
-                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-success">Complete</button>
-                    </form>
+                  {% elif booking.technician %}
+                  <span class="admin-request-card-status {{ booking.status }}">
+                    {{ status_labels.get(booking.status, booking.status) }} · {{ booking.technician.full_name }}
+                  </span>
+                
                 {% endif %}
             </div>
         </div>
@@ -479,21 +474,7 @@
                         <button class="admin-btn admin-btn-approve" onclick="closeAdminModal('requestDetailsModal'); openAssignTechnicianModal('${b.id}', '${b.customer.full_name}');">
                             <i class="fas fa-user-check"></i> Approve &amp; Assign
                         </button>`;
-                } else if (b.status === 'confirmed') {
-                    footerHtml += `
-                        <form method="POST" action="${statusUrl}" style="display:inline;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="status" value="in_progress">
-                            <button type="submit" class="admin-btn admin-btn-primary">Start</button>
-                        </form>`;
-                } else if (b.status === 'in_progress') {
-                    footerHtml += `
-                        <form method="POST" action="${statusUrl}" style="display:inline;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="status" value="completed">
-                            <button type="submit" class="admin-btn admin-btn-success">Complete</button>
-                        </form>`;
-                }
+        
                 footer.innerHTML = footerHtml;
             })
             .catch(() => {

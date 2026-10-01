@@ -219,6 +219,10 @@
                 input.type = 'hidden';
                 input.name = 'reason';
                 input.value = reason.trim();
+                rejectPayment()
+                const tok = document.createElement('input');
+                tok.type = 'hidden'; tok.name = 'csrf_token'; tok.value = '{{ csrf_token() }}';
+                form.appendChild(tok);
                 form.appendChild(input);
                 document.body.appendChild(form);
                 form.submit();

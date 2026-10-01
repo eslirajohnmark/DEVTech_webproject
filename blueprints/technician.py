@@ -116,7 +116,7 @@ def dashboard():
     all_jobs = Booking.query.filter_by(technician_id=tid)\
         .order_by(Booking.created_at.desc()).all()
     
-    total = sum(1 for j in all_jobs if j.status in ())
+    total = len([j for j in all_jobs if j.status == 'released'])
     on_repair = sum(1 for j in all_jobs if j.status in ('diagnosis_pending', 'in_progress'))
     ready     = sum(1 for j in all_jobs if j.status == 'completed')
     released  = sum(1 for j in all_jobs if j.status == 'released')
@@ -246,10 +246,6 @@ def incidents():
 @technician_required
 def messages():
     from app import Message, or_, and_
-    from app import create_notification 
-    create_notification(other_user_id, 'New Message',
-    f'You have a new message from {User.query.get(tid).full_name}', 'info')
-    
     tid = session['user_id']
 
     sent_to = db.session.query(Message.recipient_id)\
@@ -382,25 +378,16 @@ def message_send(other_user_id):
 def profile():
     tid = session['user_id']
     tech = User.query.get(tid)
-    
-    stats['active']   = Booking.query.filter_by(technician_id=tid)\
-        .filter(Booking.status.notin_(FINISHED_STATUSES + ['cancelled'])).count()
-    stats['released'] = Booking.query.filter(Booking.technician_id == tid, 
-                                             Booking.status.in_(FINISHED_STATUSES)).count() 
-    rating, rating_count = technician_rating(tid)   # pass to template, show as a chip
-
+    base = Booking.query.filter_by(technician_id=tid)
     stats = {
-        'total':        Booking.query.filter_by(technician_id=tid).count(),
-        'active':       Booking.query.filter_by(technician_id=tid)
-                        .filter(Booking.status.notin_(['completed', 'cancelled']))
-                        .count(),
-        'released':     Booking.query.filter_by(technician_id=tid,
-                                                status='completed').count(),
-        'home_service': Booking.query.filter_by(technician_id=tid,
-                                                is_in_shop=False).count(),
+        'total': base.count(),
+        'active': base.filter(Booking.status.in_(ACTIVE_STATUSES)).count(),
+        'released': base.filter(Booking.status.in_(FINISHED_STATUSES)).count(),
+        'home_service': base.filter_by(is_in_shop=False).count(),
     }
-
-    return render_template('technician/profile.html', tech=tech, stats=stats)
+    rating, rating_count = technician_rating(tid)
+    return render_template('technician/profile.html', tech=tech, stats=stats,
+                           rating=rating, rating_count=rating_count)
 
 
 @technician_bp.route('/profile/password', methods=['POST'])

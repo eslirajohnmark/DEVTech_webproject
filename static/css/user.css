@@ -12088,3 +12088,7 @@ html, body {
         display: flex;
     }
 }
+
+.user-status-badge.diagnosis_pending { background: rgba(139,92,246,.15); color:#7c3aed; }
+.user-status-badge.released          { background: rgba(34,197,94,.15);  color:#22c55e; }
+.user-status-badge.on_hold           { background: rgba(239,68,68,.15);  color:#ef4444; }

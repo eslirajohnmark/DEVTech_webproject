@@ -136,14 +136,9 @@
                         <i class="fas fa-eye"></i> View Details
                     </button>
                     {% if booking.status == 'pending' %}
-                    <form method="POST" action="{{ url_for('admin_request_status', booking_id=booking.id) }}" style="display:inline;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="status" value="confirmed">
-                        <button type="submit" class="admin-btn admin-btn-approve">
-                            <i class="fas fa-check"></i> Approve
-                        </button>
-                    </form>
-                    <button class="admin-btn admin-btn-reject" onclick="openRejectModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
+                    <a href="{{ url_for('admin_requests') }}" class="admin-btn admin-btn-approve">
+                        <i class="fas fa-user-check"></i> Assign &amp; Approve</a>
+                    <button class="admin-btn admin-btn-reject" onclick="openRejectModal('{{ booking.id }}','{{ booking.user.full_name }}')">
                         <i class="fas fa-times"></i> Reject
                     </button>
                     {% else %}

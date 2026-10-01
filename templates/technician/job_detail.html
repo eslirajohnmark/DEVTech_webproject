@@ -4,11 +4,11 @@
 {% block meta_title %}{{ job.booking_number }}{% endblock %}
 {% block meta_subtitle %}{{ job.service.name }}{% endblock %}
 
-{% block body %}
 {% set stages = job_stages %}
-{% set meta = {'pending':'info','confirmed':'info','diagnosis_pending':'warn','in_progress':'warn',
+{% set tone = {'pending':'info','confirmed':'info','diagnosis_pending':'warn','in_progress':'warn',
                'completed':'ok','released':'ok','on_hold':'danger','cancelled':'danger'}.get(job.status,'neutral') %}
-... <span class="tech-pill tech-pill--{{ meta }}">{{ status_labels.get(job.status, job.status|title) }}</span>
+{% set status_text = status_labels.get(job.status, job.status|title) %}
+<span class="tech-pill tech-pill--{{ tone }}"><i class="fas fa-circle"></i> {{ status_text }}</span>
 
 {% set stage_keys = stages|map(attribute=0)|list %}
 {% set current_index = stage_keys.index(job.status) if job.status in stage_keys else 0 %}
