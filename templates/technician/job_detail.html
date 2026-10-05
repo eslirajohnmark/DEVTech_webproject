@@ -23,7 +23,7 @@
 {% set stage_keys = stages|map(attribute=0)|list %}
 {% set current_index = stage_keys.index(job.status) if job.status in stage_keys else 0 %}
 
-{% block content %}
+{% block body %}
 
 <section class="tech-job-detail">
 

@@ -118,11 +118,10 @@
                     <button class="admin-btn admin-btn-sm admin-btn-reject" onclick="openRejectModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
                         <i class="fas fa-times"></i> Reject
                     </button>
-                  {% elif booking.technician %}
-                  <span class="admin-request-card-status {{ booking.status }}">
-                    {{ status_labels.get(booking.status, booking.status) }} · {{ booking.technician.full_name }}
-                  </span>
-                
+                {% elif booking.technician %}
+                    <span class="admin-request-card-status {{ booking.status }}">
+                        {{ status_labels.get(booking.status, booking.status) }} · {{ booking.technician.full_name }}
+                    </span>
                 {% endif %}
             </div>
         </div>
@@ -143,7 +142,7 @@
     <button class="admin-page-btn" onclick="changePage('next')"><i class="fas fa-chevron-right"></i></button>
 </div>
 
-<!-- Reject Modal - Updated with reason field -->
+<!-- Reject Modal -->
 <div class="admin-modal" id="rejectModal">
     <div class="admin-modal-content">
         <div class="admin-modal-header">
@@ -158,14 +157,14 @@
                 Are you sure you want to reject request from <strong id="rejectUserName">User</strong>?
             </p>
             <form id="rejectForm" method="POST" action="">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="status" value="cancelled">
                 <div class="admin-form-group" style="margin-top:1rem; text-align:left;">
                     <label for="rejectReason" style="color:var(--text-secondary); display:block; margin-bottom:0.3rem; font-weight:600;">
                         Reason for rejection: <span style="color:var(--danger);">*</span>
                     </label>
-                    <textarea id="rejectReason" name="reason" rows="3" 
-                              placeholder="Provide a reason for rejecting this request..." 
+                    <textarea id="rejectReason" name="reason" rows="3"
+                              placeholder="Provide a reason for rejecting this request..."
                               required style="width:100%; padding:0.6rem 1rem; border:1.5px solid var(--dark-border); border-radius:var(--radius-sm); background:var(--dark-input); color:var(--text-primary); font-family:inherit; resize:vertical; font-size:0.9rem; transition:var(--transition);"></textarea>
                     <small style="color:var(--text-muted); font-size:0.75rem;">
                         <i class="fas fa-info-circle"></i> This reason will be sent to the user.
@@ -182,7 +181,7 @@
     </div>
 </div>
 
-<!-- Assign Technician Modal - shown when approving a pending request -->
+<!-- Assign Technician Modal -->
 <div class="admin-modal" id="assignTechnicianModal">
     <div class="admin-modal-content">
         <div class="admin-modal-header">
@@ -463,7 +462,6 @@
                     ${paymentHtml}
                 `;
 
-                const statusUrl = "{{ url_for('admin_request_status', booking_id=0) }}".replace('0', b.id);
                 let footerHtml = `<button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('requestDetailsModal')">Close</button>`;
 
                 if (b.status === 'pending') {
@@ -474,7 +472,8 @@
                         <button class="admin-btn admin-btn-approve" onclick="closeAdminModal('requestDetailsModal'); openAssignTechnicianModal('${b.id}', '${b.customer.full_name}');">
                             <i class="fas fa-user-check"></i> Approve &amp; Assign
                         </button>`;
-        
+                }
+
                 footer.innerHTML = footerHtml;
             })
             .catch(() => {

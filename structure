@@ -83,13 +83,13 @@ DEVTech_Webproject/
 │   │   ├──admin_base.html                       EXISTING
 │   │   └── technician_base.html                  ← NEW
 │   ├── auth/                                     (3 files, existing)
-│   ├── admin/                                    (6 files, existing)
+│   ├── admin/                                    (8 files, existing)
 │   ├── user/
 │   │   ├── service_catalog.html                  ← NEW
 │   │   ├── book_appointment.html                 ← NEW
 │   │   ├── monitor_device.html                   ← NEW
 │   │   ├── _booking_form_script.html             ← NEW
-│   │   └── (14 existing unchanged)
+│   │   └── (15 existing unchanged)
 │   ├── technician/                               ← NEW (11 files)
 │   └── errors/                                   (2 files, existing)
 │

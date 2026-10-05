@@ -1,8 +1,4 @@
-"""Technician portal — JSON API.
 
-Each endpoint re-checks ownership on the row before touching it, so a
-technician can never see or mutate another technician's work.
-"""
 from flask import (
     Blueprint, jsonify, request, session, abort, send_file,
     redirect, url_for, flash,
@@ -19,8 +15,8 @@ from services.job_status import NEXT_STATUS, STATUS_LABELS, FINISHED_STATUSES
 from models.technician_models import technician_rating
 
 
-
 technician_api_bp = Blueprint('technician_api', __name__)
+
 
 def technician_required(fn):
     @wraps(fn)
@@ -36,6 +32,70 @@ def technician_required(fn):
 
 def _now():
     return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+
+# ---------------------------------------------------------------------------
+# AUTO-ADVANCE CORE
+# ---------------------------------------------------------------------------
+# Guard map: for each status, what must exist before we're allowed to leave it.
+# These MUST match the guards in advance_job() exactly, or the auto and manual
+# paths will disagree about what counts as "ready to advance".
+
+def _intake_exists(b):
+    return IntakeRecord.query.filter_by(booking_id=b.id).first() is not None
+
+def _diagnosis_saved(b):
+    r = ServiceReport.query.filter_by(booking_id=b.id)\
+        .order_by(ServiceReport.id.desc()).first()
+    return bool(r and (r.diagnosis or '').strip())
+
+def _report_submitted(b):
+    r = ServiceReport.query.filter_by(booking_id=b.id)\
+        .order_by(ServiceReport.id.desc()).first()
+    return bool(r and r.status == 'submitted')
+
+
+# status -> (requirement_check, log_text_for_next_stage)
+_AUTO_GUARDS = {
+    'confirmed':         (_intake_exists,   'Intake recorded. Diagnosis started automatically.'),
+    'diagnosis_pending': (_diagnosis_saved, 'Diagnosis complete. Repair started automatically.'),
+    'in_progress':       (_report_submitted,'Service report submitted. Device ready for collection.'),
+    # 'completed' has no auto-advance — releasing is a deliberate action.
+}
+
+
+def _maybe_advance(b, actor_name, reason_override=None):
+    """If the booking's current status has a guard and that guard is
+    satisfied, advance to the next status and log it. Returns the new
+    status string, or None if nothing changed.
+
+    Called after every save action so the workflow is self-driving.
+    """
+    entry = _AUTO_GUARDS.get(b.status)
+    if not entry:
+        return None
+
+    check, default_text = entry
+    if not check(b):
+        return None
+
+    nxt = NEXT_STATUS.get(b.status)
+    if not nxt:
+        return None
+
+    b.status = nxt
+    b.updated_at = datetime.utcnow()
+    db.session.add(JobLog(
+        booking_id=b.id, at=_now(),
+        by_name=actor_name, action='status',
+        text=reason_override or default_text,
+    ))
+    create_notification(
+        b.user_id, 'Repair Status Updated',
+        f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.',
+        'info'
+    )
+    return nxt
 
 
 def _job_to_dict(b):
@@ -252,6 +312,8 @@ def get_job(job_id):
 @technician_api_bp.route('/jobs/<int:job_id>/advance', methods=['POST'])
 @technician_required
 def advance_job(job_id):
+    """Manual fallback. With auto-advance in place, this is only needed for
+    the final completed -> released step, which is deliberately kept manual."""
     b = Booking.query.get_or_404(job_id)
     if b.technician_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
@@ -265,12 +327,14 @@ def advance_job(job_id):
     nxt = NEXT_STATUS.get(b.status)
     if not nxt:
         return fail('This job cannot be advanced from its current status.')
-    if b.status == 'confirmed' and not IntakeRecord.query.filter_by(booking_id=b.id).first():
+
+    # Guards (identical to _AUTO_GUARDS)
+    if b.status == 'confirmed' and not _intake_exists(b):
         return fail('Record the device intake first.')
-    report = ServiceReport.query.filter_by(booking_id=b.id)\
-        .order_by(ServiceReport.id.desc()).first()
-    if b.status == 'diagnosis_pending' and not (report and (report.diagnosis or '').strip()):
+    if b.status == 'diagnosis_pending' and not _diagnosis_saved(b):
         return fail('Write a diagnosis before starting the repair.')
+    if b.status == 'in_progress' and not _report_submitted(b):
+        return fail('Submit your service report before marking the device ready.')
 
     texts = {'diagnosis_pending': 'Device received and recorded. Diagnosis in progress.',
              'in_progress': 'Diagnosis complete. Repair started.',
@@ -278,8 +342,6 @@ def advance_job(job_id):
              'released': 'Device released to customer.'}
     actions = {'diagnosis_pending': 'intake', 'in_progress': 'status',
                'completed': 'status', 'released': 'release'}
-    if b.status == 'in_progress' and not (report and report.status == 'submitted'):
-        return fail('Submit your service report before marking the device ready.')
 
     b.status = nxt
     b.updated_at = datetime.utcnow()
@@ -288,12 +350,12 @@ def advance_job(job_id):
                           action=actions[nxt], text=texts[nxt]))
     db.session.commit()
 
-    from app import create_notification
     create_notification(b.user_id, 'Repair Status Updated',
                         f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.', 'info')
     if not request.is_json:
         return redirect(url_for('technician.job_detail', job_id=b.id))
     return jsonify({'ok': True, 'job': _job_to_dict(b)})
+
 
 @technician_api_bp.route('/jobs/<int:job_id>/notes', methods=['POST'])
 @technician_required
@@ -312,6 +374,7 @@ def save_notes(job_id):
     ))
     db.session.commit()
     return jsonify({'ok': True})
+
 
 @technician_api_bp.route('/jobs/<int:job_id>/diagnosis', methods=['POST'])
 @technician_required
@@ -345,12 +408,24 @@ def save_diagnosis(job_id):
     db.session.add(JobLog(booking_id=b.id, at=_now(),
                           by_name=session.get('username', 'Technician'),
                           action='diagnosis', text='Diagnosis recorded.'))
+
+    # Auto-advance diagnosis_pending -> in_progress if intake is already on file.
+    # (If the booking is still 'confirmed', the guard doesn't fire — the tech
+    # must save the intake first, which then auto-advances separately.)
+    new_status = _maybe_advance(b, session.get('username', 'Technician'))
     db.session.commit()
+
+    if new_status:
+        if is_form:
+            flash('Diagnosis saved. Job moved to On Repair.', 'success')
+            return redirect(url_for('technician.job_detail', job_id=b.id))
+        return jsonify({'ok': True, 'diagnosis': diagnosis,
+                        'auto_advanced': True, 'new_status': new_status})
 
     if is_form:
         flash('Diagnosis saved.', 'success')
         return redirect(url_for('technician.job_detail', job_id=b.id))
-    return jsonify({'ok': True, 'diagnosis': diagnosis})
+    return jsonify({'ok': True, 'diagnosis': diagnosis, 'auto_advanced': False})
 
 
 @technician_api_bp.route('/jobs/<int:job_id>/logs')
@@ -362,6 +437,8 @@ def job_logs(job_id):
     logs = JobLog.query.filter_by(booking_id=b.id).order_by(JobLog.id.desc()).all()
     return jsonify({'ok': True, 'logs': [
         {'action': l.action, 'text': l.text, 'by': l.by_name, 'at': l.at} for l in logs]})
+
+
 # ---------------------------------------------------------------------------
 # INTAKE
 # ---------------------------------------------------------------------------
@@ -403,15 +480,23 @@ def job_intake(job_id):
             by_name=session.get('username', 'Technician'),
             action='intake', text='Intake recorded.',
         ))
+
+        # Auto-advance confirmed -> diagnosis_pending (guard inside helper)
+        new_status = _maybe_advance(b, session.get('username', 'Technician'))
         db.session.commit()
 
         if is_form:
-            flash('Intake record saved.', 'success')
+            if new_status:
+                flash('Intake record saved. Job moved to Diagnosis.', 'success')
+            else:
+                flash('Intake record saved.', 'success')
             return redirect(url_for('technician.job_detail', job_id=job_id))
-        return jsonify({'ok': True, 'record': _intake_dict(r)})
+        return jsonify({'ok': True, 'record': _intake_dict(r),
+                        'auto_advanced': bool(new_status), 'new_status': b.status})
 
     r = IntakeRecord.query.filter_by(booking_id=job_id).first()
     return jsonify({'ok': True, 'record': _intake_dict(r)})
+
 
 # ---------------------------------------------------------------------------
 # SERVICE REPORT
@@ -463,6 +548,14 @@ def job_report(job_id):
             by_name=session.get('username', 'Technician'),
             action='report', text=f'Service report {r.status}.',
         ))
+
+        # Auto-advance in_progress -> completed on SUBMIT only.
+        # (Draft saves do not fire the guard, because _report_submitted
+        # requires r.status == 'submitted'.)
+        new_status = None
+        if r.status == 'submitted':
+            new_status = _maybe_advance(b, session.get('username', 'Technician'))
+
         db.session.commit()
 
         if r.status == 'submitted':
@@ -475,9 +568,13 @@ def job_report(job_id):
                 )
 
         if is_form:
-            flash(f'Report {r.status}.', 'success')
+            if new_status:
+                flash('Report submitted. Job moved to Ready for Collection.', 'success')
+            else:
+                flash(f'Report {r.status}.', 'success')
             return redirect(url_for('technician.job_detail', job_id=job_id))
-        return jsonify({'ok': True, 'report': {'id': r.id, 'status': r.status}})
+        return jsonify({'ok': True, 'report': {'id': r.id, 'status': r.status},
+                        'auto_advanced': bool(new_status), 'new_status': new_status})
 
     r = ServiceReport.query.filter_by(booking_id=job_id).first()
     if not r:
@@ -561,6 +658,7 @@ def incidents():
         'authoritiesNotified': r.authorities_notified,
         'reviewedBy': r.reviewed_by, 'reviewedAt': r.reviewed_at,
     } for r in rows]})
+
 
 # ---------------------------------------------------------------------------
 # UPLOADS
