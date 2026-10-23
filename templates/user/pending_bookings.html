@@ -15,7 +15,7 @@
         </a>
         <button class="user-icon-btn" onclick="showUserToast('Notifications')">
             <i class="fas fa-bell"></i>
-            <span class="user-badge">{{ notifications|length }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length }}</span>
         </button>
     </div>
 </div>
@@ -153,19 +153,19 @@
         {% for booking in bookings %}
         "{{ booking.id }}": {
             id: {{ booking.id }},
-            booking_number: "{{ booking.booking_number }}",
-            service_name: "{{ booking.service.name }}",
-            service_price: "{{ "%.2f"|format(booking.service.price) }}",
-            device_type: "{{ booking.device_type }}",
-            description: "{{ booking.description|escape }}",
-            address: "{{ booking.address or 'In-shop repair' }}",
-            booking_date: "{{ booking.booking_date.strftime('%B %d, %Y') }}",
-            booking_time: "{{ booking.booking_time.strftime('%I:%M %p') }}",
-            status: "{{ booking.status }}",
+            booking_number: {{ (booking.booking_number)|js_html }},
+            service_name: {{ (booking.service.name)|js_html }},
+            service_price: {{ ("%.2f"|format(booking.service.price))|js_html }},
+            device_type: {{ (booking.device_type)|js_html }},
+            description: {{ (booking.description)|js_html }},
+            address: {{ (booking.address or 'In-shop repair')|js_html }},
+            booking_date: {{ (booking.booking_date.strftime('%B %d, %Y'))|js_html }},
+            booking_time: {{ (booking.booking_time.strftime('%I:%M %p'))|js_html }},
+            status: {{ (booking.status)|js_html }},
             is_in_shop: {{ 'true' if booking.is_in_shop else 'false' }},
-            created_at: "{{ booking.created_at.strftime('%B %d, %Y at %I:%M %p') }}",
-            technician_name: {{ ('"' + booking.technician.full_name + '"') if booking.technician else 'null' }},
-            technician_phone: {{ ('"' + (booking.technician.phone or 'N/A') + '"') if booking.technician else 'null' }},
+            created_at: {{ (booking.created_at.strftime('%B %d, %Y at %I:%M %p'))|js_html }},
+            technician_name: {{ (booking.technician.full_name if booking.technician else none)|js_html }},
+            technician_phone: {{ ((booking.technician.phone or 'N/A') if booking.technician else none)|js_html }},
             technician_verified: {{ 'true' if (booking.technician and booking.technician.id_verified) else 'false' }}
         }{% if not loop.last %},{% endif %}
         {% endfor %}

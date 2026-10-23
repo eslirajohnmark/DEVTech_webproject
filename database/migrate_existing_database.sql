@@ -1,3 +1,7 @@
+-- LEGACY: only for old databases that still have a single `users` table.
+-- New installs: database/schema.sql already includes everything below.
+-- Old databases: python -m scripts.migrate_split_accounts --source ... --target ...
+
 -- ============================================================
 -- Upgrade an EXISTING devtech_db to the current schema.sql.
 -- 

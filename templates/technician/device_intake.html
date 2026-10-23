@@ -84,7 +84,7 @@
    ============================================================ #}
 {% else %}
 
-{% set job = jobs | selectattr('id', 'equalto', current) | first %}
+{# The route passes `job` directly; it may be a job not in the list (e.g. cancelled). #}
 
 <section class="tech-intake-page">
 

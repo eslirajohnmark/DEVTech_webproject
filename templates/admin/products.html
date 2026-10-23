@@ -1,0 +1,93 @@
+{% extends "base/admin_base.html" %}
+{% block title %}Products{% endblock %}
+
+{% macro product_fields(p=None) %}
+<div class="admin-form-grid">
+    <div class="admin-form-group">
+        <label>Name</label>
+        <input type="text" name="name" maxlength="100" required value="{{ p.name if p else '' }}">
+    </div>
+    <div class="admin-form-group">
+        <label>Category</label>
+        <input type="text" name="category" maxlength="50" list="productCategories" value="{{ p.category if p and p.category else '' }}" placeholder="e.g. storage">
+    </div>
+    <div class="admin-form-group">
+        <label>Price (₱)</label>
+        <input type="number" name="price" min="0" step="0.01" required value="{{ '%.2f'|format(p.price) if p else '' }}">
+    </div>
+    <div class="admin-form-group">
+        <label>Stock</label>
+        <input type="number" name="stock_quantity" min="0" step="1" required value="{{ p.stock_quantity if p else 0 }}">
+    </div>
+    <div class="admin-form-group">
+        <label>Compatibility</label>
+        <input type="text" name="compatibility" maxlength="100" value="{{ p.compatibility if p and p.compatibility else '' }}" placeholder="e.g. DDR4">
+    </div>
+    <div class="admin-form-group">
+        <label>Image URL (optional)</label>
+        <input type="text" name="image_url" maxlength="255" value="{{ p.image_url if p and p.image_url else '' }}" placeholder="https://…">
+    </div>
+    <div class="admin-form-group admin-form-wide">
+        <label>Description</label>
+        <textarea name="description" rows="2" maxlength="2000">{{ p.description if p and p.description else '' }}</textarea>
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="admin-top-bar"><div class="admin-page-title">
+    <h1>Products</h1><p>Items sold in the customer shop</p></div></div>
+
+<datalist id="productCategories">
+    {% for c in categories %}<option value="{{ c }}">{% endfor %}
+</datalist>
+
+<details class="admin-card" {% if not products %}open{% endif %}>
+    <summary>Add a product</summary>
+    <form method="POST" action="{{ url_for('admin_product_create') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {{ product_fields() }}
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-plus"></i> Add product</button>
+    </form>
+</details>
+
+<div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
+<thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th></th></tr></thead>
+<tbody>
+{% for p in products %}
+<tr {% if not p.is_active %}style="opacity:0.6;"{% endif %}>
+    <td>
+        <strong>{{ p.name }}</strong>
+        {% if p.compatibility %}<span class="admin-muted"> · {{ p.compatibility }}</span>{% endif %}
+        <details class="admin-row-edit">
+            <summary><i class="fas fa-pen"></i> Edit</summary>
+            <form method="POST" action="{{ url_for('admin_product_update', product_id=p.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {{ product_fields(p) }}
+                <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Save changes</button>
+            </form>
+        </details>
+    </td>
+    <td>{{ p.category or '—' }}</td>
+    <td>₱{{ '%.2f'|format(p.price) }}</td>
+    <td>
+        {% if p.stock_quantity <= 0 %}<span class="admin-text-danger">Out of stock</span>
+        {% elif p.stock_quantity <= low_stock %}<span class="admin-text-danger">{{ p.stock_quantity }} (low)</span>
+        {% else %}{{ p.stock_quantity }}{% endif %}
+    </td>
+    <td><span class="admin-status-badge {{ 'active' if p.is_active else 'inactive' }}">{{ 'Listed' if p.is_active else 'Hidden' }}</span></td>
+    <td>
+        <form method="POST" action="{{ url_for('admin_product_toggle', product_id=p.id) }}" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="admin-btn admin-btn-sm {{ 'admin-btn-danger' if p.is_active else 'admin-btn-primary' }}">
+                {{ 'Hide' if p.is_active else 'List again' }}
+            </button>
+        </form>
+    </td>
+</tr>
+{% else %}
+<tr><td colspan="6" style="text-align:center;padding:1.5rem;">No products yet. Add one above.</td></tr>
+{% endfor %}
+</tbody></table></div>
+<p class="admin-muted" style="margin-top:0.8rem;">Hidden products disappear from the shop but stay on past orders. Products are never deleted, so order history stays intact.</p>
+{% endblock %}

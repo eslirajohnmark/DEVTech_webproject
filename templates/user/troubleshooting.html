@@ -12,7 +12,7 @@
     <div class="user-top-actions">
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
             <i class="fas fa-bell"></i>
-            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length if notifications else 0 }}</span>
         </a>
         <a href="{{ url_for('support') }}" class="user-icon-btn" title="Get support">
             <i class="fas fa-headset"></i>

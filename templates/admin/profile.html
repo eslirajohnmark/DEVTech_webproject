@@ -1,0 +1,114 @@
+{% extends "base/admin_base.html" %}
+{% from 'partials/avatar.html' import avatar %}
+{% from 'partials/profile_studio.html' import profile_studio %}
+
+{% block title %}My Profile{% endblock %}
+
+{% block content %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>My Profile</h1>
+        <p>Your admin account and how you appear in messages</p>
+    </div>
+    <div class="admin-top-actions">
+        {% include 'admin/_notification_bell.html' %}
+    </div>
+</div>
+
+<section class="pf-hero">
+    <div class="pf-hero-banner pf-banner pf-banner--{{ admin.banner_key }}"></div>
+    <div class="pf-hero-body">
+        {{ avatar(admin, 'lg') }}
+        <div class="pf-hero-text">
+            <h2>{{ admin.shown_name }}</h2>
+            <p class="pf-hero-sub">{% if admin.display_name %}{{ admin.full_name }} · {% endif %}Administrator</p>
+            {% if admin.headline %}<p class="pf-hero-headline">“{{ admin.headline }}”</p>{% endif %}
+            <div class="pf-chips">
+                <span class="pf-chip"><i class="fas fa-user-shield"></i> Admin</span>
+                <span class="pf-chip"><i class="fas fa-envelope"></i> {{ admin.email }}</span>
+                <span class="pf-chip"><i class="fas fa-calendar-check"></i>
+                    Since {{ admin.created_at.strftime('%b %d, %Y') if admin.created_at else '—' }}</span>
+            </div>
+        </div>
+        <div class="pf-hero-actions">
+            <a class="pf-btn" href="#look"><i class="fas fa-wand-magic-sparkles"></i> Customize look</a>
+            <a class="pf-btn pf-btn--primary" href="#details"><i class="fas fa-pen"></i> Edit details</a>
+        </div>
+    </div>
+</section>
+
+<div class="pf-stats">
+    <div class="pf-stat"><strong>{{ stats.messages }}</strong><span>Messages sent</span></div>
+    <div class="pf-stat"><strong>{{ stats.notifications }}</strong><span>Notifications received</span></div>
+    <div class="pf-stat"><strong>{{ stats.actions }}</strong><span>Logged actions</span></div>
+</div>
+
+{{ profile_studio(admin, 'Administrator') }}
+
+<div class="pf-grid-2">
+    <section class="pf-card" id="details">
+        <h3><i class="fas fa-address-card"></i> Account details</h3>
+        <form method="POST" action="{{ url_for('admin_profile') }}" class="pf-fields">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="details">
+            <label class="pf-field">
+                <span class="pf-label">Full name</span>
+                <input class="pf-input" name="full_name" maxlength="100" required value="{{ admin.full_name }}" autocomplete="name">
+            </label>
+            <label class="pf-field">
+                <span class="pf-label">Email</span>
+                <input class="pf-input" value="{{ admin.email }}" disabled>
+                <span class="pf-hint"><i class="fas fa-lock"></i> Your sign-in email can't be changed here.</span>
+            </label>
+            <label class="pf-field">
+                <span class="pf-label">Phone</span>
+                <input class="pf-input" name="phone" maxlength="20" type="tel" value="{{ admin.phone or '' }}" autocomplete="tel">
+            </label>
+            <div><button type="submit" class="pf-btn pf-btn--primary"><i class="fas fa-floppy-disk"></i> Save details</button></div>
+        </form>
+    </section>
+
+    <div class="pf-fields">
+        <section class="pf-card">
+            <h3><i class="fas fa-key"></i> Change password</h3>
+            <form method="POST" action="{{ url_for('admin_profile') }}" class="pf-fields">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="password">
+                <label class="pf-field">
+                    <span class="pf-label">Current password</span>
+                    <input class="pf-input" type="password" name="current_password" required autocomplete="current-password">
+                </label>
+                <label class="pf-field">
+                    <span class="pf-label">New password</span>
+                    <input class="pf-input" type="password" name="new_password" minlength="8" required autocomplete="new-password">
+                    <span class="pf-hint">At least 8 characters, including a letter and a number.</span>
+                </label>
+                <label class="pf-field">
+                    <span class="pf-label">Confirm new password</span>
+                    <input class="pf-input" type="password" name="confirm_password" minlength="8" required autocomplete="new-password">
+                </label>
+                <div><button type="submit" class="pf-btn pf-btn--primary"><i class="fas fa-key"></i> Update password</button></div>
+            </form>
+        </section>
+
+        <section class="pf-card">
+            <h3><i class="fas fa-clock-rotate-left"></i> Recent activity</h3>
+            {% if recent %}
+            <ul class="pf-activity">
+                {% for a in recent %}
+                <li><i class="fas fa-circle-dot"></i>
+                    <span>{{ a.details or a.action|replace('_', ' ')|capitalize }}
+                        <time>{{ a.created_at.strftime('%b %d, %Y · %I:%M %p') if a.created_at else '' }}</time></span></li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="pf-hint">Nothing logged yet.</p>
+            {% endif %}
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/profile-studio.js') }}" defer></script>
+{% endblock %}

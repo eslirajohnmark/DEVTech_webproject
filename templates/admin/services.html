@@ -1,0 +1,105 @@
+{% extends "base/admin_base.html" %}
+{% block title %}Services{% endblock %}
+
+{% macro service_fields(s=None, default_category=None) %}
+<div class="admin-form-grid">
+    <div class="admin-form-group">
+        <label>Service name</label>
+        <input type="text" name="name" maxlength="100" required value="{{ s.name if s else '' }}">
+    </div>
+    <div class="admin-form-group">
+        <label>Category</label>
+        <select name="category_id" required>
+            {% for c in categories %}
+            <option value="{{ c.id }}" {% if (s and s.category_id == c.id) or (not s and default_category == c.id) %}selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="admin-form-group">
+        <label>Price (₱)</label>
+        <input type="number" name="price" min="0" step="0.01" required value="{{ '%.2f'|format(s.price) if s else '' }}">
+    </div>
+    <div class="admin-form-group">
+        <label>Estimated hours</label>
+        <input type="number" name="estimated_hours" min="1" max="200" step="1" value="{{ s.estimated_hours if s and s.estimated_hours else 1 }}">
+    </div>
+    <div class="admin-form-group admin-form-wide">
+        <label>Description</label>
+        <textarea name="description" rows="2" maxlength="2000">{{ s.description if s and s.description else '' }}</textarea>
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="admin-top-bar"><div class="admin-page-title">
+    <h1>Services</h1><p>Repair services and prices customers can book</p></div></div>
+
+{% if categories %}
+<details class="admin-card">
+    <summary>Add a service</summary>
+    <form method="POST" action="{{ url_for('admin_service_create') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {{ service_fields() }}
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-plus"></i> Add service</button>
+    </form>
+</details>
+{% endif %}
+
+<details class="admin-card" {% if not categories %}open{% endif %}>
+    <summary>Add a category</summary>
+    <form method="POST" action="{{ url_for('admin_category_create') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="admin-form-grid">
+            <div class="admin-form-group"><label>Name</label><input type="text" name="name" maxlength="50" required></div>
+            <div class="admin-form-group"><label>Icon (Font Awesome)</label><input type="text" name="icon" value="fa-tools" pattern="fa-[a-z0-9-]+" title="e.g. fa-laptop"></div>
+            <div class="admin-form-group admin-form-wide"><label>Description</label><input type="text" name="description" maxlength="500"></div>
+        </div>
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-plus"></i> Add category</button>
+    </form>
+</details>
+
+{% for c in categories %}
+<h3 class="admin-panel-title" style="margin:1.5rem 0 0.8rem; display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+    <i class="fas {{ c.icon or 'fa-tools' }}"></i> {{ c.name }}
+    {% if not c.is_active %}<span class="admin-status-badge inactive">Hidden</span>{% endif %}
+    <form method="POST" action="{{ url_for('admin_category_toggle', category_id=c.id) }}" style="margin-left:auto;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="admin-btn admin-btn-sm">{{ 'Hide category' if c.is_active else 'Show category' }}</button>
+    </form>
+</h3>
+<div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
+<thead><tr><th>Service</th><th>Price</th><th>Est. hours</th><th>Status</th><th></th></tr></thead>
+<tbody>
+{% for s in c.services|sort(attribute='name') %}
+<tr {% if not s.is_active %}style="opacity:0.6;"{% endif %}>
+    <td>
+        <strong>{{ s.name }}</strong>
+        {% if s.description %}<span class="admin-muted" style="display:block;">{{ s.description }}</span>{% endif %}
+        <details class="admin-row-edit">
+            <summary><i class="fas fa-pen"></i> Edit</summary>
+            <form method="POST" action="{{ url_for('admin_service_update', service_id=s.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {{ service_fields(s) }}
+                <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Save changes</button>
+            </form>
+        </details>
+    </td>
+    <td>₱{{ '%.2f'|format(s.price) }}</td>
+    <td>{{ s.estimated_hours or 1 }}</td>
+    <td><span class="admin-status-badge {{ 'active' if s.is_active else 'inactive' }}">{{ 'Bookable' if s.is_active else 'Hidden' }}</span></td>
+    <td>
+        <form method="POST" action="{{ url_for('admin_service_toggle', service_id=s.id) }}" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="admin-btn admin-btn-sm {{ 'admin-btn-danger' if s.is_active else 'admin-btn-primary' }}">{{ 'Hide' if s.is_active else 'Make bookable' }}</button>
+        </form>
+    </td>
+</tr>
+{% else %}
+<tr><td colspan="5" style="text-align:center;padding:1rem;">No services in this category yet.</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% else %}
+<p class="admin-muted">No categories yet. Add one above, then add services to it.</p>
+{% endfor %}
+<p class="admin-muted" style="margin-top:0.8rem;">Price changes apply to new bookings. Existing bookings keep the amount already billed on their transaction.</p>
+{% endblock %}

@@ -241,7 +241,8 @@
 
 .user-stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* fits 4 or 5 cards on one row depending on the page */
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 1rem;
     margin-bottom: 2rem;
 }
@@ -1190,7 +1191,8 @@
 
 .user-stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* fits 4 or 5 cards on one row depending on the page */
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 1rem;
     margin-bottom: 2rem;
 }
@@ -6772,7 +6774,8 @@
 /* Stats Grid - 4 columns for total bookings page */
 .user-stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* fits 4 or 5 cards on one row depending on the page */
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 1rem;
     margin-bottom: 2rem;
 }
@@ -12092,3 +12095,25 @@ html, body {
 .user-status-badge.diagnosis_pending { background: rgba(139,92,246,.15); color:#7c3aed; }
 .user-status-badge.released          { background: rgba(34,197,94,.15);  color:#22c55e; }
 .user-status-badge.on_hold           { background: rgba(239,68,68,.15);  color:#ef4444; }
+/* Unread count in the sidebar (Messages / Notifications) */
+.user-nav-badge {
+    margin-left: auto;
+    min-width: 1.4rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: var(--danger, #ef4444);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.3rem;
+}
+
+/* Message attachments (image thumbnail or file link inside a chat bubble) */
+.msg-attachment { display: block; margin-top: 0.4rem; text-decoration: none; }
+.msg-attachment img { display: block; max-width: 220px; max-height: 220px; border-radius: 8px; object-fit: cover; }
+.msg-attachment-file { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border-radius: 6px; background: rgba(127, 127, 127, 0.15); color: inherit; font-size: 0.85rem; word-break: break-all; }
+.msg-attachment-chip { display: flex; align-items: center; gap: 0.5rem; margin: 0 1rem 0.4rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: rgba(127, 127, 127, 0.15); font-size: 0.82rem; width: fit-content; max-width: calc(100% - 2rem); }
+.msg-attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-attachment-chip button { border: 0; background: none; color: inherit; font-size: 1.1rem; cursor: pointer; line-height: 1; }
+.user-chat-attach { cursor: pointer; }

@@ -1,6 +1,6 @@
 """Technician-specific tables.
 
-Everything keys off existing bookings.id and users.id, so the technician
+Everything keys off bookings.id, technicians.id and customers.id, so the technician
 portal and the customer/admin side share one source of truth for jobs
 and identities.
 
@@ -53,7 +53,7 @@ class ServiceReport(db.Model):
                                  db.ForeignKey('bookings.id'),
                                  nullable=False)
     technician_id    = db.Column(db.Integer,
-                                 db.ForeignKey('users.id'),
+                                 db.ForeignKey('technicians.id'),
                                  nullable=False)
     status           = db.Column(db.String(20), default='draft')
     created_at       = db.Column(db.String(20))
@@ -88,7 +88,7 @@ class IncidentReport(db.Model):
                                      db.ForeignKey('bookings.id'),
                                      nullable=True)
     technician_id        = db.Column(db.Integer,
-                                     db.ForeignKey('users.id'),
+                                     db.ForeignKey('technicians.id'),
                                      nullable=False)
     reported_at          = db.Column(db.String(20))
     type                 = db.Column(db.String(32))
@@ -117,7 +117,7 @@ class ApprovalRequest(db.Model):
                                   db.ForeignKey('bookings.id'),
                                   nullable=False)
     technician_id     = db.Column(db.Integer,
-                                  db.ForeignKey('users.id'),
+                                  db.ForeignKey('technicians.id'),
                                   nullable=False)
     requested_at      = db.Column(db.String(20))
     findings          = db.Column(db.Text)
@@ -164,7 +164,7 @@ class UploadedFile(db.Model):
                                db.ForeignKey('bookings.id'),
                                nullable=True)
     technician_id  = db.Column(db.Integer,
-                               db.ForeignKey('users.id'),
+                               db.ForeignKey('technicians.id'),
                                nullable=False)
     filename       = db.Column(db.String(255))
     original_name  = db.Column(db.String(255))
@@ -189,11 +189,11 @@ class ServiceRating(db.Model):
                                db.ForeignKey('bookings.id'),
                                unique=True, nullable=False)
     technician_id  = db.Column(db.Integer,
-                               db.ForeignKey('users.id'),
+                               db.ForeignKey('technicians.id'),
                                nullable=False,
                                index=True)
     customer_id    = db.Column(db.Integer,
-                               db.ForeignKey('users.id'),
+                               db.ForeignKey('customers.id'),
                                nullable=False)
     stars          = db.Column(db.SmallInteger)
     experience     = db.Column(db.Text)

@@ -6,9 +6,10 @@ Computer repair shop management system — customer portal, technician portal, a
 
 ## Overview
 
-- **Customer portal** (`/user/*`) — book repairs, buy parts from the shop, monitor repair progress in real time, chat with support, rate completed jobs
-- **Technician portal** (`/technician/*`) — view assigned jobs, record device intake, write service reports, file safety incidents
-- **Admin panel** (`/admin/*`) — assign jobs, confirm payments, manage users, view analytics, adjust system settings
+- **Customer portal** (`/user/*`) — book repairs, buy parts from the shop, monitor repair progress in real time, approve or decline extra work the technician finds, message support and their technician (with image/PDF attachments), open support tickets, rate completed jobs
+- **Technician portal** (`/technician/*`) — view assigned jobs, record device intake, write diagnoses and service reports, ask the customer to approve extra work or cost (the job waits on hold until they answer), file safety incidents
+- **Admin panel** (`/admin/*`) — assign jobs, confirm payments, manage users, products and stock, services and prices, shop orders, support tickets and website inquiries, a messages inbox, technician activity (incidents, approvals, reports, ratings), analytics and settings
+- **Public home page** — the contact form saves inquiries to the admin Support page
 
 Everything shares one database. A job assigned in the admin panel appears instantly on the technician's dashboard. A technician marking it complete updates the customer's monitor page within 20 seconds.
 
@@ -16,11 +17,11 @@ Everything shares one database. A job assigned in the admin panel appears instan
 
 ## Stack
 
-- **Backend** — Flask 2.3, Flask-SQLAlchemy, Flask-WTF (CSRF), Flask-Limiter (rate limits), Flask-Caching, Flask-Talisman (security headers)
+- **Backend** — Flask 3.1, Flask-SQLAlchemy, Flask-WTF (CSRF), Flask-Limiter (rate limits), Flask-Caching, Flask-Talisman (security headers)
 - **Database** — MySQL (production) or SQLite (development)
 - **Frontend** — server-rendered Jinja templates. Vanilla JavaScript as ES modules. No build step. No npm. No bundler.
-- **Auth** — bcrypt password hashing, server-side sessions, optional Google/Facebook OAuth
-- **Uploads** — MIME-whitelisted, size-capped, served through authenticated routes only
+- **Auth** — bcrypt password hashing, signed-cookie sessions re-checked against the database on every request, optional Google/Facebook OAuth (customers only, verified email required)
+- **Uploads** — type-whitelisted and signature-checked, size-capped, stored under `instance/` and served through authenticated routes only
 
 ---
 
@@ -56,17 +57,15 @@ cp .env.example .env
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 # Paste the output into .env as SECRET_KEY=...
 
-# 5. Database
+# 5. Database (creates the `devtech` database and every table)
 mysql -u root -p < database/schema.sql
-mysql -u root -p devtech_db < database/migrate_service_categories.sql
-mysql -u root -p devtech_db < database/migrate_ratings.sql
+# or, with an empty database already created:  flask --app app upgrade-db
 
 # 6. Create the first admin
 flask --app app create-admin
 # Prompts for email, full name, password. Password is hidden.
 
-# 7. Seed demo data (optional)
-python -m scripts.seed_technician
+# 7. (Optional) default service categories with icons and colours
 python -m scripts.seed_service_categories
 
 # 8. Run
@@ -87,31 +86,42 @@ The first request will show a browser warning about the self-signed certificate.
 
 ## Keyboard shortcuts
 
-Every page in the app supports these. They are no-ops if you're already on the target page, and they do not fire while a text field has focus.
+Every page in the app supports these (including sign-in pages and while typing in a field). Each opens that portal's dashboard if you are already signed in there, or its sign-in page if not. Pressing the key for the portal you are already on does nothing.
 
-| Keys | Destination |
-|---|---|
-| `Ctrl+Shift+L` | Admin login |
-| `Ctrl+Shift+T` | Technician login |
-| `Ctrl+Shift+R` | Technician registration |
+| Keys | Goes to | Works from |
+|---|---|---|
+| `Ctrl+Shift+L` | Admin portal | customer and technician pages |
+| `Ctrl+Shift+Y` | Technician portal | customer and admin pages |
+| `Ctrl+Shift+U` | Customer portal | admin and technician pages |
 
-The landing page footer also has a visible "Technician Sign-In" link, so the shortcut is discoverable but not required.
+All three are handled in one place, `static/js/portal-shortcuts.js`, through the `/go/<side>` route. The landing page footer also has a visible "Technician Sign-In" link, so the shortcuts are discoverable but not required.
+
+## Live updates
+
+Pages update on their own; nobody needs to press refresh. Every open page asks `/api/live` every 4 seconds (every 30 seconds while the tab is in the background) for unread counts and a fingerprint of the data that account can see.
+
+- Unread message and notification badges, the bell and the tab title (`(3) DEVTech · …`) update immediately, and new messages and notifications pop up in the corner.
+- Message inboxes (customer, technician, admin) swap the conversation list and the open chat in place, so a half-written reply is never lost.
+- Other pages refresh themselves when their data changes, keeping the scroll position, but only while you are idle. If you are typing, have a dialog open or have unsaved changes, an "Updates available · Refresh" button appears instead.
+
+The browser side is `static/js/live.js` and `static/css/live.css`; the server side is `live_state()` and `/api/live` in `app.py`.
 
 ---
 
-## Demo accounts
+## Accounts
 
-Seeded by `scripts/seed_technician.py`:
+There are no demo or default accounts. Customers, technicians and admins are
+three separate tables (`customers`, `technicians`, `admins`), each with its own
+email and password, so an account's type can't be changed later; create a new
+account of the other type instead. An email can belong to only one account.
 
-| Role | Username | Password |
-|---|---|---|
-| Technician | `TECH-0001` | `1234` |
-| Technician | `TECH-0002` | `1234` |
-| Customer | `customer1` | `customer1234` |
+- **Admin:** created with `flask --app app create-admin`.
+- **Technicians:** register at `/technician/register`; an admin activates them in User Management (or an admin adds them there directly).
+- **Customers:** sign up at `/register`.
 
-The admin account is whatever you created with `flask create-admin`. There is no default admin.
+## Shop data
 
-**Change every one of these before any deployment that leaves your laptop.**
+The shop starts empty. Add products, prices and stock in **Admin > Products**, services and prices in **Admin > Services & Prices**, and the shop's phone, email, address, hours and GCash details in **Admin > Settings** (anything left blank is hidden from customers).
 
 ---
 
@@ -154,6 +164,22 @@ DEVTech_Webproject/
 
 ---
 
+## Upgrading an existing install
+
+If you ran an older version of this app, do these once:
+
+1. **Default admin.** Older versions created `admin@devtech.com` / `admin123` automatically. If that account exists, change its password now (`flask --app app reset-admin-password admin@devtech.com`) or deactivate it.
+2. **Cart stock.** Stock used to be taken when an item was added to a cart; it is now taken at checkout. Return what open carts were holding with `flask --app app release-cart-stock` (runs once; `python app.py` also does it automatically).
+3. **Receipts.** Payment receipts moved from `static/uploads/receipts/` (publicly reachable) to `instance/uploads/receipts/`. `python app.py` moves existing files automatically; on a server that only runs `wsgi.py`, move the folder by hand.
+4. **Technician sign-up.** Self-registered technicians now start inactive. Admins get a notification and activate them in User Management.
+5. **`.env`.** `DATABASE_URL` is now required (no built-in fallback), and `/setup/first-admin` is disabled unless `SETUP_TOKEN` is set.
+6. **Separate account tables.** Older databases kept everyone in one `users` table. Copy such a database into the new layout with
+   `python -m scripts.migrate_split_accounts --source mysql+pymysql://root@127.0.0.1:3306/devtech_db --target mysql+pymysql://root@127.0.0.1:3306/devtech`
+   (backs up the source first and never changes it), then point `DATABASE_URL` at the new database.
+7. **New tables.** Run `flask --app app upgrade-db` (safe to repeat; run it on every deploy). It creates new tables such as `contact_inquiries`, adds new columns, moves old receipts and does the cart-stock fix above. It never adds demo data.
+
+---
+
 ## Tests
 
 ```bash
@@ -170,7 +196,9 @@ What's covered:
 - Upload MIME whitelist, size cap, and download ownership
 - Login rate limiting (5 attempts per minute)
 - Dynamic config endpoint shape
-- End-to-end workflow: assign → advance → intake → report → incident
+- End-to-end workflow: intake → diagnosis → report → release, with the guards between each step
+- Security regressions: script-safe `tojson`, OAuth linking rules, sign-out of deactivated accounts, receipt access, upload signature checks
+- Shop: cart quantity validation, checkout stock deduction, admin order and payment status sync
 
 ---
 
@@ -179,10 +207,10 @@ What's covered:
 | Layer | What's in place |
 |---|---|
 | Passwords | bcrypt via Flask-Bcrypt |
-| Sessions | Server-side, `HttpOnly`, `SameSite=Lax`, `Secure` in production |
+| Sessions | Signed cookies, `HttpOnly`, `SameSite=Lax`, `Secure` in production; deactivated or deleted accounts are signed out on their next request |
 | CSRF | Flask-WTF on every state-changing route |
-| Rate limits | Login and registration, per-IP |
-| Uploads | MIME whitelist, 8 MB cap, authenticated download |
+| Rate limits | Customer, admin and technician login and registration, per-IP |
+| Uploads | Type whitelist + file-signature check, 5–8 MB caps, kept outside `static/`; receipts are owner/admin-only, message attachments are sender/recipient-only |
 | Headers | HSTS, X-Frame-Options, `Content-Security-Policy` per-route |
 | CSP | Strict nonce policy on `/technician/*`; relaxed on admin/user routes that still use inline handlers |
 | SQL | Parameterised through SQLAlchemy; no string concatenation |

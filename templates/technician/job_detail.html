@@ -420,7 +420,7 @@
                     gap:0.5rem;
                 ">
 
-                    {% if job.status != 'released' and job.status != 'cancelled' %}
+                    {% if job.status not in ('released', 'cancelled', 'on_hold') %}
 
                         <form
                             method="POST"
@@ -476,7 +476,7 @@
                     <a
                         class="tech-btn tech-btn--ghost tech-btn--wide"
                         style="justify-content:flex-start;"
-                        href="{{ url_for('technician.messages', thread=job.user_id) }}"
+                        href="{{ url_for('technician.messages', thread='customer-' ~ job.user_id) }}"
                     >
                         <i class="fas fa-comments"></i>
                         Message customer
@@ -494,6 +494,97 @@
                 </div>
 
             </section>
+
+            {% if pending_approval or approvals or job.status in ('diagnosis_pending', 'in_progress') %}
+
+                <section class="tech-card" style="margin-bottom:1.1rem;">
+
+                    <div class="tech-card-head">
+                        <h3 class="tech-card-title">
+                            <i class="fas fa-handshake"></i>
+                            Customer Approval
+                        </h3>
+                        {% if pending_approval %}
+                            <span class="tech-pill tech-pill--danger">
+                                <i class="fas fa-pause"></i>
+                                Waiting for customer
+                            </span>
+                        {% endif %}
+                    </div>
+
+                    {% if pending_approval %}
+
+                        <div class="tech-kv" style="margin-bottom:0.8rem;">
+                            <div class="tech-kv-item">
+                                <span class="tech-kv-key">Extra cost</span>
+                                <span class="tech-kv-val">₱{{ '%.2f'|format(pending_approval.additional_cost or 0) }}</span>
+                            </div>
+                            <div class="tech-kv-item">
+                                <span class="tech-kv-key">Extra days</span>
+                                <span class="tech-kv-val">{{ pending_approval.extra_days or 0 }}</span>
+                            </div>
+                        </div>
+                        <span class="tech-kv-key">Proposed work</span>
+                        <p style="font-size:0.82rem; line-height:1.55; margin:0.2rem 0 0.8rem;">{{ pending_approval.proposed_work }}</p>
+                        <p style="font-size:0.78rem; color:var(--t-text-muted); margin-bottom:0.6rem;">
+                            The job is on hold until the customer approves or declines from their Monitor Device page.
+                        </p>
+                        <form method="POST" action="{{ url_for('technician_api.withdraw_approval', approval_id=pending_approval.id) }}" style="margin:0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="tech-btn tech-btn--ghost">
+                                <i class="fas fa-rotate-left"></i>
+                                Withdraw request
+                            </button>
+                        </form>
+
+                    {% elif job.status in ('diagnosis_pending', 'in_progress') %}
+
+                        <p style="font-size:0.8rem; color:var(--t-text-muted); margin-bottom:0.7rem;">
+                            Found a different fault, or need extra parts or time? Ask the customer before continuing.
+                            The job goes on hold until they answer.
+                        </p>
+                        <form method="POST" action="{{ url_for('technician_api.job_approval', job_id=job.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <label class="tech-kv-key" for="apFindings">What you found</label>
+                            <textarea class="tech-textarea" id="apFindings" name="findings" rows="3" minlength="10" maxlength="4000" required
+                                      placeholder="e.g. Motherboard charging circuit is shorted, not just the battery."></textarea>
+                            <label class="tech-kv-key" for="apWork" style="margin-top:0.6rem; display:block;">Proposed work</label>
+                            <textarea class="tech-textarea" id="apWork" name="proposedWork" rows="3" minlength="10" maxlength="4000" required
+                                      placeholder="e.g. Replace the charging IC and battery."></textarea>
+                            <div class="tech-grid-2" style="margin-top:0.6rem; gap:0.6rem;">
+                                <div>
+                                    <label class="tech-kv-key" for="apCost">Extra cost (₱)</label>
+                                    <input class="tech-input" id="apCost" name="additionalCost" type="number" min="0" max="1000000" step="0.01" value="0">
+                                </div>
+                                <div>
+                                    <label class="tech-kv-key" for="apDays">Extra days</label>
+                                    <input class="tech-input" id="apDays" name="extraDays" type="number" min="0" max="60" step="1" value="0">
+                                </div>
+                            </div>
+                            <button type="submit" class="tech-btn tech-btn--primary" style="margin-top:0.7rem;">
+                                <i class="fas fa-paper-plane"></i>
+                                Request approval
+                            </button>
+                        </form>
+
+                    {% endif %}
+
+                    {% set past = approvals|rejectattr('status', 'equalto', 'pending')|list %}
+                    {% if past %}
+                        <div style="margin-top:0.9rem; border-top:1px solid var(--t-border, rgba(255,255,255,0.08)); padding-top:0.7rem;">
+                            <span class="tech-kv-key">Previous requests</span>
+                            {% for a in past %}
+                                <p style="font-size:0.8rem; line-height:1.5; margin-top:0.35rem;">
+                                    <strong>{{ a.status|title }}</strong> · ₱{{ '%.2f'|format(a.additional_cost or 0) }} · {{ a.proposed_work }}
+                                    {% if a.customer_response %}<br><em>Customer: {{ a.customer_response }}</em>{% endif %}
+                                </p>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+
+                </section>
+
+            {% endif %}
 
             {% if report %}
 

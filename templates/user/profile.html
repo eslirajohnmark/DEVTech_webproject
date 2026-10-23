@@ -12,7 +12,7 @@
     <div class="user-top-actions">
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
             <i class="fas fa-bell"></i>
-            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length if notifications else 0 }}</span>
         </a>
         <button class="user-icon-btn" onclick="showHelp()" title="Help">
             <i class="fas fa-question-circle"></i>
@@ -35,39 +35,38 @@
     {% endif %}
 {% endwith %}
 
-<!-- Profile Card -->
-<div class="user-profile-card">
-    <!-- Profile Header -->
-    <div class="user-profile-header">
-        <div class="user-avatar-large">
-            <i class="fas fa-user-circle"></i>
-        </div>
-        <div class="user-profile-info">
-            <h2 id="displayName">{{ user.full_name }}</h2>
-            <p class="user-profile-role">
-                <span class="role-badge">{{ user.role|capitalize }}</span>
-                {% if user.email_verified %}
-                <span class="verified-badge"><i class="fas fa-check-circle"></i> Verified</span>
-                {% else %}
-                <span class="unverified-badge" onclick="verifyEmail()" style="cursor:pointer;">
-                    <i class="fas fa-exclamation-circle"></i> Not Verified
-                </span>
-                {% endif %}
-            </p>
-            <p class="user-profile-email" id="displayEmail">{{ user.email }}</p>
-            <div class="user-profile-status">
-                <span class="user-status-dot active"></span>
-                <span>Active</span>
-                <span class="user-profile-joined">Joined: {{ user.created_at.strftime('%B %d, %Y') }}</span>
+{% from 'partials/avatar.html' import avatar %}
+{% from 'partials/profile_studio.html' import profile_studio %}
+
+<!-- Profile hero: banner, avatar and how you appear to others -->
+<section class="pf-hero">
+    <div class="pf-hero-banner pf-banner pf-banner--{{ user.banner_key }}"></div>
+    <div class="pf-hero-body">
+        {{ avatar(user, 'lg') }}
+        <div class="pf-hero-text">
+            <h2 id="displayName">{{ user.shown_name }}</h2>
+            <p class="pf-hero-sub">{% if user.display_name %}{{ user.full_name }} · {% endif %}@{{ user.username }}</p>
+            {% if user.headline %}<p class="pf-hero-headline">“{{ user.headline }}”</p>{% endif %}
+            <div class="pf-chips">
+                <span class="pf-chip"><i class="fas fa-user"></i> Customer</span>
+                <span class="pf-chip"><i class="fas fa-envelope"></i> <span id="displayEmail">{{ user.email }}</span></span>
+                <span class="pf-chip"><i class="fas fa-calendar-check"></i> Joined {{ user.created_at.strftime('%b %d, %Y') if user.created_at else '—' }}</span>
+                <span class="pf-chip"><i class="fas fa-screwdriver-wrench"></i> {{ user.bookings|length }} booking{{ '' if user.bookings|length == 1 else 's' }}</span>
             </div>
         </div>
-        <div class="user-profile-actions">
-            <button class="user-edit-toggle" id="editToggle">
+        <div class="pf-hero-actions">
+            <a class="pf-btn" href="#look"><i class="fas fa-wand-magic-sparkles"></i> Customize look</a>
+            <button type="button" class="pf-btn pf-btn--primary user-edit-toggle" id="editToggle">
                 <i class="fas fa-pen"></i> Edit Profile
             </button>
         </div>
     </div>
+</section>
 
+{{ profile_studio(user, 'Customer') }}
+
+<!-- Profile details -->
+<div class="user-profile-card">
     <!-- Profile Form -->
     <form class="user-profile-form" id="profileForm" method="POST" action="{{ url_for('user_profile') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -84,9 +83,7 @@
                 <div class="user-form-group">
                     <label for="email">Email Address</label>
                     <input type="email" id="email" value="{{ user.email }}" disabled />
-                    <button type="button" class="user-btn-secondary" onclick="verifyEmail()" style="margin-top:0.3rem; font-size:0.75rem; padding:0.2rem 0.8rem; align-self:flex-start;">
-                        <i class="fas fa-envelope"></i> Verify Email
-                    </button>
+                    <small class="user-field-hint"><i class="fas fa-lock"></i> Your sign-in email can't be changed here.</small>
                 </div>
                 <div class="user-form-group">
                     <label for="phone">Phone Number</label>
@@ -136,7 +133,7 @@
                 </div>
                 <div class="user-form-group">
                     <label for="newPassword">New Password</label>
-                    <input type="password" id="newPassword" name="new_password" placeholder="Enter new password (min 6 chars)" disabled />
+                    <input type="password" id="newPassword" name="new_password" placeholder="8+ characters, a letter and a number" disabled />
                 </div>
                 <div class="user-form-group">
                     <label for="confirmPassword">Confirm New Password</label>
@@ -170,7 +167,19 @@
                     <label>Notification Preferences</label>
                     <div class="user-checkbox-group">
                         <label class="user-checkbox">
-                            <input type="checkbox" name="email_notifications" {% if user.preferences and user.preferences.email_notifications %}checked{% endif %} disabled /> Email Notifications
+                            <input type="checkbox" id="emailNotifToggle" name="email_notifications" {% if not user.preferences or user.preferences.email_notifications %}checked{% endif %} onchange="setEmailNotifications(this)" /> Email Notifications
+                            <script>
+                                function setEmailNotifications(box) {
+                                    fetch('/api/user/email-notifications', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ enabled: box.checked })
+                                    })
+                                    .then(r => r.json())
+                                    .then(d => showToast(d.message || 'Saved', d.success ? 'success' : 'error'))
+                                    .catch(() => { box.checked = !box.checked; showToast('Could not save. Please try again.', 'error'); });
+                                }
+                            </script>
                         </label>
                         <label class="user-checkbox">
                             <input type="checkbox" name="sms_notifications" {% if user.preferences and user.preferences.sms_notifications %}checked{% endif %} disabled /> SMS Notifications
@@ -232,11 +241,11 @@
             </div>
             <div class="help-section">
                 <h4><i class="fas fa-key"></i> Changing Password</h4>
-                <p>Enter your current password, then your new password and confirm it. Passwords must be at least 6 characters.</p>
+                <p>Enter your current password, then your new password and confirm it. Use at least 8 characters, including a letter and a number.</p>
             </div>
             <div class="help-section">
-                <h4><i class="fas fa-envelope"></i> Email Verification</h4>
-                <p>Click "Verify Email" to receive a verification link. This helps secure your account.</p>
+                <h4><i class="fas fa-wand-magic-sparkles"></i> Profile Look</h4>
+                <p>Upload a photo or pick an icon, then choose a colour, frame and banner. Press "Save look" to keep it.</p>
             </div>
             <div class="help-section">
                 <h4><i class="fas fa-download"></i> Download Data</h4>
@@ -383,7 +392,7 @@
         const editToggle = document.getElementById('editToggle');
         const cancelEdit = document.getElementById('cancelEdit');
         const formActions = document.getElementById('formActions');
-        const formInputs = document.querySelectorAll('#profileForm input, #profileForm select');
+        const formInputs = document.querySelectorAll('#profileForm input:not([type=hidden]), #profileForm select');
         const formCheckboxes = document.querySelectorAll('#profileForm .user-checkbox input');
 
         function toggleEdit(enable) {
@@ -450,8 +459,8 @@
                     e.preventDefault();
                     return;
                 }
-                if (newPass.length < 6) {
-                    alert('Password must be at least 6 characters long.');
+                if (newPass.length < 8 || !/[A-Za-z]/.test(newPass) || !/\d/.test(newPass)) {
+                    alert('Use at least 8 characters, including a letter and a number.');
                     e.preventDefault();
                     return;
                 }
@@ -462,32 +471,6 @@
         const birthdate = document.getElementById('birthdate');
         birthdate.max = today.toISOString().split('T')[0];
     });
-
-    // ============================================
-    // EMAIL VERIFICATION
-    // ============================================
-
-    function verifyEmail() {
-        showUserToast('📧 Sending verification email...', 'info');
-        
-        fetch('/api/user/verify-email', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showUserToast('✅ Verification email sent! Please check your inbox.', 'success');
-            } else {
-                showUserToast('❌ ' + data.message, 'error');
-            }
-        })
-        .catch(error => {
-            showUserToast('❌ Error sending verification email.', 'error');
-        });
-    }
 
     // ============================================
     // ACTIVITY LOG
@@ -682,16 +665,10 @@
         }
     });
 
-    // ============================================
-    // KEYBOARD SHORTCUT: Ctrl + Shift + L
-    // ============================================
-    document.addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-            e.preventDefault();
-            window.location.href = '/admin/login';
-        }
-    });
 
     console.log('✅ Profile system initialized');
 </script>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/profile-studio.js') }}" defer></script>
 {% endblock %}

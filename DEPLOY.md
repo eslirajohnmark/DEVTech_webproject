@@ -57,7 +57,7 @@ On a VPS: `apt install mysql-server`. On PythonAnywhere: bundled with the accoun
 ```bash
 FLASK_ENV=production
 SECRET_KEY=<the-64-char-string-from-step-3>
-DATABASE_URL=mysql+pymysql://devtech_user:STRONG_PASSWORD@localhost/devtech_db
+DATABASE_URL=mysql+pymysql://devtech_user:STRONG_PASSWORD@localhost/devtech
 DEV_HOST=127.0.0.1
 DEV_SSL=0
 RATELIMIT_STORAGE_URI=redis://localhost:6379/0
@@ -191,6 +191,12 @@ PythonAnywhere's filesystem is read-only outside your home directory. Edit `app.
 app.config['TECH_UPLOAD_FOLDER'] = os.path.join(
     os.path.expanduser('~'), 'devtech', 'instance', 'uploads', 'tech'
 )
+app.config['RECEIPT_UPLOAD_FOLDER'] = os.path.join(
+    os.path.expanduser('~'), 'devtech', 'instance', 'uploads', 'receipts'
+)
+app.config['MESSAGE_UPLOAD_FOLDER'] = os.path.join(
+    os.path.expanduser('~'), 'devtech', 'instance', 'uploads', 'messages'
+)
 ```
 
 Reload.
@@ -297,9 +303,9 @@ sudo mysql -u root -p
 ```
 
 ```sql
-CREATE DATABASE devtech_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE devtech CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'devtech_user'@'localhost' IDENTIFIED BY 'a-long-random-password';
-GRANT ALL PRIVILEGES ON devtech_db.* TO 'devtech_user'@'localhost';
+GRANT ALL PRIVILEGES ON devtech.* TO 'devtech_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
 ```
@@ -307,9 +313,7 @@ EXIT;
 Load the schema:
 
 ```bash
-mysql -u devtech_user -p devtech_db < database/schema.sql
-mysql -u devtech_user -p devtech_db < database/migrate_service_categories.sql
-mysql -u devtech_user -p devtech_db < database/migrate_ratings.sql
+mysql -u devtech_user -p devtech < database/schema.sql
 ```
 
 ### 6. Configure Redis
@@ -360,7 +364,7 @@ nano .env
 ```bash
 FLASK_ENV=development
 SECRET_KEY=<your-real-64-char-key>
-DATABASE_URL=mysql+pymysql://devtech_user:DB_PASSWORD@localhost/devtech_db
+DATABASE_URL=mysql+pymysql://devtech_user:DB_PASSWORD@localhost/devtech
 DEV_HOST=127.0.0.1
 DEV_SSL=0
 RATELIMIT_STORAGE_URI=redis://:redis-password@localhost:6379/0
@@ -378,16 +382,18 @@ chmod 600 .env
 ### 10. Create the uploads directory
 
 ```bash
-mkdir -p instance/uploads/tech
-chmod 755 instance/uploads/tech
+mkdir -p instance/uploads/tech instance/uploads/receipts instance/uploads/messages
+chmod 755 instance/uploads/tech instance/uploads/receipts instance/uploads/messages
 ```
 
 ### 11. Initialize the database
 
 ```bash
 source .venv/bin/activate
-python -c "from app import app, db; app.app_context().push(); db.create_all()"
+flask --app app upgrade-db
 ```
+
+Run `flask --app app upgrade-db` again after every deploy that pulls new code. It only adds what is missing and never seeds demo data.
 
 ### 12. Create the first admin
 
@@ -583,7 +589,7 @@ nano ~/backup.sh
 ```bash
 #!/bin/bash
 DATE=$(date +%Y%m%d)
-mysqldump -u devtech_user -p'YOUR_DB_PASSWORD' devtech_db \
+mysqldump -u devtech_user -p'YOUR_DB_PASSWORD' devtech \
     | gzip > ~/backups/devtech-$DATE.sql.gz
 find ~/backups -name 'devtech-*.sql.gz' -mtime +30 -delete
 ```
@@ -636,7 +642,7 @@ chmod -R 755 /home/devtech/devtech/static
 
 ### Uploads fail
 
-The `instance/uploads/tech` directory must be writable by the user Gunicorn runs as.
+The `instance/uploads/tech`, `instance/uploads/receipts` and `instance/uploads/messages` directories must be writable by the user Gunicorn runs as.
 
 ```bash
 sudo chown -R devtech:www-data ~/devtech/instance

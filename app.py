@@ -1,5 +1,5 @@
 import sys
-# Make `from app import db, User` (used by blueprints/commands/models) resolve to THIS
+# Make `from app import db, Customer` (used by blueprints/commands/models) resolve to THIS
 # module even when started with `python app.py` (otherwise app.py is imported twice
 # and the blueprint imports fail circularly).
 sys.modules.setdefault('app', sys.modules[__name__])
@@ -10,6 +10,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from functools import wraps
 import os
+import hashlib
 import hmac
 import logging
 from logging.handlers import RotatingFileHandler
@@ -17,9 +18,11 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import re
 import secrets
+import shutil
 from werkzeug.utils import secure_filename
-from sqlalchemy import text, or_, and_, func
+from sqlalchemy import text, or_, and_, func, case as sa_case
 from markupsafe import escape as escape_markupsafe
+from jinja2.utils import htmlsafe_json_dumps
 from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
 from flask_wtf import CSRFProtect
@@ -29,7 +32,9 @@ from flask_limiter.util import get_remote_address
 from flask_caching import Cache
 from flask_talisman import Talisman
 from commands import register_commands
-from flask import send_file  
+from flask import send_file
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from services import email_service, profile_presets
 from services.job_status import (STAGES, STATUS_LABELS, ACTIVE_STATUSES,
                                  FINISHED_STATUSES, SLOT_STATUSES)
  
@@ -39,16 +44,26 @@ load_dotenv()
 IS_PRODUCTION = os.environ.get('FLASK_ENV', 'development') == 'production'
  
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'admin@DEVTech094630.com')
-if IS_PRODUCTION and app.config['SECRET_KEY'] == 'admin@DEVTech094630.com':
-    raise RuntimeError('Refusing to start in production with the default SECRET_KEY. '
-                       'Set a real random SECRET_KEY in your production .env file.')
- 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
-    'DATABASE_URL', 'mysql+pymysql://root:admin123@localhost/devtech_db')
+# No secrets in source. SECRET_KEY and DATABASE_URL come from the environment / .env.
+_secret_key = os.environ.get('SECRET_KEY', '')
+if not _secret_key:
+    if IS_PRODUCTION:
+        raise RuntimeError('SECRET_KEY is not set. Put a long random value in your production .env file.')
+    # Dev only: a throwaway key, so sessions reset whenever the server restarts.
+    _secret_key = secrets.token_urlsafe(64)
+    print('WARNING: SECRET_KEY is not set; using a temporary key. Set it in .env.')
+app.config['SECRET_KEY'] = _secret_key
+
+if not os.environ.get('DATABASE_URL'):
+    raise RuntimeError('DATABASE_URL is not set. Copy .env.example to .env and fill it in.')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280, 'pool_pre_ping': True}
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
+# Payment receipts are private: kept outside static/ and served by receipt_file().
+app.config['RECEIPT_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'receipts')
+app.config['MESSAGE_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'messages')
+app.config['AVATAR_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'avatars')
 app.config['TECH_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'tech')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['DEBUG'] = not IS_PRODUCTION
@@ -85,7 +100,10 @@ def handle_csrf_error(e):
     return redirect(request.referrer or url_for('home'))
  
 # ==================== RATE LIMITING ====================
-limiter = Limiter(key_func=get_remote_address, app=app, default_limits=['200 per hour'],
+# The default is generous on purpose: many customers share one public IP
+# (mobile data, school Wi-Fi). Login/registration/contact have their own strict
+# limits, and the pages' background polls are exempt (see @limiter.exempt).
+limiter = Limiter(key_func=get_remote_address, app=app, default_limits=['3000 per hour'],
                   storage_uri=os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'))
  
 # ==================== CACHING ====================
@@ -115,6 +133,62 @@ def _inject_technician_globals():
 @app.context_processor
 def _inject_job_status():
     return {'job_stages': STAGES, 'status_labels': STATUS_LABELS}
+
+@app.context_processor
+def _inject_nav_counts():
+    """nav_counts() for sidebar badges. A function, so the count queries only
+    run on pages whose template actually calls it."""
+    def nav_counts():
+        uid, role = session.get('user_id'), session.get('role')
+        if not uid or role not in ('customer', 'technician', 'admin'):
+            return {}
+        counts = {
+            'notifications': Notification.query.filter_by(user_role=role, user_id=uid, is_read=False).count(),
+            'messages': Message.query.filter_by(recipient_role=role, recipient_id=uid, is_read=False).count(),
+        }
+        if session.get('role') == 'admin':
+            counts['tickets'] = SupportTicket.query.filter(SupportTicket.status != 'resolved').count()
+            counts['inquiries'] = ContactInquiry.query.filter_by(status='new').count()
+        return counts
+    return {'nav_counts': nav_counts}
+
+@app.context_processor
+def _inject_profile():
+    """signed_in() -> the current account (or None), for avatars in the layouts."""
+    def signed_in():
+        try:
+            return current_account()
+        except Exception:
+            db.session.rollback()
+            return None
+    return {'signed_in': signed_in}
+
+# A global (not context) so imported macros like partials/profile_studio.html see it too.
+app.jinja_env.globals['profile_presets'] = profile_presets
+
+@app.context_processor
+def _inject_site_details():
+    """site() -> business details from System Settings (one query per request)."""
+    def site():
+        if 'site_details' not in g:
+            try:
+                values = {s.setting_key: (s.value or '').strip() for s in SystemSetting.query.all()}
+            except Exception:
+                db.session.rollback()
+                values = {}
+            g.site_details = {
+                'name': values.get('system_name') or 'DEVTech Computer Services',
+                'phone': values.get('contact_phone', ''),
+                'email': values.get('contact_email') or values.get('system_email', ''),
+                'address': values.get('contact_address', ''),
+                'hours': values.get('business_hours', ''),
+                'gcash_account': values.get('gcash_account', ''),
+                'gcash_name': values.get('gcash_name') or values.get('system_name') or 'DEVTech Computer Services',
+                'gcash_enabled': values.get('enable_gcash', 'true') == 'true',
+                'cod_enabled': values.get('enable_cod', 'true') == 'true',
+            }
+        return g.site_details
+    return {'site': site, 'current_year': datetime.utcnow().year}
 
 MONITOR_STAGES = STAGES  
  
@@ -157,6 +231,25 @@ def healthz():
         app.logger.error(f'Health check failed: {e}')
         return jsonify({'status': 'error', 'database': 'unreachable'}), 503
 
+PORTAL_ENTRY = {'admin': ('admin', 'admin_dashboard', 'admin_login'),
+                'technician': ('technician', 'technician.dashboard', 'technician.login'),
+                'user': ('customer', 'user_dashboard', 'login')}
+
+@app.route('/go/<side>')
+def go_to_portal(side):
+    """Target of the Ctrl+Shift+L / Y / U shortcuts: that portal's dashboard when
+    already signed in there, otherwise its sign-in page."""
+    if side not in PORTAL_ENTRY:
+        abort(404)
+    role, dashboard, sign_in = PORTAL_ENTRY[side]
+    signed_in_here = session.get('role') == role and current_account() is not None
+    return redirect(url_for(dashboard if signed_in_here else sign_in))
+
+@app.route('/favicon.ico')
+def favicon():
+    # Browsers ask for /favicon.ico on pages without a <link rel="icon">.
+    return redirect(url_for('static', filename='images/favicon.svg'), code=301)
+
 # ==================== OAUTH(google/facebook) ====================
 oauth = OAuth(app)
 oauth.register(name='google',
@@ -172,12 +265,20 @@ oauth.register(name='facebook',
                api_base_url='https://graph.facebook.com/v19.0/',
                client_kwargs={'scope': 'email public_profile'})
  
-app.jinja_env.filters['tojson'] = lambda obj: json.dumps(obj, default=str)
+# HTML-safe: escapes < > & ' so the output can't break out of a <script> block
+# or a single-quoted attribute. Never replace this with a plain json.dumps.
+app.jinja_env.filters['tojson'] = lambda obj: htmlsafe_json_dumps(obj, default=str)
 app.jinja_env.filters['escape'] = lambda s: escape_markupsafe(s) if s else ''
+# For values a <script> later drops into innerHTML: HTML-escape the text, then
+# JSON-encode it so quotes/newlines can't break out of the script. None -> null.
+app.jinja_env.filters['js_html'] = lambda v: htmlsafe_json_dumps(
+    None if v is None else str(escape_markupsafe(v)))
 app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else []
  
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['TECH_UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['RECEIPT_UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['MESSAGE_UPLOAD_FOLDER'], exist_ok=True)
  
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
  
@@ -209,16 +310,111 @@ def validate_uploaded_file(file_storage, extension):
 
 # ==================== DATABASE MODELS ====================
  
-class User(db.Model):
-    __tablename__ = 'users'
-    __table_args__ = (db.UniqueConstraint('oauth_provider', 'oauth_id', name='uq_users_oauth_identity'),)
- 
+# ==================== ACCOUNTS: three separate tables ====================
+# Customers, technicians and admins each have their own table and their own
+# login. An account is identified by (role, id): ids are only unique within a
+# table, so customer 1 and admin 1 are different people. The session stores
+# both session['role'] and session['user_id'].
+
+class AccountMixin:
+    ROLE = None
+
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     full_name = db.Column(db.String(100), nullable=False)
     phone = db.Column(db.String(20))
+    is_active = db.Column(db.Boolean, default=True)
+    last_active = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Profile look, chosen by the account holder (see services/profile_presets.py).
+    display_name = db.Column(db.String(60))
+    headline = db.Column(db.String(120))
+    avatar_file = db.Column(db.String(64))
+    avatar_icon = db.Column(db.String(30))
+    avatar_color = db.Column(db.String(20))
+    avatar_frame = db.Column(db.String(20))
+    banner = db.Column(db.String(20))
+
+    @property
+    def role(self):
+        return self.ROLE
+
+    @property
+    def shown_name(self):
+        """What the account wants to be called; falls back to the full name."""
+        return (self.display_name or '').strip() or self.full_name or ''
+
+    @property
+    def initials(self):
+        parts = self.shown_name.split()
+        return ''.join(p[0] for p in parts[:2]).upper() or '?'
+
+    @property
+    def avatar_color_key(self):
+        return profile_presets.pick(self.avatar_color, profile_presets.AVATAR_COLORS,
+                                    profile_presets.DEFAULT_COLOR[self.ROLE])
+
+    @property
+    def avatar_frame_key(self):
+        return profile_presets.pick(self.avatar_frame, profile_presets.AVATAR_FRAMES,
+                                    profile_presets.DEFAULT_FRAME)
+
+    @property
+    def banner_key(self):
+        return profile_presets.pick(self.banner, profile_presets.BANNERS,
+                                    profile_presets.DEFAULT_BANNER[self.ROLE])
+
+    @property
+    def avatar_mode(self):
+        if self.avatar_file:
+            return 'photo'
+        return 'icon' if self.avatar_icon in profile_presets.AVATAR_ICONS else 'initials'
+
+    @property
+    def avatar_url(self):
+        return url_for('account_avatar', filename=self.avatar_file) if self.avatar_file else None
+
+    @property
+    def key(self):
+        """'customer-5' / 'technician-2' / 'admin-1': unique across all three tables."""
+        return f'{self.ROLE}-{self.id}'
+
+    def set_password(self, password):
+        self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+
+    def check_password(self, password):
+        stored = self.password_hash or ''
+        # Older databases may hold Werkzeug hashes ("pbkdf2:..." / "scrypt:...").
+        # Accept them once and upgrade to bcrypt so the next check is the normal path.
+        if stored.startswith(('pbkdf2:', 'scrypt:')):
+            from werkzeug.security import check_password_hash as werkzeug_check
+            if not werkzeug_check(stored, password):
+                return False
+            self.set_password(password)
+            db.session.commit()
+            return True
+        try:
+            return bcrypt.check_password_hash(stored, password)
+        except ValueError:          # not a bcrypt hash at all: never matches
+            return False
+
+    def to_dict(self):
+        return {'id': self.id, 'role': self.ROLE, 'username': getattr(self, 'username', None),
+                'email': self.email, 'full_name': self.full_name, 'phone': self.phone,
+                'address': getattr(self, 'address', None), 'city': getattr(self, 'city', None),
+                'province': getattr(self, 'province', None), 'postal_code': getattr(self, 'postal_code', None),
+                'is_active': self.is_active,
+                'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None}
+
+
+class Customer(AccountMixin, db.Model):
+    __tablename__ = 'customers'
+    __table_args__ = (db.UniqueConstraint('oauth_provider', 'oauth_id', name='uq_customers_oauth_identity'),)
+    ROLE = 'customer'
+
+    username = db.Column(db.String(80), unique=True, nullable=False)
     address = db.Column(db.String(255))
     city = db.Column(db.String(50))
     province = db.Column(db.String(50))
@@ -226,45 +422,123 @@ class User(db.Model):
     latitude = db.Column(db.Numeric(10, 7))
     longitude = db.Column(db.Numeric(10, 7))
     birth_date = db.Column(db.Date)
-    role = db.Column(db.String(20), default='customer')
-    is_active = db.Column(db.Boolean, default=True)
     oauth_provider = db.Column(db.String(20), nullable=True)
     oauth_id = db.Column(db.String(255), nullable=True)
-    last_active = db.Column(db.DateTime, nullable=True)
+
+    bookings = db.relationship('Booking', back_populates='customer', lazy=True)
+    transactions = db.relationship('Transaction', back_populates='customer', lazy=True)
+    support_tickets = db.relationship('SupportTicket', back_populates='customer', lazy=True)
+    shopping_carts = db.relationship('ShoppingCart', back_populates='customer', lazy=True)
+    orders = db.relationship('Order', back_populates='customer', lazy=True)
+    preferences = db.relationship('UserPreference', back_populates='customer', uselist=False)
+
+    # Technician-only fields, so templates can ask any account safely.
+    id_verified = None
+    id_type = None
+
+
+class Technician(AccountMixin, db.Model):
+    __tablename__ = 'technicians'
+    ROLE = 'technician'
+
+    username = db.Column(db.String(80), unique=True, nullable=False)   # Tech ID, e.g. TECH-0001
+    address = db.Column(db.String(255))
+    city = db.Column(db.String(50))
+    province = db.Column(db.String(50))
     # id_number: admin-only audit record, never serialized to customers.
     id_type = db.Column(db.String(30), nullable=True)
     id_number = db.Column(db.String(50), nullable=True)
     id_verified = db.Column(db.Boolean, default=False)
     id_verified_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
-    bookings = db.relationship('Booking', backref='user', lazy=True, foreign_keys='Booking.user_id')
-    transactions = db.relationship('Transaction', backref='user', lazy=True, foreign_keys='Transaction.user_id')
-    notifications = db.relationship('Notification', backref='user', lazy=True)
-    sent_messages = db.relationship('Message', foreign_keys='Message.sender_id', backref='sender', lazy=True)
-    received_messages = db.relationship('Message', foreign_keys='Message.recipient_id', backref='recipient', lazy=True)
-    support_tickets = db.relationship('SupportTicket', backref='user', lazy=True)
-    shopping_carts = db.relationship('ShoppingCart', backref='user', lazy=True)
-    orders = db.relationship('Order', backref='user', lazy=True)
-    preferences = db.relationship('UserPreference', backref='user', uselist=False)
- 
-    def set_password(self, password):
-        self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
- 
-    def check_password(self, password):
-        return bcrypt.check_password_hash(self.password_hash, password)
- 
-    def to_dict(self):
-        return {'id': self.id, 'username': self.username, 'email': self.email,
-                'full_name': self.full_name, 'phone': self.phone, 'address': self.address,
-                'city': self.city, 'province': self.province, 'postal_code': self.postal_code,
-                'role': self.role, 'is_active': self.is_active,
-                'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None}
- 
+
+    jobs = db.relationship('Booking', back_populates='technician', lazy=True)
+
+
+class Admin(AccountMixin, db.Model):
+    __tablename__ = 'admins'
+    ROLE = 'admin'
+
+    username = db.Column(db.String(80), unique=True, nullable=False)
+
+    id_verified = None
+    id_type = None
+
+
+ACCOUNT_MODELS = {'customer': Customer, 'technician': Technician, 'admin': Admin}
+ROLES = tuple(ACCOUNT_MODELS)
+
+
+def get_account(role, account_id):
+    """The Customer/Technician/Admin with this id, or None."""
+    model = ACCOUNT_MODELS.get(role)
+    if not model or not account_id:
+        return None
+    try:
+        return db.session.get(model, int(account_id))
+    except (TypeError, ValueError):
+        return None
+
+
+def current_account():
+    """The signed-in account (any role), cached for the request."""
+    # Keyed by the session identity: g can outlive one request (e.g. an app
+    # context held open around several test-client requests).
+    ident = (session.get('role'), session.get('user_id'))
+    cached = g.get('current_account')
+    if cached is None or cached[0] != ident:
+        cached = g.current_account = (ident, get_account(*ident))
+    return cached[1]
+
+
+def find_account_by_email(email):
+    """Account with this email in any of the three tables (emails are unique overall)."""
+    email = (email or '').strip().lower()
+    if not email:
+        return None
+    for model in ACCOUNT_MODELS.values():
+        account = model.query.filter(func.lower(model.email) == email).first()
+        if account:
+            return account
+    return None
+
+
+def email_in_use(email, exclude=None):
+    """True if another account (in any table) already uses this email."""
+    other = find_account_by_email(email)
+    return bool(other and (exclude is None or other.key != exclude.key))
+
+
+def parse_account_key(key):
+    """'technician-3' -> ('technician', 3); anything invalid -> (None, None)."""
+    role, _, raw_id = (key or '').partition('-')
+    if role in ACCOUNT_MODELS and raw_id.isdigit():
+        return role, int(raw_id)
+    return None, None
+
+
+def all_accounts():
+    """Every account from all three tables, newest first."""
+    rows = Customer.query.all() + Technician.query.all() + Admin.query.all()
+    return sorted(rows, key=lambda a: a.created_at or datetime.min, reverse=True)
+
+
+def login_account(account, remember=False):
+    """Start a fresh session for this account."""
+    session.clear()
+    session.permanent = bool(remember)
+    session['user_id'] = account.id
+    session['role'] = account.ROLE
+    session['username'] = getattr(account, 'username', None) or account.full_name
+    g.pop('current_account', None)
+
+
+def home_endpoint_for(role):
+    return {'admin': 'admin_dashboard', 'technician': 'technician.dashboard'}.get(role, 'user_dashboard')
+
+
 class ServiceCategory(db.Model):
     __tablename__ = 'service_categories'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), unique=True, nullable=False)
     description = db.Column(db.Text)
@@ -276,12 +550,12 @@ class ServiceCategory(db.Model):
     color = db.Column(db.String(20), nullable=False, default='#2563eb')
     display_order = db.Column(db.Integer, nullable=False, default=100)
     tagline = db.Column(db.String(200))
- 
+
     services = db.relationship('Service', backref='category', lazy=True)
- 
+
 class Service(db.Model):
     __tablename__ = 'services'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     category_id = db.Column(db.Integer, db.ForeignKey('service_categories.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)
@@ -290,15 +564,15 @@ class Service(db.Model):
     estimated_hours = db.Column(db.Integer, default=1)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
- 
+
     bookings = db.relationship('Booking', backref='service', lazy=True)
- 
+
 class Booking(db.Model):
     __tablename__ = 'bookings'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     booking_number = db.Column(db.String(50), unique=True, nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
     service_id = db.Column(db.Integer, db.ForeignKey('services.id'), nullable=False)
     device_type = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=False)
@@ -307,22 +581,26 @@ class Booking(db.Model):
     booking_time = db.Column(db.Time, nullable=False)
     status = db.Column(db.String(20), default='pending')
     is_in_shop = db.Column(db.Boolean, default=False)
-    technician_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id'), nullable=True, index=True)
     assigned_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
     transaction = db.relationship('Transaction', backref='booking', uselist=False, foreign_keys='Transaction.booking_id')
-    technician = db.relationship('User', foreign_keys=[technician_id])
- 
+    customer = db.relationship('Customer', back_populates='bookings')
+    technician = db.relationship('Technician', back_populates='jobs')
+    # Older code says booking.user / booking.user_id for the customer.
+    user_id = db.synonym('customer_id')
+    user = db.synonym('customer')
+
 class Transaction(db.Model):
     __tablename__ = 'transactions'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     transaction_number = db.Column(db.String(50), unique=True, nullable=False)
     booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=True)
     order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     payment_method = db.Column(db.String(50), nullable=False)
     payment_status = db.Column(db.String(20), default='pending')
@@ -332,12 +610,15 @@ class Transaction(db.Model):
     rejection_reason = db.Column(db.Text)
     transaction_date = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
     order = db.relationship('Order', backref='transactions')
- 
+    customer = db.relationship('Customer', back_populates='transactions')
+    user_id = db.synonym('customer_id')
+    user = db.synonym('customer')
+
 class Product(db.Model):
     __tablename__ = 'products'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
@@ -349,40 +630,69 @@ class Product(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
     cart_items = db.relationship('CartItem', backref='product', lazy=True)
     order_items = db.relationship('OrderItem', backref='product', lazy=True)
- 
+
 class Notification(db.Model):
+    """For any account: (user_role, user_id) says whose it is."""
     __tablename__ = 'notifications'
- 
+    __table_args__ = (db.Index('ix_notifications_owner', 'user_role', 'user_id', 'is_read'),)
+
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user_role = db.Column(db.String(20), nullable=False)
+    user_id = db.Column(db.Integer, nullable=False)
     title = db.Column(db.String(100), nullable=False)
     message = db.Column(db.Text, nullable=False)
     type = db.Column(db.String(20), default='info')
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
- 
+
 class Message(db.Model):
+    """Sender and recipient can be any kind of account, so each side is (role, id)."""
     __tablename__ = 'messages'
- 
+    __table_args__ = (db.Index('ix_messages_recipient', 'recipient_role', 'recipient_id', 'is_read'),
+                      db.Index('ix_messages_sender', 'sender_role', 'sender_id'))
+
     id = db.Column(db.Integer, primary_key=True)
-    sender_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    recipient_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    sender_role = db.Column(db.String(20), nullable=False)
+    sender_id = db.Column(db.Integer, nullable=False)
+    recipient_role = db.Column(db.String(20), nullable=False)
+    recipient_id = db.Column(db.Integer, nullable=False)
     subject = db.Column(db.String(200))
     content = db.Column(db.Text, nullable=False)
     is_read = db.Column(db.Boolean, default=False)
     parent_id = db.Column(db.Integer, db.ForeignKey('messages.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
- 
+
     replies = db.relationship('Message', backref=db.backref('parent', remote_side=[id]), lazy=True)
- 
+
+    @property
+    def sender(self):
+        return get_account(self.sender_role, self.sender_id)
+
+    @property
+    def recipient(self):
+        return get_account(self.recipient_role, self.recipient_id)
+
+class MessageAttachment(db.Model):
+    """Image or PDF attached to a message. Stored privately under
+    instance/uploads/messages and served only to the sender and recipient."""
+    __tablename__ = 'message_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('messages.id'), nullable=False, index=True)
+    filename = db.Column(db.String(64), nullable=False)
+    original_name = db.Column(db.String(255), nullable=False)
+    mime_type = db.Column(db.String(80), nullable=False)
+    size_bytes = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 class SupportTicket(db.Model):
     __tablename__ = 'support_tickets'
- 
+
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
     subject = db.Column(db.String(200), nullable=False)
     message = db.Column(db.Text, nullable=False)
     category = db.Column(db.String(50), default='general')
@@ -390,40 +700,66 @@ class SupportTicket(db.Model):
     admin_response = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
-class ActivityLog(db.Model):
-    __tablename__ = 'activity_logs'
- 
+
+    customer = db.relationship('Customer', back_populates='support_tickets')
+    user_id = db.synonym('customer_id')
+    user = db.synonym('customer')
+
+class ContactInquiry(db.Model):
+    """Message sent from the public landing-page contact form (no account needed)."""
+    __tablename__ = 'contact_inquiries'
+
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), nullable=False)
+    subject = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), default='new')   # new | handled
+    ip_address = db.Column(db.String(45))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ActivityLog(db.Model):
+    """Who did what. (user_role, user_id) is the actor; both empty for anonymous events."""
+    __tablename__ = 'activity_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_role = db.Column(db.String(20), nullable=True)
+    user_id = db.Column(db.Integer, nullable=True)
     action = db.Column(db.String(100), nullable=False)
     details = db.Column(db.Text)
     ip_address = db.Column(db.String(45))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
- 
+
+    @property
+    def actor(self):
+        return get_account(self.user_role, self.user_id)
+
 class SystemSetting(db.Model):
     __tablename__ = 'system_settings'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     setting_key = db.Column(db.String(50), unique=True, nullable=False)
     value = db.Column(db.Text)
     description = db.Column(db.String(200))
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
 class ShoppingCart(db.Model):
     __tablename__ = 'shopping_carts'
- 
+
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
     status = db.Column(db.String(20), default='active')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
     items = db.relationship('CartItem', backref='cart', lazy=True, cascade='all, delete-orphan')
- 
+    customer = db.relationship('Customer', back_populates='shopping_carts')
+    user_id = db.synonym('customer_id')
+    user = db.synonym('customer')
+
 class CartItem(db.Model):
     __tablename__ = 'cart_items'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     cart_id = db.Column(db.Integer, db.ForeignKey('shopping_carts.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
@@ -431,12 +767,12 @@ class CartItem(db.Model):
     price = db.Column(db.Numeric(10, 2))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
 class Order(db.Model):
     __tablename__ = 'orders'
- 
+
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
     order_number = db.Column(db.String(50), unique=True, nullable=False)
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(20), default='pending')
@@ -453,24 +789,28 @@ class Order(db.Model):
     payment_status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
- 
+
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan')
- 
+    customer = db.relationship('Customer', back_populates='orders')
+    user_id = db.synonym('customer_id')
+    user = db.synonym('customer')
+
 class OrderItem(db.Model):
     __tablename__ = 'order_items'
- 
+
     id = db.Column(db.Integer, primary_key=True)
     order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
     quantity = db.Column(db.Integer, default=1)
     price = db.Column(db.Numeric(10, 2), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
- 
+
 class UserPreference(db.Model):
+    """Customer preferences (theme, email notifications, ...)."""
     __tablename__ = 'user_preferences'
- 
+
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, unique=True)
     language = db.Column(db.String(10), default='en')
     theme = db.Column(db.String(20), default='light')
     email_notifications = db.Column(db.Boolean, default=True)
@@ -478,81 +818,121 @@ class UserPreference(db.Model):
     booking_reminders = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
+    customer = db.relationship('Customer', back_populates='preferences')
+    user_id = db.synonym('customer_id')
+
 # ==================== DECORATORS ====================
- 
+
+def _portal_redirect(role):
+    """Where to send a signed-in person who opened another role's page."""
+    if role in ('admin', 'technician'):
+        return redirect(url_for(home_endpoint_for(role)))
+    flash('Please log in to access this page.', 'warning')
+    return redirect(url_for('login'))
+
 def login_required(f):
+    """Customer pages. Staff are sent to their own portal."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
+        if 'user_id' not in session or session.get('role') != 'customer':
+            if request.path.startswith('/api/') and session.get('role') != 'customer':
+                return jsonify({'success': False, 'ok': False, 'message': 'Please sign in as a customer.'}), 401
+            return _portal_redirect(session.get('role'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def account_required(f):
+    """Pages any signed-in account may open (each checks access itself)."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_account():
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
- 
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('admin_login'))
-        user = User.query.get(session['user_id'])
-        if not user or user.role != 'admin':
+        admin = current_account()
+        if session.get('role') != 'admin' or not admin or not admin.is_active:
             flash('Admin access required.', 'danger')
             return redirect(url_for('home'))
         return f(*args, **kwargs)
     return decorated_function
- 
+
+PRESENCE_WRITE_INTERVAL_SECONDS = 30
+
 @app.before_request
-def track_user_presence():
+def check_session_user():
+    """Ends the session of any account that was deleted or deactivated
+    since it signed in, and records presence (throttled, not every request)."""
     if request.endpoint == 'static':
         return
-    user_id = session.get('user_id')
-    if not user_id:
+    if not session.get('user_id'):
         return
-    try:
-        User.query.filter_by(id=user_id).update({'last_active': datetime.utcnow()})
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
- 
+    user = current_account()
+    if not user or not user.is_active:
+        session.clear()
+        g.pop('current_account', None)
+        if request.path.startswith(('/api/', '/technician/api/')) or request.is_json:
+            msg = 'Your session has ended. Please sign in again.'
+            return jsonify({'ok': False, 'success': False, 'reason': msg, 'message': msg}), 401
+        flash('Your session has ended. Please sign in again.', 'warning')
+        if request.path.startswith('/technician'):
+            return redirect(url_for('technician.login'))
+        if request.path.startswith('/admin'):
+            return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
+    now = datetime.utcnow()
+    if not user.last_active or (now - user.last_active).total_seconds() >= PRESENCE_WRITE_INTERVAL_SECONDS:
+        try:
+            user.last_active = now
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
 @app.route('/api/ping', methods=['POST'])
+@limiter.exempt
 def api_ping():
     return jsonify({'ok': True})
- 
+
 @app.route('/api/admin/session-check')
+@limiter.exempt
 def api_admin_session_check():
-    user_id = session.get('user_id')
-    if not user_id:
+    if not session.get('user_id'):
         return jsonify({'ok': False, 'reason': 'logged_out'}), 401
-    user = User.query.get(user_id)
-    if not user or user.role != 'admin' or not user.is_active:
+    admin = current_account()
+    if session.get('role') != 'admin' or not admin or not admin.is_active:
         return jsonify({'ok': False, 'reason': 'not_admin'}), 401
     return jsonify({'ok': True})
 # ==================== HELPER FUNCTIONS ====================
- 
-def generate_booking_number():
-    date_str = datetime.utcnow().strftime('%y%m%d')
-    last = Booking.query.order_by(Booking.id.desc()).first()
-    try:
-        num = int(last.booking_number[8:]) + 1 if last else 1
-    except Exception:
-        num = 1
-    if num > 9999:
-        num = 1
-    return f"BK{date_str}{str(num).zfill(4)}"
- 
-def generate_transaction_number():
-    date_str = datetime.utcnow().strftime('%y%m%d')
-    last = Transaction.query.order_by(Transaction.id.desc()).first()
-    try:
-        num = int(last.transaction_number[9:]) + 1 if last else 1
-    except Exception:
-        num = 1
-    if num > 9999:
-        num = 1
-    return f"TRX{date_str}{str(num).zfill(4)}"
- 
+
+def placeholder_number():
+    """Unique stand-in for a NOT NULL UNIQUE number column until the row has an id."""
+    return 'TMP-' + secrets.token_hex(8)
+
+# Numbers are built from the row's auto-increment id after flush(), so two
+# simultaneous requests can never compute the same one.
+def assign_booking_number(booking):
+    booking.booking_number = f"BK{datetime.utcnow():%y%m%d}{booking.id:04d}"
+
+EXTRA_TXN_PREFIX = 'EXTRA-'   # EXTRA-<booking number>-<id>: approved extra work on a paid booking
+
+def extra_work_booking(transaction):
+    """Booking number an extra-work charge belongs to, or None."""
+    number = transaction.transaction_number or ''
+    if not number.startswith(EXTRA_TXN_PREFIX):
+        return None
+    return number[len(EXTRA_TXN_PREFIX):].rsplit('-', 1)[0]
+
+def assign_transaction_number(transaction):
+    transaction.transaction_number = f"TRX{datetime.utcnow():%y%m%d}{transaction.id:04d}"
+
 def calculate_trend(model, date_column, extra_filter=None, days=7):
     now = datetime.utcnow()
     current_start = now - timedelta(days=days)
@@ -568,16 +948,66 @@ def calculate_trend(model, date_column, extra_filter=None, days=7):
     else:
         direction = 'up' if current_count > previous_count else 'down'
     percent = round((current_count / total_count) * 100) if total_count > 0 else 0
-    return {'percent': percent, 'direction': direction}
- 
-def create_notification(user_id, title, message, type='info'):
-    notification = Notification(user_id=user_id, title=title, message=message, type=type)
+    # 'current' = how many were added in the last `days` days; direction compares
+    # that with the `days` before it.
+    return {'percent': percent, 'direction': direction, 'current': current_count}
+
+def create_notification(user_id, title, message, type='info', email=True, *, role):
+    """In-app notification for the (role, user_id) account, also emailed unless
+    they turned email off. `role` is required: ids repeat across the three tables."""
+    if role not in ACCOUNT_MODELS:
+        raise ValueError(f'unknown role {role!r}')
+    notification = Notification(user_role=role, user_id=user_id, title=title, message=message, type=type)
     db.session.add(notification)
     db.session.commit()
+    if email:
+        email_notification(role, user_id, title, message)
     return notification
- 
-def log_activity(user_id, action, details=None, ip_address=None):
-    db.session.add(ActivityLog(user_id=user_id, action=action, details=details,
+
+def notify_admins(title, message, type='info'):
+    for admin in Admin.query.filter_by(is_active=True).all():
+        create_notification(admin.id, title, message, type, role='admin')
+
+def _external_url(endpoint, **values):
+    """Absolute link for emails. APP_BASE_URL (e.g. https://devtech.ph) wins when set,
+    which matters behind a proxy; otherwise the current request's host is used."""
+    base = os.environ.get('APP_BASE_URL', '').rstrip('/')
+    try:
+        if base:
+            return base + url_for(endpoint, **values)
+        return url_for(endpoint, _external=True, **values)
+    except RuntimeError:          # no request context (e.g. a CLI command)
+        return base or None
+
+def _site_name():
+    row = SystemSetting.query.filter_by(setting_key='system_name').first()
+    return (row.value if row and row.value else 'DEVTech Computer Services')
+
+def email_notification(role, user_id, title, message):
+    """Email a copy of a notification. Skipped when email is off, the account is
+    inactive/placeholder, or a customer disabled email notifications."""
+    if not email_service.is_enabled(app):
+        return False
+    user = get_account(role, user_id)
+    if not user or not user.is_active or not email_service.deliverable(user.email):
+        return False
+    if role == 'customer':
+        pref = UserPreference.query.filter_by(customer_id=user_id).first()
+        if pref is not None and pref.email_notifications is False:
+            return False
+    endpoint = {'admin': 'admin_notifications', 'technician': 'technician.notifications'}.get(role, 'notifications')
+    site_name = _site_name()
+    html_body, text_body = email_service.render(title, message, _external_url(endpoint),
+                                                'Open notifications', site_name)
+    return email_service.queue_email(user.email, f'{title} - {site_name}', html_body, text_body, app)
+
+def log_activity(user_id, action, details=None, ip_address=None, role=None):
+    """Record an action. The actor's role defaults to the signed-in role;
+    pass role= when logging for someone else (or None for anonymous)."""
+    if user_id is not None and role is None:
+        role = session.get('role')
+    db.session.add(ActivityLog(user_role=role if user_id is not None else None, user_id=user_id,
+                               action=action, details=details,
                                ip_address=ip_address or request.remote_addr))
     db.session.commit()
     
@@ -625,35 +1055,18 @@ def add_receipt_image_column():
     with app.app_context():
         _try_sql("ALTER TABLE transactions ADD COLUMN receipt_image VARCHAR(255) NULL")
  
-def add_oauth_columns():
+PROFILE_COLUMNS = [("display_name", "VARCHAR(60) NULL"), ("headline", "VARCHAR(120) NULL"),
+                   ("avatar_file", "VARCHAR(64) NULL"), ("avatar_icon", "VARCHAR(30) NULL"),
+                   ("avatar_color", "VARCHAR(20) NULL"), ("avatar_frame", "VARCHAR(20) NULL"),
+                   ("banner", "VARCHAR(20) NULL")]
+
+def add_profile_columns():
+    """Profile look columns (avatar, banner, display name) on all three account tables."""
     with app.app_context():
-        _try_sql("ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(20) NULL, "
-                 "ADD COLUMN oauth_id VARCHAR(255) NULL")
-        _try_sql("ALTER TABLE users ADD CONSTRAINT uq_users_oauth_identity "
-                 "UNIQUE (oauth_provider, oauth_id)")
- 
-def add_order_address_columns():
-    with app.app_context():
-        cols = [("recipient_name", "VARCHAR(100) NULL"), ("recipient_phone", "VARCHAR(20) NULL"),
-                ("address_line", "VARCHAR(255) NULL"), ("city", "VARCHAR(50) NULL"),
-                ("province", "VARCHAR(50) NULL"), ("postal_code", "VARCHAR(10) NULL"),
-                ("latitude", "DECIMAL(10,7) NULL"), ("longitude", "DECIMAL(10,7) NULL")]
-        added = any([_try_sql(f"ALTER TABLE orders ADD COLUMN {n} {d}") for n, d in cols])
-        if added:
-            _try_sql("""UPDATE orders o JOIN users u ON u.id = o.user_id SET
-                o.recipient_name = COALESCE(o.recipient_name, u.full_name),
-                o.recipient_phone = COALESCE(o.recipient_phone, u.phone),
-                o.address_line = COALESCE(o.address_line, u.address),
-                o.city = COALESCE(o.city, u.city), o.province = COALESCE(o.province, u.province),
-                o.postal_code = COALESCE(o.postal_code, u.postal_code),
-                o.latitude = COALESCE(o.latitude, u.latitude),
-                o.longitude = COALESCE(o.longitude, u.longitude)
-                WHERE o.address_line IS NULL""", "Backfilled delivery addresses for existing orders.")
- 
-def add_user_presence_columns():
-    with app.app_context():
-        _try_sql("ALTER TABLE users ADD COLUMN last_active DATETIME NULL")
- 
+        for table in ('customers', 'technicians', 'admins'):
+            for name, d in PROFILE_COLUMNS:
+                _try_sql(f"ALTER TABLE {table} ADD COLUMN {name} {d}")
+
 def add_service_category_columns():
     """Same columns as database/migrate_service_categories.sql, for DBs created before it."""
     with app.app_context():
@@ -697,43 +1110,159 @@ def get_user_presence(user):
 # ==================== AUTH ROUTES ====================
 @app.route('/')
 def home():
+    from models.technician_models import ServiceRating
     services = Service.query.filter_by(is_active=True).limit(6).all()
     categories = ServiceCategory.query.filter_by(is_active=True).all()
-    return render_template('home.html', services=services, categories=categories)
- 
+    avg, count = db.session.query(func.avg(ServiceRating.stars), func.count(ServiceRating.id)).one()
+    # Real figures from the database; the template hides any that are still zero.
+    stats = {
+        'repairs_done': Booking.query.filter(Booking.status.in_(FINISHED_STATUSES)).count(),
+        'avg_rating': round(float(avg), 1) if avg else None,
+        'rating_count': count,
+        'technicians': Technician.query.filter_by(is_active=True, id_verified=True).count(),
+    }
+    return render_template('home.html', services=services, categories=categories, stats=stats)
+
+@app.route('/contact', methods=['POST'])
+@limiter.limit('5 per hour')
+def contact():
+    """Public contact form on the home page. Stored for the admin Support page."""
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    subject = (data.get('subject') or '').strip()
+    message = (data.get('message') or '').strip()
+    if not (name and email and subject and message):
+        return jsonify({'success': False, 'message': 'Please fill in all fields.'}), 400
+    if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email) or len(email) > 120:
+        return jsonify({'success': False, 'message': 'Please enter a valid email address.'}), 400
+    if len(name) > 100 or len(subject) > 200 or len(message) > 5000:
+        return jsonify({'success': False, 'message': 'Your message is too long.'}), 400
+    inquiry = ContactInquiry(name=name, email=email, subject=subject, message=message,
+                             ip_address=request.remote_addr)
+    db.session.add(inquiry)
+    db.session.commit()
+    notify_admins('New Website Inquiry', f'{name}: {subject}')
+    return jsonify({'success': True, 'message': "Thank you for your message! We'll get back to you soon."})
+
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
 def login():
+    """Customer sign-in. Technicians and admins who use their email here are
+    signed in to their own portal (emails are unique across all accounts)."""
     if request.method == 'POST':
-        email = (request.form.get('email') or '').strip()
-        password = request.form.get('password')
-        user = User.query.filter_by(email=email).first()
+        email = (request.form.get('email') or '').strip().lower()
+        password = request.form.get('password') or ''
+        user = find_account_by_email(email)
         if user and user.check_password(password):
             if not user.is_active:
                 flash('Your account has been deactivated. Please contact support.', 'danger')
                 return render_template('auth/login.html')
-            session['user_id'] = user.id
-            session['username'] = user.username
-            session['role'] = user.role
-            log_activity(user.id, 'login', f'User logged in from {request.remote_addr}')
-            if user.role == 'admin':
-                return redirect(url_for('admin_dashboard'))
-            if user.role == 'technician':
-                return redirect(url_for('technician.dashboard'))
-            return redirect(url_for('user_dashboard'))
+            # "Remember me" keeps the session for PERMANENT_SESSION_LIFETIME (7 days);
+            # otherwise it ends when the browser closes.
+            login_account(user, remember=request.form.get('remember'))
+            log_activity(user.id, 'login', f'Logged in from {request.remote_addr}')
+            return redirect(url_for(home_endpoint_for(user.role)))
         flash('Invalid email or password.', 'danger')
     return render_template('auth/login.html')
- 
+
+# ==================== PASSWORD RESET BY EMAIL ====================
+# The token carries the account (role + id) plus a fingerprint of the current
+# password hash, so it stops working once the password changes (single use)
+# and after 1 hour.
+RESET_TOKEN_MAX_AGE = 3600
+
+def _reset_serializer():
+    return URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='password-reset')
+
+def make_reset_token(user):
+    return _reset_serializer().dumps({'role': user.role, 'uid': user.id, 'pw': user.password_hash[-16:]})
+
+def user_from_reset_token(token):
+    try:
+        data = _reset_serializer().loads(token, max_age=RESET_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+    if not isinstance(data, dict):
+        return None
+    user = get_account(data.get('role'), data.get('uid'))
+    if not user or not user.is_active:
+        return None
+    if not hmac.compare_digest(user.password_hash[-16:], str(data.get('pw', ''))):
+        return None
+    return user
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+@limiter.limit('5 per hour', methods=['POST'])
+def forgot_password():
+    enabled = email_service.is_enabled(app)
+    if request.method == 'POST' and enabled:
+        email = (request.form.get('email') or '').strip().lower()
+        user = find_account_by_email(email)
+        # Same response whether or not the account exists (no account probing).
+        if user and user.is_active and email_service.deliverable(user.email):
+            link = _external_url('reset_password', token=make_reset_token(user))
+            site_name = _site_name()
+            html_body, text_body = email_service.render(
+                'Reset your password',
+                f'Hi {user.full_name},\n\nWe received a request to reset the password for your '
+                f'{site_name} account. The link below works once and expires in 1 hour.\n\n'
+                'If you did not ask for this, you can ignore this email; your password stays the same.',
+                link, 'Choose a new password', site_name)
+            email_service.queue_email(user.email, f'Reset your {site_name} password', html_body, text_body, app)
+            log_activity(user.id, 'password_reset_requested', 'Password reset link emailed', role=user.role)
+        return render_template('auth/forgot_password.html', sent=True, email_enabled=enabled)
+    return render_template('auth/forgot_password.html', sent=False, email_enabled=enabled)
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+@limiter.limit('10 per hour', methods=['POST'])
+def reset_password(token):
+    user = user_from_reset_token(token)
+    if not user:
+        return render_template('auth/reset_password.html', valid=False), 400
+    if request.method == 'POST':
+        password = request.form.get('password') or ''
+        confirm = request.form.get('confirm') or ''
+        error = None
+        if len(password) < 8 or not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
+            error = 'Use at least 8 characters, including a letter and a number.'
+        elif password != confirm:
+            error = 'The two passwords do not match.'
+        if error:
+            flash(error, 'danger')
+            return render_template('auth/reset_password.html', valid=True, email=user.email), 400
+        user.set_password(password)          # also invalidates this link
+        db.session.commit()
+        log_activity(user.id, 'password_reset', 'Password changed with an email reset link', role=user.role)
+        create_notification(user.id, 'Your password was changed',
+                            'Your password was just reset using a link sent to this email. '
+                            'If this was not you, contact us right away.', 'warning', role=user.role)
+        session.clear()
+        flash('Password updated. Sign in with your new password.', 'success')
+        if user.role == 'technician':
+            return redirect(url_for('technician.login'))
+        if user.role == 'admin':
+            return redirect(url_for('admin_login'))
+        return redirect(url_for('login'))
+    return render_template('auth/reset_password.html', valid=True, email=user.email)
+
+def _unique_customer_username(email):
+    base = email.split('@')[0][:60] or 'customer'
+    username = base
+    while Customer.query.filter_by(username=username).first():
+        username = f"{base}{secrets.token_hex(3)}"
+    return username
+
 @app.route('/register', methods=['GET', 'POST'])
 @limiter.limit('5 per minute')
 def register():
     if request.method == 'POST':
-        full_name = request.form.get('fullName')
+        full_name = (request.form.get('fullName') or '').strip()
         email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password')
         re_password = request.form.get('rePassword')
         phone = request.form.get('phone')
- 
+
         if not full_name or not email or not password:
             flash('All fields are required.', 'danger')
             return render_template('auth/register.html')
@@ -743,78 +1272,76 @@ def register():
         if len(password) < 6:
             flash('Password must be at least 6 characters long.', 'danger')
             return render_template('auth/register.html')
-        if User.query.filter_by(email=email).first():
+        if email_in_use(email):
             flash('Email already registered.', 'danger')
             return render_template('auth/register.html')
- 
-        username = email.split('@')[0]
-        if User.query.filter_by(username=username).first():
-            username = f"{username}{datetime.utcnow().strftime('%d%m%Y')}"
- 
-        user = User(username=username, email=email, full_name=full_name, phone=phone, role='customer')
+
+        user = Customer(username=_unique_customer_username(email), email=email,
+                        full_name=full_name, phone=phone)
         user.set_password(password)
         db.session.add(user)
         db.session.commit()
         create_notification(user.id, 'Welcome to DEVTech!',
-                            'Thank you for registering. Start booking your repair services today!', 'success')
+                            'Thank you for registering. Start booking your repair services today!',
+                            'success', role='customer')
         flash('Registration successful! Please log in.', 'success')
         return redirect(url_for('login'))
     return render_template('auth/register.html')
- 
+
 @app.route('/logout')
 def logout():
-    if 'user_id' in session:
-        log_activity(session['user_id'], 'logout', 'User logged out')
+    if 'user_id' in session and session.get('role') in ACCOUNT_MODELS:
+        log_activity(session['user_id'], 'logout', 'Logged out')
     session.clear()
     flash('You have been logged out.', 'info')
     return redirect(url_for('home'))
- 
-# ---- Social login ----
-def _unique_username_from_email(email):
-    base = email.split('@')[0]
-    username = base
-    if User.query.filter_by(username=username).first():
-        username = f"{base}{secrets.token_hex(3)}"
-    return username
- 
-def _login_or_create_oauth_user(provider, provider_id, email, full_name):
+
+# ---- Social login (customers only) ----
+def _login_or_create_oauth_user(provider, provider_id, email, full_name, email_verified):
     if not email:
         flash('We could not get an email address from your account. Please try a different sign-in method.', 'danger')
         return redirect(url_for('login'))
-    user = User.query.filter_by(oauth_provider=provider, oauth_id=provider_id).first()
+    # Linking by email is only safe when the provider vouches for the address;
+    # otherwise anyone could claim an existing account's email.
+    if not email_verified:
+        flash(f'Your {provider.title()} email address is not verified. Please verify it or sign in with your password.', 'danger')
+        return redirect(url_for('login'))
+    email = email.strip().lower()
+    user = Customer.query.filter_by(oauth_provider=provider, oauth_id=provider_id).first()
     is_new_user = False
     if not user:
-        user = User.query.filter_by(email=email).first()
+        existing = find_account_by_email(email)
+        if existing and existing.role != 'customer':
+            flash('Staff accounts must sign in with their password.', 'danger')
+            return redirect(url_for('login'))
+        user = existing
         if user:
             user.oauth_provider = user.oauth_provider or provider
             user.oauth_id = user.oauth_id or provider_id
         else:
-            user = User(username=_unique_username_from_email(email), email=email,
-                        full_name=full_name or email.split('@')[0], role='customer',
-                        oauth_provider=provider, oauth_id=provider_id)
+            user = Customer(username=_unique_customer_username(email), email=email,
+                            full_name=full_name or email.split('@')[0],
+                            oauth_provider=provider, oauth_id=provider_id)
             user.password_hash = bcrypt.generate_password_hash(secrets.token_urlsafe(32)).decode('utf-8')
             db.session.add(user)
             is_new_user = True
         db.session.commit()
         if is_new_user:
             create_notification(user.id, 'Welcome to DEVTech!',
-                                'Thank you for registering. Start booking your repair services today!', 'success')
+                                'Thank you for registering. Start booking your repair services today!',
+                                'success', role='customer')
     if not user.is_active:
         flash('Your account has been deactivated. Please contact support.', 'danger')
         return redirect(url_for('login'))
-    session['user_id'] = user.id
-    session['username'] = user.username
-    session['role'] = user.role
-    log_activity(user.id, 'login', f'User logged in via {provider} from {request.remote_addr}')
+    login_account(user)
+    log_activity(user.id, 'login', f'Logged in via {provider} from {request.remote_addr}')
     flash(f'Logged in with {provider.title()}.', 'success')
-    if user.role == 'admin':
-        return redirect(url_for('admin_dashboard'))
     return redirect(url_for('user_dashboard'))
- 
+
 @app.route('/login/google')
 def google_login():
     return oauth.google.authorize_redirect(url_for('google_callback', _external=True))
- 
+
 @app.route('/login/google/callback')
 def google_callback():
     try:
@@ -823,12 +1350,13 @@ def google_callback():
         flash('Google sign-in was cancelled or failed. Please try again.', 'danger')
         return redirect(url_for('login'))
     userinfo = token.get('userinfo') or oauth.google.parse_id_token(token, nonce=None)
-    return _login_or_create_oauth_user('google', userinfo['sub'], userinfo.get('email'), userinfo.get('name'))
- 
+    return _login_or_create_oauth_user('google', userinfo['sub'], userinfo.get('email'), userinfo.get('name'),
+                                       userinfo.get('email_verified') is True)
+
 @app.route('/login/facebook')
 def facebook_login():
     return oauth.facebook.authorize_redirect(url_for('facebook_callback', _external=True))
- 
+
 @app.route('/login/facebook/callback')
 def facebook_callback():
     try:
@@ -837,33 +1365,40 @@ def facebook_callback():
     except Exception:
         flash('Facebook sign-in was cancelled or failed. Please try again.', 'danger')
         return redirect(url_for('login'))
-    return _login_or_create_oauth_user('facebook', profile['id'], profile.get('email'), profile.get('name'))
- 
+    # Facebook's Graph API only returns an email the user has confirmed.
+    return _login_or_create_oauth_user('facebook', profile['id'], profile.get('email'), profile.get('name'), True)
+
 @app.route('/admin/login', methods=['GET', 'POST'])
 @limiter.limit('5 per minute')
 def admin_login():
     if request.method == 'POST':
-        email = (request.form.get('email') or '').strip()
-        password = request.form.get('password')
-        user = User.query.filter_by(email=email).first()
-        if user and user.check_password(password) and user.role == 'admin' and user.is_active:
-            session['user_id'] = user.id
-            session['username'] = user.username
-            session['role'] = user.role
+        email = (request.form.get('email') or '').strip().lower()
+        password = request.form.get('password') or ''
+        user = Admin.query.filter(func.lower(Admin.email) == email).first()
+        if user and user.check_password(password) and user.is_active:
+            login_account(user)
             log_activity(user.id, 'admin_login', f'Admin logged in from {request.remote_addr}')
             flash('Welcome to Admin Dashboard!', 'success')
             return redirect(url_for('admin_dashboard'))
         flash('Invalid admin credentials or unauthorized access.', 'danger')
     return render_template('auth/admin_login.html')
- 
+
+def _unique_admin_username(email):
+    base = email.split('@')[0][:60] or 'admin'
+    username = base
+    while Admin.query.filter_by(username=username).first():
+        username = f'{base}_{secrets.token_hex(3)}'
+    return username
+
 # ---- First-admin setup page (only exists while there is no admin) ----
 @app.route('/setup/first-admin', methods=['GET', 'POST'])
 @limiter.limit('10 per hour')
 def setup_first_admin():
-    if User.query.filter_by(role='admin').first():
+    if Admin.query.first():
         abort(404)
+    # Disabled unless SETUP_TOKEN is set; a blank token must never mean "open to anyone".
     expected = os.environ.get('SETUP_TOKEN', '')
-    if expected and not hmac.compare_digest(request.values.get('token', ''), expected):
+    if not expected or not hmac.compare_digest(request.values.get('token', ''), expected):
         abort(404)
     errors, email, name = [], '', ''
     if request.method == 'POST':
@@ -874,12 +1409,9 @@ def setup_first_admin():
         if not name: errors.append('Enter your full name.')
         if len(pw) < 8: errors.append('Password must be at least 8 characters.')
         if pw != confirm: errors.append('Passwords do not match.')
-        if email and User.query.filter_by(email=email).first(): errors.append('That email is already registered.')
+        if email and email_in_use(email): errors.append('That email is already registered.')
         if not errors:
-            uname = email.split('@')[0]
-            if User.query.filter_by(username=uname).first():
-                uname += '_' + secrets.token_hex(3)
-            u = User(username=uname, email=email, full_name=name, role='admin', is_active=True)
+            u = Admin(username=_unique_admin_username(email), email=email, full_name=name, is_active=True)
             u.set_password(pw)
             db.session.add(u)
             db.session.commit()
@@ -887,85 +1419,214 @@ def setup_first_admin():
             return redirect(url_for('admin_login'))
     return render_template('setup_first_admin.html', errors=errors, email=email, name=name)
 
- 
+
 # ==================== USER DASHBOARD ROUTES ====================
+def _notifications_for(role, user_id):
+    return Notification.query.filter_by(user_role=role, user_id=user_id)
+
+def _unread_messages_for(role, user_id):
+    return Message.query.filter_by(recipient_role=role, recipient_id=user_id, is_read=False).count()
+
+# ==================== LIVE UPDATES (polled by static/js/live.js) ====================
+# Every few seconds each open page asks /api/live for a small summary: unread
+# counts, the newest notification/message ids, and a fingerprint ("stamp") of the
+# data that account's pages show. The page updates badges and pop-ups from the
+# counts and refreshes itself when the stamp changes - no manual reload needed.
+
+def _count_where(cond):
+    return func.sum(sa_case((cond, 1), else_=0))
+
+def _live_stamp(account):
+    """Fingerprint of what this account's pages display (messages and notifications
+    are tracked separately by id). Changes whenever any of it changes."""
+    from models.technician_models import (ApprovalRequest, JobLog, ServiceReport, IncidentReport,
+                                          ServiceRating, IntakeRecord)
+    q = db.session.query
+    role, aid = account.role, account.id
+    parts = []
+
+    def add(*columns, where=()):
+        parts.append(tuple(q(*columns).filter(*where).one()))
+
+    if role == 'customer':
+        mine = q(Booking.id).filter(Booking.customer_id == aid)
+        add(func.count(Booking.id), func.max(Booking.updated_at), where=[Booking.customer_id == aid])
+        add(func.count(Order.id), func.max(Order.updated_at), where=[Order.customer_id == aid])
+        add(func.count(Transaction.id), func.max(Transaction.updated_at), where=[Transaction.customer_id == aid])
+        add(func.count(SupportTicket.id), func.max(SupportTicket.updated_at), where=[SupportTicket.customer_id == aid])
+        add(func.count(ApprovalRequest.id), func.max(ApprovalRequest.responded_at),
+            _count_where(ApprovalRequest.status == 'pending'), where=[ApprovalRequest.booking_id.in_(mine)])
+        add(func.max(JobLog.id), where=[JobLog.booking_id.in_(mine)])
+        add(func.count(ServiceReport.id), func.max(ServiceReport.updated_at), where=[ServiceReport.booking_id.in_(mine)])
+    elif role == 'technician':
+        jobs = q(Booking.id).filter(Booking.technician_id == aid)
+        add(func.count(Booking.id), func.max(Booking.updated_at), func.max(Booking.assigned_at),
+            where=[Booking.technician_id == aid])
+        add(func.max(JobLog.id), where=[JobLog.booking_id.in_(jobs)])
+        add(func.count(ApprovalRequest.id), func.max(ApprovalRequest.responded_at),
+            _count_where(ApprovalRequest.status == 'pending'), where=[ApprovalRequest.technician_id == aid])
+        add(func.count(ServiceReport.id), func.max(ServiceReport.updated_at), func.max(ServiceReport.reviewed_at),
+            where=[ServiceReport.technician_id == aid])
+        add(func.count(IncidentReport.id), func.max(IncidentReport.reviewed_at), where=[IncidentReport.technician_id == aid])
+        add(func.count(IntakeRecord.id), func.max(IntakeRecord.id), where=[IntakeRecord.booking_id.in_(jobs)])
+        add(func.count(ServiceRating.id), where=[ServiceRating.technician_id == aid])
+        add(func.count(Technician.id), _count_where(Technician.id_verified.is_(True)), where=[Technician.id == aid])
+    else:   # admin sees everything
+        add(func.count(Booking.id), func.max(Booking.updated_at), func.max(Booking.assigned_at))
+        add(func.count(Order.id), func.max(Order.updated_at))
+        add(func.count(Transaction.id), func.max(Transaction.updated_at))
+        add(func.count(SupportTicket.id), func.max(SupportTicket.updated_at))
+        add(func.count(ContactInquiry.id), _count_where(ContactInquiry.status == 'new'))
+        add(func.count(ApprovalRequest.id), func.max(ApprovalRequest.responded_at))
+        add(func.max(JobLog.id))
+        add(func.count(ServiceReport.id), func.max(ServiceReport.updated_at), func.max(ServiceReport.reviewed_at))
+        add(func.count(IncidentReport.id), func.max(IncidentReport.reviewed_at), _count_where(IncidentReport.status == 'open'))
+        add(func.count(ServiceRating.id))
+        # accounts: not updated_at, which every presence ping touches
+        for model in (Customer, Technician, Admin):
+            add(func.count(model.id), func.max(model.id), _count_where(model.is_active.is_(True)))
+        add(_count_where(Technician.id_verified.is_(True)))
+    # shared catalogue and settings (shop, services, prices)
+    add(func.count(Product.id), func.max(Product.updated_at))
+    add(func.count(Service.id), func.max(Service.id), func.sum(Service.price), _count_where(Service.is_active.is_(True)))
+    add(func.count(ServiceCategory.id), _count_where(ServiceCategory.is_active.is_(True)))
+    add(func.max(SystemSetting.updated_at))
+    return hashlib.sha1(repr(parts).encode()).hexdigest()[:16]
+
+def live_state(account):
+    role, aid = account.role, account.id
+    mine = or_(and_(Message.recipient_role == role, Message.recipient_id == aid),
+               and_(Message.sender_role == role, Message.sender_id == aid))
+    return {
+        'n': db.session.query(func.max(Notification.id))
+               .filter(Notification.user_role == role, Notification.user_id == aid).scalar() or 0,
+        'nu': _notifications_for(role, aid).filter_by(is_read=False).count(),
+        'm': db.session.query(func.max(Message.id)).filter(mine).scalar() or 0,
+        'mu': _unread_messages_for(role, aid),
+        's': _live_stamp(account),
+    }
+
+@app.route('/api/live')
+@limiter.exempt
+def api_live():
+    account = current_account()
+    if not account or not account.is_active:
+        return jsonify({'ok': False}), 401
+    state = live_state(account)
+    since_n = request.args.get('n', type=int)
+    since_m = request.args.get('m', type=int)
+    if since_n is not None and state['n'] > since_n:
+        rows = _notifications_for(account.role, account.id).filter(Notification.id > since_n)\
+            .order_by(Notification.id.desc()).limit(5).all()
+        state['new_notifications'] = [{'id': n.id, 'title': n.title, 'message': n.message, 'type': n.type}
+                                      for n in rows]
+    if since_m is not None and state['m'] > since_m:
+        rows = Message.query.filter(Message.recipient_role == account.role, Message.recipient_id == account.id,
+                                    Message.id > since_m).order_by(Message.id.desc()).limit(5).all()
+        new_messages = []
+        for m in rows:
+            sender = m.sender
+            new_messages.append({
+                'id': m.id,
+                'from': ('DEVTech Support' if m.sender_role == 'admin' and account.role != 'admin'
+                         else (sender.shown_name if sender else 'Someone')),
+                'preview': message_preview(m)[:140],
+                'key': f'{m.sender_role}-{m.sender_id}',
+            })
+        state['new_messages'] = new_messages
+    state['ok'] = True
+    resp = jsonify(state)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+@app.context_processor
+def _inject_live_boot():
+    """live_boot() -> the starting live state for this page (or None when signed out)."""
+    def live_boot():
+        try:
+            account = current_account()
+            return live_state(account) if account and account.is_active else None
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('live_boot failed')
+            return None
+    return {'live_boot': live_boot}
+
 @app.route('/user/dashboard')
 @login_required
 def user_dashboard():
     user_id = session.get('user_id')
-    user = User.query.get(user_id)
+    user = current_account()
     # Full list (was limited to 5, which capped every stat card at 5). Template slices [:3].
-    bookings = Booking.query.filter_by(user_id=user_id).order_by(Booking.created_at.desc()).all()
-    transactions = Transaction.query.filter_by(user_id=user_id).order_by(Transaction.transaction_date.desc()).limit(5).all()
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
-    unread_messages = 0
-    try:
-        unread_messages = Message.query.filter_by(recipient_id=user_id, is_read=False).count()
-    except Exception:
-        pass
+    bookings = Booking.query.filter_by(customer_id=user_id).order_by(Booking.created_at.desc()).all()
+    transactions = Transaction.query.filter_by(customer_id=user_id).order_by(Transaction.transaction_date.desc()).limit(5).all()
+    notifications = _notifications_for('customer', user_id).filter_by(is_read=False)\
+        .order_by(Notification.created_at.desc()).limit(5).all()
+    unread_messages = _unread_messages_for('customer', user_id)
     return render_template('user/user_dashboard.html', user=user, bookings=bookings,
                            transactions=transactions, notifications=notifications,
                            unread_messages=unread_messages)
- 
+
 # ==================== BOOKING STATUS ROUTES ====================
 def _unread_notifs(user_id):
-    return Notification.query.filter_by(user_id=user_id, is_read=False)\
+    return _notifications_for('customer', user_id).filter_by(is_read=False)\
         .order_by(Notification.created_at.desc()).limit(5).all()
- 
+
 @app.route('/total-bookings')
 @login_required
 def total_bookings():
     uid = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=uid).order_by(Booking.created_at.desc()).all()
+    bookings = Booking.query.filter_by(customer_id=uid).order_by(Booking.created_at.desc()).all()
     return render_template('user/total_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
- 
+
 @app.route('/completed-bookings')
 @login_required
 def completed_bookings():
     uid = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=uid, status='completed').order_by(Booking.created_at.desc()).all()
+    bookings = Booking.query.filter_by(customer_id=uid, status='completed').order_by(Booking.created_at.desc()).all()
     return render_template('user/completed_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
- 
+
 @app.route('/inprogress-bookings')
 @login_required
 def inprogress_bookings():
     uid = session.get('user_id')
-    bookings = Booking.query.filter(Booking.user_id == uid,
-                                    Booking.status.in_(['pending', 'confirmed', 'in_progress', 'on_hold'])
+    bookings = Booking.query.filter(Booking.customer_id == uid,
+                                    Booking.status.in_(['pending', 'confirmed', 'diagnosis_pending', 'in_progress', 'on_hold'])
                                     ).order_by(Booking.created_at.desc()).all()
     return render_template('user/inprogress_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
- 
+
 @app.route('/pending-bookings')
 @login_required
 def pending_bookings():
     uid = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=uid, status='pending').order_by(Booking.created_at.desc()).all()
+    bookings = Booking.query.filter_by(customer_id=uid, status='pending').order_by(Booking.created_at.desc()).all()
     return render_template('user/pending_bookings.html', bookings=bookings, notifications=_unread_notifs(uid))
- 
+
 @app.route('/rejected-requests')
 @login_required
 def rejected_requests():
     uid = session.get('user_id')
-    bookings = Booking.query.filter_by(user_id=uid, status='cancelled').order_by(Booking.created_at.desc()).all()
+    bookings = Booking.query.filter_by(customer_id=uid, status='cancelled').order_by(Booking.created_at.desc()).all()
     return render_template('user/rejected_requests.html', bookings=bookings, notifications=_unread_notifs(uid))
- 
+
 @app.route('/booking/<int:booking_id>/cancel', methods=['POST'])
 @login_required
 def cancel_booking(booking_id):
     user_id = session.get('user_id')
     booking = Booking.query.get_or_404(booking_id)
-    if booking.user_id != user_id:
+    if booking.customer_id != user_id:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     if booking.status not in ['pending', 'confirmed']:
         return jsonify({'success': False, 'message': 'This booking cannot be cancelled'}), 400
-    booking.status = 'cancelled'    
+    booking.status = 'cancelled'
     booking.updated_at = datetime.utcnow()
     db.session.commit()
     if booking.technician_id:
         create_notification(booking.technician_id, 'Job Cancelled',
-        f'{booking.booking_number} was cancelled by the customer.', 'warning')
-        
-    create_notification(user_id, 'Booking Cancelled', f'Your booking {booking.booking_number} has been cancelled.', 'warning')
+                            f'{booking.booking_number} was cancelled by the customer.', 'warning',
+                            role='technician')
+    create_notification(user_id, 'Booking Cancelled', f'Your booking {booking.booking_number} has been cancelled.',
+                        'warning', role='customer')
     return jsonify({'success': True, 'message': 'Booking cancelled successfully'})
 
 # ==================== NOTIFICATION ROUTES ====================
@@ -973,7 +1634,7 @@ def cancel_booking(booking_id):
 @login_required
 def notifications():
     user_id = session.get('user_id')
-    notifs = Notification.query.filter_by(user_id=user_id).order_by(Notification.created_at.desc()).all()
+    notifs = _notifications_for('customer', user_id).order_by(Notification.created_at.desc()).all()
     view = list(notifs)                     # render read-state as it was on arrival
     rendered = render_template('user/notification.html', notifications=view)
     for n in notifs:
@@ -981,174 +1642,292 @@ def notifications():
             n.is_read = True
     db.session.commit()
     return rendered
- 
+
 @app.route('/api/notifications/unread-count')
+@limiter.exempt
 @login_required
 def api_notification_unread_count():
-    count = Notification.query.filter_by(user_id=session.get('user_id'), is_read=False).count()
+    count = _notifications_for('customer', session.get('user_id')).filter_by(is_read=False).count()
     return jsonify({'count': count})
- 
+
+def _own_customer_notification(notification_id):
+    n = Notification.query.get_or_404(notification_id)
+    if n.user_role != 'customer' or n.user_id != session.get('user_id'):
+        return None
+    return n
+
 @app.route('/notification/<int:notification_id>/read', methods=['POST'])
 @login_required
 def notification_read(notification_id):
-    n = Notification.query.get_or_404(notification_id)
-    if n.user_id != session.get('user_id'):
+    n = _own_customer_notification(notification_id)
+    if not n:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     n.is_read = True
     db.session.commit()
     return jsonify({'success': True, 'message': 'Notification marked as read'})
- 
+
 @app.route('/notification/mark-all-read', methods=['POST'])
 @login_required
 def notification_mark_all_read():
-    Notification.query.filter_by(user_id=session.get('user_id'), is_read=False).update({'is_read': True})
+    _notifications_for('customer', session.get('user_id')).filter_by(is_read=False).update({'is_read': True})
     db.session.commit()
     return jsonify({'success': True, 'message': 'All notifications marked as read'})
- 
+
 @app.route('/notification/<int:notification_id>/delete', methods=['DELETE'])
 @login_required
 def notification_delete(notification_id):
-    n = Notification.query.get_or_404(notification_id)
-    if n.user_id != session.get('user_id'):
+    n = _own_customer_notification(notification_id)
+    if not n:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     db.session.delete(n)
     db.session.commit()
     return jsonify({'success': True, 'message': 'Notification deleted'})
- 
+
 
 # ==================== MESSAGE ROUTES ====================
-def _thread_filter(a, b):
-    return or_(and_(Message.sender_id == a, Message.recipient_id == b),
-               and_(Message.sender_id == b, Message.recipient_id == a))
+# Both sides of a message can be any kind of account, so every conversation is
+# identified by the other person's account key ('technician-3', 'admin-1', ...).
+MAX_MESSAGE_LENGTH = 5000
+MESSAGE_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
 
-def _can_message(user_id, other_id):
-    other = User.query.get(other_id)
-    me = User.query.get(user_id)
-    if not other or not me or other.id == me.id:
+def check_message_attachment(file_storage):
+    """(checked, error) for an optional attachment; (None, None) if none was sent."""
+    if not file_storage or not file_storage.filename:
+        return None, None
+    from services.upload_service import check_file
+    ok, result = check_file(file_storage, MESSAGE_ATTACHMENT_MAX_BYTES)
+    return (result, None) if ok else (None, result)
+
+def store_message_attachment(message_id, checked):
+    """Write a file already validated by check_message_attachment. Does not commit."""
+    data, mime, ext, safe_name = checked
+    stored = secrets.token_hex(12) + ext
+    folder = app.config['MESSAGE_UPLOAD_FOLDER']
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, stored), 'wb') as fh:
+        fh.write(data)
+    attachment = MessageAttachment(message_id=message_id, filename=stored, original_name=safe_name[:255],
+                                   mime_type=mime, size_bytes=len(data))
+    db.session.add(attachment)
+    return attachment
+
+def attachment_info(a):
+    return {'url': url_for('message_attachment', attachment_id=a.id), 'name': a.original_name,
+            'is_image': a.mime_type.startswith('image/')}
+
+def attachments_by_message(message_ids):
+    """{message_id: [attachment_info, ...]} for the given messages."""
+    out = {}
+    message_ids = list(message_ids)
+    if message_ids:
+        for a in MessageAttachment.query.filter(MessageAttachment.message_id.in_(message_ids)).all():
+            out.setdefault(a.message_id, []).append(attachment_info(a))
+    return out
+
+def message_preview(message):
+    """Short text for conversation lists; attachment-only messages show a clip."""
+    if message is None:
+        return 'No messages'
+    if message.content:
+        return message.content
+    return '📎 Attachment'
+
+app.jinja_env.globals['message_preview'] = message_preview
+
+def _is_party(message, account):
+    return ((message.sender_role, message.sender_id) == (account.role, account.id) or
+            (message.recipient_role, message.recipient_id) == (account.role, account.id))
+
+@app.route('/messages/attachments/<int:attachment_id>')
+@account_required
+def message_attachment(attachment_id):
+    """Only the two people in the conversation can open an attachment."""
+    a = MessageAttachment.query.get_or_404(attachment_id)
+    m = db.session.get(Message, a.message_id)
+    if not m or not _is_party(m, current_account()):
+        abort(404)
+    path = os.path.join(app.config['MESSAGE_UPLOAD_FOLDER'], a.filename)
+    if not os.path.isfile(path):
+        abort(404)
+    # Images display inline; anything else (PDF) downloads.
+    return send_file(path, mimetype=a.mime_type, download_name=a.original_name,
+                     as_attachment=not a.mime_type.startswith('image/'))
+
+def _thread_filter(a, b):
+    """Messages between accounts a and b, in either direction."""
+    return or_(and_(Message.sender_role == a.role, Message.sender_id == a.id,
+                    Message.recipient_role == b.role, Message.recipient_id == b.id),
+               and_(Message.sender_role == b.role, Message.sender_id == b.id,
+                    Message.recipient_role == a.role, Message.recipient_id == a.id))
+
+def _can_message(me, other):
+    """Admins can message anyone; customers and technicians can message each
+    other only if the technician has (or had) one of the customer's jobs."""
+    if not me or not other or me.key == other.key:
         return False
-    if other.role == 'admin' or me.role == 'admin':
+    if me.role == 'admin' or other.role == 'admin':
         return True
-    if other.role == 'technician':
-        return Booking.query.filter_by(
-            user_id=user_id, technician_id=other_id
-        ).first() is not None
-    if other.role == 'customer' and me.role == 'technician':
-        return Booking.query.filter_by(
-            user_id=other_id, technician_id=user_id
-        ).first() is not None
+    roles = {me.role, other.role}
+    if roles == {'customer', 'technician'}:
+        customer = me if me.role == 'customer' else other
+        tech = other if customer is me else me
+        return Booking.query.filter_by(customer_id=customer.id, technician_id=tech.id).first() is not None
     return False
- 
+
+def send_message(sender, recipient, content, subject=None, checked=None):
+    """Store a message (+ optional attachment) and notify the recipient. Commits."""
+    message = Message(sender_role=sender.role, sender_id=sender.id,
+                      recipient_role=recipient.role, recipient_id=recipient.id,
+                      subject=subject, content=content, is_read=False)
+    db.session.add(message)
+    db.session.flush()
+    attachment = store_message_attachment(message.id, checked) if checked else None
+    db.session.commit()
+    who = 'DEVTech Support' if sender.role == 'admin' else sender.full_name
+    create_notification(recipient.id, 'New Message',
+                        f'You have a new message from {who}' + (f': {subject}' if subject else ''),
+                        'info', role=recipient.role)
+    return message, attachment
+
+def _conversation(other, me, latest=None):
+    return {'id': other.id, 'key': other.key, 'name': other.full_name, 'role': other.role,
+            'email': other.email,
+            'last_message': message_preview(latest) if latest else '',
+            'last_time': latest.created_at if latest else datetime.utcnow(),
+            'unread_count': Message.query.filter_by(sender_role=other.role, sender_id=other.id,
+                                                    recipient_role=me.role, recipient_id=me.id,
+                                                    is_read=False).count(),
+            'is_active': False, 'is_online': is_user_online(other.last_active)}
+
+def _load_inbox(me, selected=None):
+    """Conversations for account `me` (newest first) and, if `selected` (an account)
+    is a valid partner, that thread with its unread messages marked read.
+    Returns (conversations, selected_conversation, messages)."""
+    partners = set()
+    for role, uid in db.session.query(Message.recipient_role, Message.recipient_id)\
+            .filter_by(sender_role=me.role, sender_id=me.id).distinct():
+        partners.add((role, uid))
+    for role, uid in db.session.query(Message.sender_role, Message.sender_id)\
+            .filter_by(recipient_role=me.role, recipient_id=me.id).distinct():
+        partners.add((role, uid))
+    conversations = []
+    for role, uid in partners:
+        other = get_account(role, uid)
+        if not other:
+            continue
+        latest = Message.query.filter(_thread_filter(me, other)).order_by(Message.created_at.desc()).first()
+        conversations.append(_conversation(other, me, latest))
+    conversations.sort(key=lambda x: x['last_time'], reverse=True)
+
+    selected_conversation, messages_data = None, []
+    if selected is not None:
+        selected_conversation = next((c for c in conversations if c['key'] == selected.key), None)
+        if not selected_conversation and _can_message(me, selected):
+            selected_conversation = _conversation(selected, me)
+        if selected_conversation:
+            selected_conversation['is_active'] = True
+            Message.query.filter_by(sender_role=selected.role, sender_id=selected.id,
+                                    recipient_role=me.role, recipient_id=me.id, is_read=False)\
+                .update({'is_read': True})
+            db.session.commit()
+            rows = Message.query.filter(_thread_filter(me, selected)).order_by(Message.created_at.asc()).all()
+            files = attachments_by_message(m.id for m in rows)
+            messages_data = [SimpleNamespace(content=m.content, created_at=m.created_at, subject=m.subject,
+                                             is_sent=(m.sender_role, m.sender_id) == (me.role, me.id),
+                                             attachments=files.get(m.id, [])) for m in rows]
+    return conversations, selected_conversation, messages_data
+
+def _account_from_key(key):
+    role, account_id = parse_account_key(key)
+    return get_account(role, account_id)
+
 @app.route('/messages')
-@login_required
+@account_required
 def messages():
-    user_id = session.get('user_id')
+    # Staff have their own inboxes with their own layout.
+    conv = request.args.get('conv')
+    if session.get('role') == 'admin':
+        return redirect(url_for('admin_messages', conv=conv))
+    if session.get('role') == 'technician':
+        return redirect(url_for('technician.messages', thread=conv))
+    me = current_account()
     try:
-        sent_to = db.session.query(Message.recipient_id).filter_by(sender_id=user_id).distinct().all()
-        received_from = db.session.query(Message.sender_id).filter_by(recipient_id=user_id).distinct().all()
-        conversation_ids = set([r[0] for r in sent_to] + [r[0] for r in received_from])
-        conversations = []
-        for uid in conversation_ids:
-            other = User.query.get(uid)
-            if not other:
-                continue
-            latest = Message.query.filter(_thread_filter(user_id, uid)).order_by(Message.created_at.desc()).first()
-            conversations.append({
-                'id': uid, 'name': other.full_name,
-                'last_message': latest.content if latest else 'No messages',
-                'last_time': latest.created_at if latest else datetime.utcnow(),
-                'unread_count': Message.query.filter_by(sender_id=uid, recipient_id=user_id, is_read=False).count(),
-                'is_active': False, 'is_online': is_user_online(other.last_active)})
-        conversations.sort(key=lambda x: x['last_time'], reverse=True)
- 
-        selected_id = request.args.get('conv_id', type=int)
-        selected_conversation, messages_data = None, []
-        if selected_id:
-            selected_conversation = next((c for c in conversations if c['id'] == selected_id), None)
-            if not selected_conversation and _can_message(user_id, selected_id):
-                other = User.query.get(selected_id)
-                selected_conversation = {
-                    'id': other.id, 'name': other.full_name,
-                    'last_message': '', 'last_time': datetime.utcnow(),
-                    'unread_count': 0, 'is_active': True,
-                    'is_online': is_user_online(other.last_active)
-                }
-            if selected_conversation:
-                selected_conversation['is_active'] = True
-                for m in Message.query.filter_by(sender_id=selected_id, recipient_id=user_id, is_read=False).all():
-                    m.is_read = True
-                db.session.commit()
-                rows = Message.query.filter(_thread_filter(user_id, selected_id)).order_by(Message.created_at.asc()).all()
-                messages_data = [SimpleNamespace(content=m.content, created_at=m.created_at,
-                                                 is_sent=(m.sender_id == user_id)) for m in rows]
+        conversations, selected_conversation, messages_data = _load_inbox(me, _account_from_key(conv))
         if not selected_conversation and conversations:
-            return redirect(url_for('messages', conv_id=conversations[0]['id']))
+            return redirect(url_for('messages', conv=conversations[0]['key']))
         return render_template('user/messages.html', conversations=conversations,
                                selected_conversation=selected_conversation, messages=messages_data)
     except Exception:
         db.session.rollback()
-        flash('Messaging feature is being set up. Please try again later.', 'info')
+        app.logger.exception('Loading messages failed')
+        flash('Messages could not be loaded. Please try again later.', 'info')
         return render_template('user/messages.html', conversations=[], selected_conversation=None, messages=[])
- 
-@app.route('/messages/<int:conv_id>')
+
+@app.route('/messages/<conv_key>/send', methods=['POST'])
 @login_required
-def messages_conversation(conv_id):
-    return redirect(url_for('messages', conv_id=conv_id))
- 
-@app.route('/messages/<int:conv_id>/send', methods=['POST'])
-@login_required
-def message_send(conv_id):
-    user_id = session.get('user_id')
-    content = ((request.get_json(silent=True) or {}).get('content') or '').strip()
-    if not content:
-        return jsonify({'success': False, 'message': 'Message content is required'}), 400
-    if not _can_message(user_id, conv_id):
+def message_send(conv_key):
+    me = current_account()
+    if request.mimetype == 'multipart/form-data':
+        content = (request.form.get('content') or '').strip()
+        upload = request.files.get('attachment')
+    else:
+        content = ((request.get_json(silent=True) or {}).get('content') or '').strip()
+        upload = None
+    checked, file_error = check_message_attachment(upload)
+    if file_error:
+        return jsonify({'success': False, 'message': file_error}), 400
+    if not content and not checked:
+        return jsonify({'success': False, 'message': 'Write a message or attach a file.'}), 400
+    if len(content) > MAX_MESSAGE_LENGTH:
+        return jsonify({'success': False, 'message': f'Messages can be at most {MAX_MESSAGE_LENGTH} characters.'}), 400
+    recipient = _account_from_key(conv_key)
+    if not _can_message(me, recipient):
         return jsonify({'success': False, 'message': 'You cannot message this user.'}), 403
     try:
-        db.session.add(Message(sender_id=user_id, recipient_id=conv_id, content=content, is_read=False))
-        db.session.commit()
-        create_notification(conv_id, 'New Message',
-                            f'You have a new message from {User.query.get(user_id).full_name}', 'info')
+        _, attachment = send_message(me, recipient, content, checked=checked)
         return jsonify({'success': True, 'message': 'Message sent',
-                        'time': datetime.utcnow().strftime('%I:%M %p')})
-    except Exception as e:
+                        'time': datetime.utcnow().strftime('%I:%M %p'),
+                        'attachments': [attachment_info(attachment)] if attachment else []})
+    except Exception:
         db.session.rollback()
-        return jsonify({'success': False, 'message': str(e)}), 500
- 
+        app.logger.exception('Sending message failed')
+        return jsonify({'success': False, 'message': 'Your message could not be sent. Please try again.'}), 500
+
 @app.route('/messages/new', methods=['POST'])
 @login_required
 def message_new():
-    user_id = session.get('user_id')
+    me = current_account()
     data = request.get_json(silent=True) or {}
-    recipient, subject, content = data.get('recipient'), data.get('subject'), data.get('content')
+    recipient = data.get('recipient')
+    subject = (data.get('subject') or '').strip()
+    content = (data.get('content') or '').strip()
     if not recipient or not subject or not content:
         return jsonify({'success': False, 'message': 'All fields are required'}), 400
+    if len(subject) > 200 or len(content) > MAX_MESSAGE_LENGTH:
+        return jsonify({'success': False, 'message': f'Subject must be under 200 characters and message under {MAX_MESSAGE_LENGTH}.'}), 400
     try:
         if recipient == 'technician':
-            b = Booking.query.filter(
-                Booking.user_id == user_id,
-                Booking.technician_id.isnot(None)
-            ).order_by(Booking.created_at.desc()).first()
+            b = Booking.query.filter(Booking.customer_id == me.id, Booking.technician_id.isnot(None))\
+                .order_by(Booking.created_at.desc()).first()
             recipient_user = b.technician if b else None
             if not recipient_user:
-                return jsonify({
-                    'success': False,
-                    'message': 'No technician has been assigned to your bookings yet.'
-                }), 404
-        else:
-            role = 'admin' if recipient in ('support', 'admin') else recipient
-            recipient_user = User.query.filter_by(role=role, is_active=True).first()
+                return jsonify({'success': False,
+                                'message': 'No technician has been assigned to your bookings yet.'}), 404
+        elif recipient in ('support', 'admin'):
+            recipient_user = Admin.query.filter_by(is_active=True).order_by(Admin.id).first()
             if not recipient_user:
                 return jsonify({'success': False, 'message': 'Recipient not found'}), 404
-        db.session.add(Message(sender_id=user_id, recipient_id=recipient_user.id,
-                               subject=subject, content=content, is_read=False))
-        db.session.commit()
-        create_notification(recipient_user.id, 'New Message',
-                            f'You have a new message from {User.query.get(user_id).full_name}: {subject}', 'info')
+        else:
+            return jsonify({'success': False, 'message': 'Invalid recipient.'}), 400
+        if not _can_message(me, recipient_user):
+            return jsonify({'success': False, 'message': 'You cannot message this user.'}), 403
+        send_message(me, recipient_user, content, subject=subject)
         return jsonify({'success': True, 'message': 'Message sent successfully'})
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({'success': False, 'message': str(e)}), 500
- 
+        app.logger.exception('Sending message failed')
+        return jsonify({'success': False, 'message': 'Your message could not be sent. Please try again.'}), 500
+
 # ==================== PUBLIC-ISH API ====================
 @app.route('/api/available-slots')
 def api_available_slots():
@@ -1158,7 +1937,7 @@ def api_available_slots():
     try:
         booking_date = datetime.strptime(date, '%Y-%m-%d').date()
         bookings = Booking.query.filter(Booking.booking_date == booking_date,
-                                        Booking.status.in_(['pending', 'confirmed', 'in_progress'])).all()
+                                        Booking.status.in_(SLOT_STATUSES)).all()
         slot_counts = {}
         for b in bookings:
             k = b.booking_time.strftime('%H:%M')
@@ -1200,7 +1979,7 @@ def api_check_availability():
     try:
         count = Booking.query.filter(Booking.booking_date == datetime.strptime(date, '%Y-%m-%d').date(),
                                      Booking.booking_time == datetime.strptime(time_, '%H:%M').time(),
-                                     Booking.status.in_(['pending', 'confirmed', 'in_progress'])).count()
+                                     Booking.status.in_(SLOT_STATUSES)).count()
         return jsonify({'available': count < 5, 'booked_count': count, 'max_slots': 5, 'remaining': 5 - count})
     except ValueError:
         return jsonify({'error': 'Invalid date or time format'}), 400
@@ -1213,7 +1992,7 @@ def api_check_slot():
     try:
         booking = Booking.query.filter(Booking.booking_date == datetime.strptime(date, '%Y-%m-%d').date(),
                                        Booking.booking_time == datetime.strptime(time_, '%H:%M').time(),
-                                       Booking.status.in_(['pending', 'confirmed', 'in_progress'])).first()
+                                       Booking.status.in_(SLOT_STATUSES)).first()
         return jsonify({'date': date, 'time': time_, 'is_booked': booking is not None,
                         'booking_id': booking.id if booking else None})
     except ValueError:
@@ -1227,7 +2006,7 @@ def api_booked_slots():
     try:
         booking_date = datetime.strptime(date, '%Y-%m-%d').date()
         bookings = Booking.query.filter(Booking.booking_date == booking_date,
-                                        Booking.status.in_(['pending', 'confirmed', 'in_progress'])).all()
+                                        Booking.status.in_(SLOT_STATUSES)).all()
         return jsonify({'date': date, 'booked_slots': [b.booking_time.strftime('%H:%M') for b in bookings],
                         'total_bookings': len(bookings)})
     except ValueError:
@@ -1321,34 +2100,37 @@ def request_service():
  
         slot_count = Booking.query.filter(Booking.booking_date == booking_date_obj,
                                           Booking.booking_time == booking_time_obj,
-                                          Booking.status.in_(['pending', 'confirmed', 'in_progress'])).count()
+                                          Booking.status.in_(SLOT_STATUSES)).count()
         if slot_count >= 5:
             flash('This time slot is fully booked. Please choose another time.', 'danger')
             return redirect(url_for('request_service'))
  
         service_obj = Service.query.get(service_id_for_booking)
-        booking_number = generate_booking_number()
-        booking = Booking(booking_number=booking_number, user_id=user_id, service_id=service_id_for_booking,
+        booking = Booking(booking_number=placeholder_number(), user_id=user_id, service_id=service_id_for_booking,
                           device_type=device_type, description=description or 'No description provided',
                           address=address if not is_in_shop else 'In-shop repair',
                           booking_date=booking_date_obj, booking_time=booking_time_obj,
                           is_in_shop=is_in_shop, status='pending')
         db.session.add(booking)
         db.session.flush()
-        db.session.add(Transaction(transaction_number=generate_transaction_number(), booking_id=booking.id,
-                                   user_id=user_id, amount=service_obj.price,
-                                   payment_method=payment_method, payment_status='pending'))
+        assign_booking_number(booking)
+        booking_number = booking.booking_number
+        transaction = Transaction(transaction_number=placeholder_number(), booking_id=booking.id,
+                                  user_id=user_id, amount=service_obj.price,
+                                  payment_method=payment_method, payment_status='pending')
+        db.session.add(transaction)
+        db.session.flush()
+        assign_transaction_number(transaction)
         db.session.commit()
         create_notification(user_id, 'Booking Created',
-                            f'Your booking #{booking_number} has been created. Please complete the payment.', 'info')
+                            f'Your booking #{booking_number} has been created. Please complete the payment.', 'info',
+                            role='customer')
         flash(f'Booking created successfully! Booking #: {booking_number}', 'success')
         return redirect(url_for('user_transactions'))
  
-    services = Service.query.filter_by(is_active=True).all()
-    categories = ServiceCategory.query.filter_by(is_active=True).all()
-    return render_template('user/request_service.html', services=services, categories=categories,
-                           notifications=_unread_notifs(session.get('user_id')))
- 
+    # One booking page for everyone: /user/book (its form posts back here).
+    return redirect(url_for('book_appointment'))
+
 @app.route('/user/services')
 @login_required
 def service_catalog():
@@ -1398,9 +2180,12 @@ def monitor_device(booking_id=None):
     return render_template('user/monitor_device.html', booking=booking, notifications=_unread_notifs(uid))
  
 @app.route('/api/booking/<int:booking_id>/monitor')
+@limiter.exempt
 @login_required
 def api_booking_monitor(booking_id):
-    from models.technician_models import JobLog, ServiceRating, ServiceReport, technician_rating
+    from models.technician_models import (JobLog, ServiceRating, ServiceReport, ApprovalRequest,
+                                          technician_rating)
+    from blueprints.technician_api import approval_dict
     b = Booking.query.get(booking_id)
     if not b or b.user_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
@@ -1421,7 +2206,7 @@ def api_booking_monitor(booking_id):
     if b.technician:
         t = b.technician
         avg, cnt = technician_rating(t.id)
-        tech = {'id': t.id, 'name': t.full_name, 'verified': bool(t.id_verified),
+        tech = {'id': t.id, 'key': t.key, 'name': t.full_name, 'verified': bool(t.id_verified),
                 'role': 'Technician',
                 'initials': ''.join(w[0] for w in (t.full_name or '').split()[:2]).upper() or 'T',
                 'rating': avg or 5.0, 'rating_count': cnt,
@@ -1448,6 +2233,7 @@ def api_booking_monitor(booking_id):
                     'amount': float(txn.amount)} if txn else None,
         'technician': tech,
         'repair': repair,
+        'approval': approval_dict(ApprovalRequest.query.filter_by(booking_id=b.id, status='pending').first()),
         'canRate': bool(b.status in FINISHED_STATUSES and b.technician_id and not rating),
         'rating': {'stars': rating.stars, 'experience': rating.experience,
                    'improvement': rating.improvement,
@@ -1482,8 +2268,65 @@ def api_booking_rate(booking_id):
                                  stars=stars, experience=exp[:2000],
                                  improvement=(d.get('improvement') or '').strip()[:2000]))
     db.session.commit()
-    create_notification(b.technician_id, 'New Rating', f'{b.booking_number} was rated {stars}/5.', 'info')
+    create_notification(b.technician_id, 'New Rating', f'{b.booking_number} was rated {stars}/5.', 'info',
+                        role='technician')
     return jsonify({'ok': True})
+
+@app.route('/api/booking/<int:booking_id>/approval/<int:approval_id>/respond', methods=['POST'])
+@login_required
+def api_booking_approval_respond(booking_id, approval_id):
+    """Customer approves or declines extra work the technician asked about.
+    Either answer takes the job off hold."""
+    from decimal import Decimal
+    from models.technician_models import ApprovalRequest, JobLog
+    from blueprints.technician_api import resume_status, approval_dict
+    b = db.session.get(Booking, booking_id)
+    a = db.session.get(ApprovalRequest, approval_id)
+    if not b or b.user_id != session['user_id'] or not a or a.booking_id != b.id:
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    if a.status != 'pending':
+        return jsonify({'ok': False, 'reason': 'This request was already answered.'}), 400
+    data = request.get_json(silent=True) or {}
+    decision = data.get('decision')
+    if decision not in ('approve', 'decline'):
+        return jsonify({'ok': False, 'reason': 'Choose approve or decline.'}), 400
+    note = (data.get('note') or '').strip()[:1000]
+
+    now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    a.status = 'approved' if decision == 'approve' else 'declined'
+    a.responded_at = now_str
+    a.customer_response = note or None
+    if b.status == 'on_hold':
+        b.status = resume_status(b)
+    b.updated_at = datetime.utcnow()
+
+    extra = Decimal(str(a.additional_cost or 0)).quantize(Decimal('0.01'))
+    if decision == 'approve' and extra > 0:
+        txn = b.transaction
+        if txn and txn.payment_status in ('pending', 'rejected'):
+            txn.amount = Decimal(txn.amount) + extra   # still unpaid: bill it together
+        else:
+            # Already paid: bill the extra separately. The booking number is kept
+            # in the (never-edited) transaction number so it stays traceable.
+            extra_txn = Transaction(transaction_number=placeholder_number(), user_id=b.user_id,
+                                    amount=extra, payment_method='unpaid', payment_status='pending')
+            db.session.add(extra_txn)
+            db.session.flush()
+            extra_txn.transaction_number = f'{EXTRA_TXN_PREFIX}{b.booking_number}-{extra_txn.id}'
+
+    verb = 'approved' if decision == 'approve' else 'declined'
+    db.session.add(JobLog(booking_id=b.id, at=now_str, by_name=b.user.full_name, action='approval',
+                          text=f'Customer {verb} the proposed work.' + (f' Note: {note}' if note else '')))
+    db.session.commit()
+    if a.technician_id:
+        create_notification(a.technician_id, f'Customer {verb.title()} Request',
+                            f'{b.booking_number}: the customer {verb} your request. The job has resumed.',
+                            'success' if decision == 'approve' else 'warning', role='technician')
+    if decision == 'approve' and extra > 0:
+        create_notification(b.user_id, 'Extra Charge Added',
+                            f'₱{extra:,.2f} for the approved work on {b.booking_number} was added to your '
+                            f'payments. See Transactions.', 'info', role='customer')
+    return jsonify({'ok': True, 'approval': approval_dict(a), 'status': b.status})
 
 # ==================== TRANSACTION ROUTES ====================
 @app.route('/user/transactions')
@@ -1504,7 +2347,10 @@ def user_payment(transaction_id):
     if transaction.payment_status == 'confirmed':
         flash('This payment is already confirmed.', 'info')
         return redirect(url_for('user_transactions'))
- 
+    if transaction.payment_status == 'cancelled':
+        flash('This payment belongs to a cancelled order.', 'info')
+        return redirect(url_for('user_transactions'))
+
     payment_method = request.form.get('payment_method')
     reference = request.form.get('reference_number')
     receipt_file = request.files.get('receipt_image')
@@ -1525,22 +2371,56 @@ def user_payment(transaction_id):
         if not ok:
             flash(err, 'danger')
             return redirect(url_for('user_transactions'))
-        receipts_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'receipts')
+        receipts_dir = app.config['RECEIPT_UPLOAD_FOLDER']
         os.makedirs(receipts_dir, exist_ok=True)
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         filename = secure_filename(f"receipt_{transaction.transaction_number}_{timestamp}_{secrets.token_hex(4)}.{extension}")
         receipt_file.save(os.path.join(receipts_dir, filename))
-        transaction.receipt_image = f"/static/uploads/receipts/{filename}"
+        transaction.receipt_image = filename
         flash('Receipt uploaded successfully.', 'success')
  
     transaction.payment_status = 'pending'
     transaction.rejection_reason = None
     transaction.updated_at = datetime.utcnow()
+    if transaction.order:
+        transaction.order.payment_status = 'pending'
     db.session.commit()
     create_notification(user_id, 'Payment Submitted',
-                        f'Your payment for transaction #{transaction.transaction_number} has been submitted for verification.', 'info')
+                        f'Your payment for transaction #{transaction.transaction_number} has been submitted for verification.',
+                        'info', role='customer')
     flash('Payment submitted. Please wait for admin confirmation.', 'success')
     return redirect(url_for('user_transactions'))
+
+LEGACY_RECEIPT_FOLDER = os.path.join('static', 'uploads', 'receipts')
+
+def receipt_url(transaction):
+    """Authenticated URL for a transaction's receipt, or '' if it has none."""
+    if not transaction.receipt_image or not transaction.receipt_image.strip():
+        return ''
+    return url_for('receipt_file', transaction_id=transaction.id,
+                   name=os.path.basename(transaction.receipt_image))
+
+app.jinja_env.globals['receipt_url'] = receipt_url
+app.jinja_env.globals['extra_work_booking'] = extra_work_booking
+
+@app.route('/receipts/<int:transaction_id>/<name>')
+@account_required
+def receipt_file(transaction_id, name):
+    """Serves a receipt only to the customer who uploaded it or to an admin."""
+    transaction = Transaction.query.get_or_404(transaction_id)
+    viewer = current_account()
+    is_owner = viewer.role == 'customer' and transaction.customer_id == viewer.id
+    if not is_owner and viewer.role != 'admin':
+        abort(404)
+    stored = os.path.basename(transaction.receipt_image or '')
+    if not stored or stored != name:
+        abort(404)
+    # Receipts uploaded before this route existed may still sit in the old folder.
+    for folder in (app.config['RECEIPT_UPLOAD_FOLDER'], LEGACY_RECEIPT_FOLDER):
+        path = os.path.abspath(os.path.join(folder, stored))
+        if os.path.isfile(path):
+            return send_file(path)
+    abort(404)
 
 # ==================== SUPPORT ROUTE ====================
 @app.route('/support', methods=['GET', 'POST'])
@@ -1553,31 +2433,166 @@ def support():
         if not subject or not message:
             flash('Please fill in all required fields.', 'danger')
             return redirect(url_for('support'))
-        db.session.add(SupportTicket(user_id=user_id, subject=subject, message=message[:1000],
+        db.session.add(SupportTicket(customer_id=user_id, subject=subject, message=message[:1000],
                                      category=category or 'general'))
         db.session.commit()
-        admin = User.query.filter_by(role='admin').first()
-        if admin:
-            create_notification(admin.id, 'New Support Ticket',
-                                f'New support ticket from {User.query.get(user_id).full_name}: {subject}', 'info')
+        notify_admins('New Support Ticket', f'New support ticket from {current_account().full_name}: {subject}')
         flash('Your support ticket has been submitted. We will get back to you shortly.', 'success')
         return redirect(url_for('support'))
-    tickets = SupportTicket.query.filter_by(user_id=user_id).order_by(SupportTicket.created_at.desc()).all()
+    tickets = SupportTicket.query.filter_by(customer_id=user_id).order_by(SupportTicket.created_at.desc()).all()
     return render_template('user/support.html', tickets=tickets, notifications=_unread_notifs(user_id))
+
+# ==================== PROFILE LOOK (all three account types) ====================
+AVATAR_NAME_RE = re.compile(r'^[0-9a-f]{24}\.(jpg|png|webp|gif)$')
+PROFILE_ENDPOINT = {'customer': 'user_profile', 'technician': 'technician.profile', 'admin': 'admin_profile'}
+
+def password_problem(password, confirm):
+    """Reason the new password is not acceptable, or None."""
+    if len(password) < 8 or not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
+        return 'Use at least 8 characters, including a letter and a number.'
+    if password != confirm:
+        return 'The two new passwords do not match.'
+    return None
+
+def _avatar_path(filename):
+    return os.path.join(app.config['AVATAR_UPLOAD_FOLDER'], filename)
+
+def _remove_avatar_file(account):
+    if account.avatar_file and AVATAR_NAME_RE.match(account.avatar_file):
+        try:
+            os.remove(_avatar_path(account.avatar_file))
+        except OSError:
+            pass
+    account.avatar_file = None
+
+def _save_avatar(account, file_storage):
+    """Validate and store a profile photo. Returns an error message or None."""
+    from services.upload_service import check_file
+    if (file_storage.mimetype or '') not in profile_presets.AVATAR_MIME:
+        return 'Profile photos must be JPG, PNG, WEBP or GIF images.'
+    ok, result = check_file(file_storage, profile_presets.AVATAR_MAX_BYTES)
+    if not ok:
+        return result
+    data, _mime, ext, _name = result
+    filename = secrets.token_hex(12) + ext
+    os.makedirs(app.config['AVATAR_UPLOAD_FOLDER'], exist_ok=True)
+    with open(_avatar_path(filename), 'wb') as fh:
+        fh.write(data)
+    _remove_avatar_file(account)
+    account.avatar_file = filename
+    return None
+
+@app.route('/avatars/<filename>')
+@account_required
+def account_avatar(filename):
+    """Profile photos: visible to any signed-in account (they show up in messages
+    and on job pages), never to anonymous visitors."""
+    if not AVATAR_NAME_RE.match(filename) or not os.path.isfile(_avatar_path(filename)):
+        abort(404)
+    resp = send_file(_avatar_path(filename), max_age=3600)
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
+@app.route('/account/appearance', methods=['POST'])
+@account_required
+@limiter.limit('30 per hour')
+def account_appearance():
+    """Save the profile look: display name, headline, avatar (photo / icon /
+    initials), avatar colour and frame, and banner."""
+    account = current_account()
+    back = redirect(url_for(PROFILE_ENDPOINT[account.role]) + '#look')
+    form = request.form
+
+    display_name = (form.get('display_name') or '').strip()
+    headline = (form.get('headline') or '').strip()
+    if len(display_name) > profile_presets.DISPLAY_NAME_MAX:
+        flash(f'Display name can be at most {profile_presets.DISPLAY_NAME_MAX} characters.', 'danger')
+        return back
+    if len(headline) > profile_presets.HEADLINE_MAX:
+        flash(f'Headline can be at most {profile_presets.HEADLINE_MAX} characters.', 'danger')
+        return back
+
+    mode = form.get('avatar_mode', 'initials')
+    photo = request.files.get('avatar_photo')
+    if mode == 'photo' and photo and photo.filename:
+        error = _save_avatar(account, photo)
+        if error:
+            flash(error, 'danger')
+            return back
+    elif mode == 'photo' and not account.avatar_file:
+        flash('Choose a photo to upload, or pick an icon or your initials instead.', 'danger')
+        return back
+    elif mode in ('icon', 'initials'):
+        _remove_avatar_file(account)
+
+    account.display_name = display_name or None
+    account.headline = headline or None
+    account.avatar_icon = (profile_presets.pick(form.get('avatar_icon'), profile_presets.AVATAR_ICONS, None)
+                           if mode == 'icon' else None)
+    account.avatar_color = profile_presets.pick(form.get('avatar_color'), profile_presets.AVATAR_COLORS,
+                                                account.avatar_color_key)
+    account.avatar_frame = profile_presets.pick(form.get('avatar_frame'), profile_presets.AVATAR_FRAMES,
+                                                account.avatar_frame_key)
+    account.banner = profile_presets.pick(form.get('banner'), profile_presets.BANNERS, account.banner_key)
+    db.session.commit()
+    if account.role != 'technician':      # the Tech ID stays the technician's sign-in name
+        session['username'] = account.shown_name
+    log_activity(account.id, 'profile_update', 'Updated profile look', role=account.role)
+    flash('Your profile look was saved.', 'success')
+    return back
+
+@app.route('/admin/profile', methods=['GET', 'POST'])
+@admin_required
+def admin_profile():
+    admin = current_account()
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'details':
+            full_name = (request.form.get('full_name') or '').strip()
+            phone = (request.form.get('phone') or '').strip()
+            if not full_name or len(full_name) > 100 or len(phone) > 20:
+                flash('Enter your full name (up to 100 characters) and a phone number up to 20 characters.', 'danger')
+            else:
+                admin.full_name, admin.phone = full_name, phone or None
+                db.session.commit()
+                session['username'] = admin.shown_name
+                log_activity(admin.id, 'profile_update', 'Updated admin profile details')
+                flash('Your details were saved.', 'success')
+        elif action == 'password':
+            current = request.form.get('current_password') or ''
+            new = request.form.get('new_password') or ''
+            problem = (None if admin.check_password(current) else 'Your current password is incorrect.') \
+                or password_problem(new, request.form.get('confirm_password') or '')
+            if problem:
+                flash(problem, 'danger')
+            else:
+                admin.set_password(new)
+                db.session.commit()
+                log_activity(admin.id, 'password_change', 'Changed admin password')
+                flash('Password updated.', 'success')
+        return redirect(url_for('admin_profile'))
+    stats = {
+        'messages': Message.query.filter_by(sender_role='admin', sender_id=admin.id).count(),
+        'notifications': Notification.query.filter_by(user_role='admin', user_id=admin.id).count(),
+        'actions': ActivityLog.query.filter_by(user_role='admin', user_id=admin.id).count(),
+    }
+    recent = ActivityLog.query.filter_by(user_role='admin', user_id=admin.id)\
+        .order_by(ActivityLog.created_at.desc()).limit(6).all()
+    return render_template('admin/profile.html', admin=admin, stats=stats, recent=recent)
 
 # ==================== PROFILE ROUTE ====================
 @app.route('/user/profile', methods=['GET', 'POST'])
 @login_required
 def user_profile():
     user_id = session.get('user_id')
-    user = User.query.get(user_id)
+    user = current_account()
     if request.method == 'POST':
         full_name = request.form.get('full_name', '').strip()
         birth_date = request.form.get('birth_date', '')
         current_password = request.form.get('current_password', '')
         new_password = request.form.get('new_password', '')
         confirm_password = request.form.get('confirm_password', '')
- 
+
         if not full_name:
             flash('Full name is required.', 'danger')
             return redirect(url_for('user_profile'))
@@ -1593,7 +2608,7 @@ def user_profile():
             except ValueError:
                 flash('Invalid birth date format.', 'danger')
                 return redirect(url_for('user_profile'))
- 
+
         if new_password or confirm_password or current_password:
             if not current_password:
                 flash('Current password is required to change password.', 'danger'); return redirect(url_for('user_profile'))
@@ -1601,17 +2616,17 @@ def user_profile():
                 flash('Current password is incorrect.', 'danger'); return redirect(url_for('user_profile'))
             if not new_password or not confirm_password:
                 flash('New password and confirmation are required.', 'danger'); return redirect(url_for('user_profile'))
-            if new_password != confirm_password:
-                flash('New passwords do not match.', 'danger'); return redirect(url_for('user_profile'))
-            if len(new_password) < 6:
-                flash('New password must be at least 6 characters long.', 'danger'); return redirect(url_for('user_profile'))
+            problem = password_problem(new_password, confirm_password)
+            if problem:
+                flash(problem, 'danger'); return redirect(url_for('user_profile'))
             user.set_password(new_password)
             flash('Password updated successfully!', 'success')
- 
+
         db.session.commit()
-        create_notification(user_id, 'Profile Updated', 'Your profile information has been updated successfully.', 'success')
+        create_notification(user_id, 'Profile Updated', 'Your profile information has been updated successfully.',
+                            'success', email=False, role='customer')
         flash('Profile updated successfully!', 'success')
-        log_activity(user_id, 'profile_update', 'User updated profile information')
+        log_activity(user_id, 'profile_update', 'Updated profile information')
         return redirect(url_for('user_profile'))
     return render_template('user/profile.html', user=user, notifications=_unread_notifs(user_id))
 
@@ -1619,14 +2634,15 @@ def user_profile():
 @app.route('/api/user/activity-log')
 @login_required
 def api_user_activity_log():
-    logs = ActivityLog.query.filter_by(user_id=session.get('user_id')).order_by(ActivityLog.created_at.desc()).limit(50).all()
+    logs = ActivityLog.query.filter_by(user_role='customer', user_id=session.get('user_id'))\
+        .order_by(ActivityLog.created_at.desc()).limit(50).all()
     return jsonify([{'action': l.action, 'details': l.details, 'ip_address': l.ip_address,
                      'created_at': l.created_at.strftime('%Y-%m-%d %H:%M:%S')} for l in logs])
- 
+
 @app.route('/api/user/download-data')
 @login_required
 def api_user_download_data():
-    user = User.query.get(session.get('user_id'))
+    user = current_account()
     return jsonify({
         'user': user.to_dict(),
         'bookings': [{'booking_number': b.booking_number, 'service': b.service.name,
@@ -1638,28 +2654,97 @@ def api_user_download_data():
                           'payment_method': t.payment_method, 'payment_status': t.payment_status,
                           'transaction_date': t.transaction_date.strftime('%Y-%m-%d %H:%M:%S')}
                          for t in user.transactions]})
- 
+
+def _account_has_history(account):
+    """True if business records reference this account, which means the row must
+    be kept (anonymized) rather than deleted."""
+    from models.technician_models import (ServiceReport, IncidentReport, ServiceRating,
+                                          UploadedFile, ApprovalRequest)
+    if account.role == 'customer':
+        queries = [Booking.query.filter_by(customer_id=account.id),
+                   Order.query.filter_by(customer_id=account.id),
+                   Transaction.query.filter_by(customer_id=account.id),
+                   SupportTicket.query.filter_by(customer_id=account.id),
+                   ServiceRating.query.filter_by(customer_id=account.id)]
+    elif account.role == 'technician':
+        queries = [Booking.query.filter_by(technician_id=account.id),
+                   ServiceReport.query.filter_by(technician_id=account.id),
+                   IncidentReport.query.filter_by(technician_id=account.id),
+                   ServiceRating.query.filter_by(technician_id=account.id),
+                   UploadedFile.query.filter_by(technician_id=account.id),
+                   ApprovalRequest.query.filter_by(technician_id=account.id)]
+    else:
+        queries = []
+    return any(q.first() is not None for q in queries)
+
+def _delete_account_private_rows(account):
+    """Rows that only matter to this account. Does not commit."""
+    Notification.query.filter_by(user_role=account.role, user_id=account.id).delete()
+    ActivityLog.query.filter_by(user_role=account.role, user_id=account.id).delete()
+    if account.role == 'customer':
+        for cart in ShoppingCart.query.filter_by(customer_id=account.id).all():
+            CartItem.query.filter_by(cart_id=cart.id).delete()
+            db.session.delete(cart)
+        UserPreference.query.filter_by(customer_id=account.id).delete()
+
+def _delete_account_messages(account):
+    """Messages to/from this account, with their attachment rows. Does not commit."""
+    mine = Message.query.filter(or_(and_(Message.sender_role == account.role, Message.sender_id == account.id),
+                                    and_(Message.recipient_role == account.role, Message.recipient_id == account.id)))
+    ids = [m.id for m in mine.all()]
+    if ids:
+        MessageAttachment.query.filter(MessageAttachment.message_id.in_(ids)).delete(synchronize_session=False)
+        Message.query.filter(Message.id.in_(ids)).delete(synchronize_session=False)
+
+def _anonymize_account(account):
+    """Strip personal data and lock the account, keeping the row so bookings,
+    orders and payments that point at it stay intact. Does not commit."""
+    _delete_account_private_rows(account)
+    if hasattr(account, 'username'):
+        account.username = f'deleted-{account.role}-{account.id}'
+    account.email = f'deleted-{account.role}-{account.id}@deleted.invalid'
+    account.full_name = 'Deleted user'
+    columns = account.__table__.columns
+    for field in ('phone', 'address', 'city', 'province', 'postal_code', 'latitude',
+                  'longitude', 'birth_date', 'oauth_provider', 'oauth_id', 'id_type', 'id_number'):
+        if field in columns:
+            setattr(account, field, None)
+    account.password_hash = bcrypt.generate_password_hash(secrets.token_urlsafe(32)).decode('utf-8')
+    account.is_active = False
+
+def close_account(account):
+    """Delete the account, or anonymize it when the shop must keep its records.
+    Returns 'account_deleted' or 'account_anonymized'. Commits."""
+    if _account_has_history(account):
+        _anonymize_account(account)
+        action = 'account_anonymized'
+    else:
+        _delete_account_private_rows(account)
+        _delete_account_messages(account)
+        db.session.delete(account)
+        action = 'account_deleted'
+    db.session.commit()
+    return action
+
 @app.route('/api/user/delete-account', methods=['POST'])
 @login_required
 def api_user_delete_account():
-    user_id = session.get('user_id')
-    user = User.query.get(user_id)
-    active = Booking.query.filter_by(user_id=user_id).filter(
-        Booking.status.in_(['pending', 'confirmed', 'in_progress', 'on_hold'])).count()
+    user = current_account()
+    user_id = user.id
+    active = Booking.query.filter(Booking.customer_id == user_id,
+                                  Booking.status.in_(ACTIVE_STATUSES)).count()
     if active > 0:
         return jsonify({'success': False, 'message': 'Cannot delete account with active bookings. Please cancel all bookings first.'}), 400
-    if user.role == 'admin' and User.query.filter_by(role='admin').count() <= 1:
-        return jsonify({'success': False, 'message': 'The last admin account cannot be deleted.'}), 400
-    log_activity(user_id, 'account_deleted', 'User deleted account')
     try:
-        db.session.delete(user)
-        db.session.commit()
+        action = close_account(user)
     except Exception:
         db.session.rollback()
-        return jsonify({'success': False, 'message': 'This account has order/booking history and cannot be deleted. Contact support.'}), 400
+        app.logger.exception('Account deletion failed for customer %s', user_id)
+        return jsonify({'success': False, 'message': 'Your account could not be deleted. Please contact support.'}), 500
+    log_activity(None, action, f'Customer #{user_id} closed their account')
     session.clear()
     return jsonify({'success': True, 'message': 'Account deleted successfully.'})
- 
+
 @app.route('/api/user/update-preferences', methods=['POST'])
 @login_required
 def api_user_update_preferences():
@@ -1677,6 +2762,21 @@ def api_user_update_preferences():
     db.session.commit()
     return jsonify({'success': True, 'message': 'Preferences updated successfully.'})
  
+@app.route('/api/user/email-notifications', methods=['POST'])
+@login_required
+def api_user_email_notifications():
+    """Turn notification emails on/off without touching other preferences.
+    (Password-reset emails are always sent.)"""
+    enabled = bool((request.get_json(silent=True) or {}).get('enabled'))
+    p = UserPreference.query.filter_by(user_id=session['user_id']).first()
+    if not p:
+        p = UserPreference(user_id=session['user_id'])
+        db.session.add(p)
+    p.email_notifications = enabled
+    db.session.commit()
+    return jsonify({'success': True, 'enabled': enabled,
+                    'message': 'Email notifications ' + ('on.' if enabled else 'off.')})
+
 @app.route('/api/user/verify-email', methods=['POST'])
 @login_required
 def api_user_verify_email():
@@ -1722,9 +2822,9 @@ def get_cached_active_products():
 @app.route('/user/shop')
 @login_required
 def user_shop():
-    user = User.query.get(session.get('user_id'))
+    user = current_account()
     products = get_cached_active_products()
-    notifications = Notification.query.filter_by(user_id=session.get('user_id'), is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
+    notifications = _unread_notifs(session.get('user_id'))
     
     cart_count = 0
     try:
@@ -1797,7 +2897,7 @@ def api_product_detail(product_id):
 @login_required
 def api_get_user_address():
     """Return the delivery address currently saved on the user's account."""
-    user = User.query.get(session.get('user_id'))
+    user = current_account()
     address = {
         'full_name': user.full_name or '',
         'phone': user.phone or '',
@@ -1819,7 +2919,7 @@ def api_update_user_address():
     """Save/update the user's delivery address. Used by checkout when the
     account has no address on file yet, or when the user chooses to edit
     their existing address before placing an order."""
-    user = User.query.get(session.get('user_id'))
+    user = current_account()
     data = request.get_json(silent=True) or {}
 
     full_name = (data.get('full_name') or '').strip()
@@ -1857,7 +2957,7 @@ def api_update_user_address():
         user.longitude = longitude
     db.session.commit()
 
-    log_activity(user.id, 'address_update', 'User updated delivery address during checkout')
+    log_activity(user.id, 'address_update', 'Updated delivery address during checkout')
 
     return jsonify({
         'success': True,
@@ -1910,51 +3010,72 @@ def api_get_cart():
         'count': len(items)
     })
 
+MAX_CART_QUANTITY = 99
+
+def _parse_quantity(value, minimum=1):
+    """Whole number between `minimum` and MAX_CART_QUANTITY, else None.
+    Rejects bools, floats, strings like '2.5', and negative numbers."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if not isinstance(value, int) or not minimum <= value <= MAX_CART_QUANTITY:
+        return None
+    return value
+
+def _owned_cart_item(item_id):
+    """The cart item if it belongs to the signed-in user's cart, else None."""
+    cart_item = CartItem.query.get(item_id) if item_id else None
+    if not cart_item:
+        return None
+    cart = ShoppingCart.query.get(cart_item.cart_id)
+    if not cart or cart.user_id != session.get('user_id'):
+        return None
+    return cart_item
+
+# Stock is NOT reserved while items sit in a cart. Adding or updating only
+# checks availability; api_cart_checkout() locks the product rows, checks
+# again, and deducts stock in the same transaction that creates the order.
 @app.route('/api/cart/add', methods=['POST'])
 @login_required
 def api_cart_add():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     product_id = data.get('product_id')
-    quantity = data.get('quantity', 1)
-    
+    quantity = _parse_quantity(data.get('quantity', 1))
+
     if not product_id:
         return jsonify({'success': False, 'message': 'Product ID required'}), 400
-    
+    if quantity is None:
+        return jsonify({'success': False, 'message': f'Quantity must be a whole number from 1 to {MAX_CART_QUANTITY}.'}), 400
+
     product = Product.query.get(product_id)
     if not product or not product.is_active:
         return jsonify({'success': False, 'message': 'Product not found'}), 404
-    
-    if product.stock_quantity < quantity:
-        return jsonify({'success': False, 'message': f'Insufficient stock. Only {product.stock_quantity} units available.'}), 400
-    
+
     user_id = session.get('user_id')
-    
     cart = ShoppingCart.query.filter_by(user_id=user_id, status='active').first()
     if not cart:
         cart = ShoppingCart(user_id=user_id, status='active')
         db.session.add(cart)
-        db.session.commit()
-    
-    cart_item = CartItem.query.filter_by(cart_id=cart.id, product_id=product_id).first()
+        db.session.flush()
+
+    cart_item = CartItem.query.filter_by(cart_id=cart.id, product_id=product.id).first()
+    in_cart = cart_item.quantity if cart_item else 0
+    if in_cart + quantity > product.stock_quantity:
+        available = max(product.stock_quantity - in_cart, 0)
+        return jsonify({'success': False, 'message': f'Not enough stock. Only {available} more available.'}), 400
+    if in_cart + quantity > MAX_CART_QUANTITY:
+        return jsonify({'success': False, 'message': f'You can order at most {MAX_CART_QUANTITY} of one item.'}), 400
+
     if cart_item:
-        if cart_item.quantity + quantity > product.stock_quantity:
-            return jsonify({'success': False, 'message': f'Not enough stock. Only {product.stock_quantity - cart_item.quantity} more available.'}), 400
         cart_item.quantity += quantity
+        cart_item.price = product.price
     else:
-        cart_item = CartItem(
-            cart_id=cart.id,
-            product_id=product_id,
-            quantity=quantity,
-            price=product.price
-        )
-        db.session.add(cart_item)
-    
-    product.stock_quantity -= quantity
+        db.session.add(CartItem(cart_id=cart.id, product_id=product.id,
+                                quantity=quantity, price=product.price))
     db.session.commit()
-    cache.delete('active_products')  # stock just changed - don't serve a stale count
-    
+
     cart_count = CartItem.query.filter_by(cart_id=cart.id).count()
-    
     return jsonify({
         'success': True,
         'message': f'{product.name} added to cart',
@@ -1964,61 +3085,38 @@ def api_cart_add():
 @app.route('/api/cart/update', methods=['POST'])
 @login_required
 def api_cart_update():
-    data = request.get_json()
-    item_id = data.get('item_id')
-    quantity = data.get('quantity')
-    
-    if not item_id:
-        return jsonify({'success': False, 'message': 'Item ID required'}), 400
-    
-    cart_item = CartItem.query.get(item_id)
+    data = request.get_json(silent=True) or {}
+    quantity = _parse_quantity(data.get('quantity'), minimum=0)
+    if quantity is None:
+        return jsonify({'success': False, 'message': f'Quantity must be a whole number from 0 to {MAX_CART_QUANTITY}.'}), 400
+
+    cart_item = _owned_cart_item(data.get('item_id'))
     if not cart_item:
         return jsonify({'success': False, 'message': 'Item not found'}), 404
-    
-    cart = ShoppingCart.query.get(cart_item.cart_id)
-    if cart.user_id != session.get('user_id'):
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
-    product = Product.query.get(cart_item.product_id)
-    if not product:
-        return jsonify({'success': False, 'message': 'Product not found'}), 404
-    
-    if quantity <= 0:
-        product.stock_quantity += cart_item.quantity
+
+    if quantity == 0:
         db.session.delete(cart_item)
         db.session.commit()
-        cache.delete('active_products')
         return jsonify({'success': True, 'message': 'Item removed from cart'})
-    
-    if product.stock_quantity < (quantity - cart_item.quantity):
-        return jsonify({'success': False, 'message': f'Insufficient stock. Only {product.stock_quantity + cart_item.quantity} available.'}), 400
-    
-    product.stock_quantity -= (quantity - cart_item.quantity)
+
+    product = Product.query.get(cart_item.product_id)
+    if not product or not product.is_active:
+        return jsonify({'success': False, 'message': 'Product not found'}), 404
+    if quantity > product.stock_quantity:
+        return jsonify({'success': False, 'message': f'Insufficient stock. Only {product.stock_quantity} available.'}), 400
+
     cart_item.quantity = quantity
     db.session.commit()
-    cache.delete('active_products')  # stock just changed - don't serve a stale count
-    
     return jsonify({'success': True, 'message': 'Cart updated'})
 
 @app.route('/api/cart/remove/<int:item_id>', methods=['DELETE'])
 @login_required
 def api_cart_remove(item_id):
-    cart_item = CartItem.query.get(item_id)
+    cart_item = _owned_cart_item(item_id)
     if not cart_item:
         return jsonify({'success': False, 'message': 'Item not found'}), 404
-    
-    cart = ShoppingCart.query.get(cart_item.cart_id)
-    if cart.user_id != session.get('user_id'):
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
-    product = Product.query.get(cart_item.product_id)
-    if product:
-        product.stock_quantity += cart_item.quantity
-    
     db.session.delete(cart_item)
     db.session.commit()
-    cache.delete('active_products')
-    
     return jsonify({'success': True, 'message': 'Item removed from cart'})
 
 @app.route('/api/cart/clear', methods=['POST'])
@@ -2026,21 +3124,15 @@ def api_cart_remove(item_id):
 def api_cart_clear():
     cart = ShoppingCart.query.filter_by(user_id=session.get('user_id'), status='active').first()
     if cart:
-        for item in cart.items:
-            product = Product.query.get(item.product_id)
-            if product:
-                product.stock_quantity += item.quantity
-            db.session.delete(item)
+        CartItem.query.filter_by(cart_id=cart.id).delete()
         db.session.commit()
-        cache.delete('active_products')
-    
     return jsonify({'success': True, 'message': 'Cart cleared'})
 
 @app.route('/api/cart/checkout', methods=['POST'])
 @login_required
 def api_cart_checkout():
     user_id = session.get('user_id')
-    user = User.query.get(user_id)
+    user = db.session.get(Customer, user_id)
     data = request.get_json(silent=True) or {}
 
     payment_method = (data.get('payment_method') or '').strip().lower()
@@ -2078,16 +3170,22 @@ def api_cart_checkout():
     if not cart_items:
         return jsonify({'success': False, 'message': 'Cart is empty'}), 400
     
-    # Check stock one more time before checkout
+    # Lock the product rows so two checkouts can't both take the last unit,
+    # then check stock and price against the current product, not the cart.
+    products = {}
     for item in cart_items:
-        product = Product.query.get(item.product_id)
-        if not product or product.stock_quantity < item.quantity:
-            return jsonify({
-                'success': False,
-                'message': f'Insufficient stock for {product.name if product else "Unknown product"}.'
-            }), 400
-    
-    total_amount = sum(item.quantity * float(item.price if item.price else Product.query.get(item.product_id).price) for item in cart_items)
+        product = Product.query.filter_by(id=item.product_id).with_for_update().first()
+        if not product or not product.is_active:
+            db.session.rollback()
+            return jsonify({'success': False,
+                            'message': 'An item in your cart is no longer available. Please remove it and try again.'}), 400
+        if item.quantity < 1 or product.stock_quantity < item.quantity:
+            db.session.rollback()
+            return jsonify({'success': False,
+                            'message': f'Insufficient stock for {product.name}. Only {max(product.stock_quantity, 0)} available.'}), 400
+        products[item.id] = product
+
+    total_amount = sum(item.quantity * products[item.id].price for item in cart_items)
     
     order = Order(
         user_id=user_id,
@@ -2121,21 +3219,20 @@ def api_cart_checkout():
     order.order_number = f"ORD{datetime.utcnow().strftime('%y%m%d')}{order.id:04d}"
     
     for item in cart_items:
-        product = Product.query.get(item.product_id)
-        order_item = OrderItem(
+        product = products[item.id]
+        db.session.add(OrderItem(
             order_id=order.id,
-            product_id=item.product_id,
+            product_id=product.id,
             quantity=item.quantity,
-            price=item.price if item.price else product.price
-        )
-        db.session.add(order_item)
-        # Stock is already decreased when added to cart
+            price=product.price
+        ))
+        product.stock_quantity -= item.quantity
         db.session.delete(item)
     
     cart.status = 'completed'
 
     transaction = Transaction(
-        transaction_number=generate_transaction_number(),
+        transaction_number=placeholder_number(),
         order_id=order.id,
         user_id=user_id,
         amount=total_amount,
@@ -2144,8 +3241,11 @@ def api_cart_checkout():
         gcash_reference=gcash_reference if payment_method == 'gcash' else None
     )
     db.session.add(transaction)
+    db.session.flush()
+    assign_transaction_number(transaction)
 
     db.session.commit()
+    cache.delete('active_products')  # stock just changed
 
     if payment_method == 'gcash':
         notif_message = (
@@ -2157,7 +3257,7 @@ def api_cart_checkout():
             f'Your order #{order.order_number} (₱{total_amount:.2f}) has been placed. '
             f'Pay in cash when your order is delivered.'
         )
-    create_notification(user_id, 'Order Placed', notif_message, 'success')
+    create_notification(user_id, 'Order Placed', notif_message, 'success', role='customer')
     
     return jsonify({
         'success': True,
@@ -2172,7 +3272,7 @@ def api_cart_checkout():
 def user_orders():
     """View all orders for the current user"""
     user_id = session.get('user_id')
-    user = User.query.get(user_id)
+    user = db.session.get(Customer, user_id)
     status_filter = request.args.get('status', 'all')
 
     base_query = Order.query.filter_by(user_id=user_id)
@@ -2191,7 +3291,7 @@ def user_orders():
     else:
         orders = all_orders
 
-    notifications = Notification.query.filter_by(user_id=user_id, is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
+    notifications = _unread_notifs(user_id)
     return render_template(
         'user/orders.html',
         orders=orders,
@@ -2200,6 +3300,24 @@ def user_orders():
         notifications=notifications,
         user=user
     )
+
+def _cancel_order(order):
+    """Cancel an order: restore its stock and close any unpaid payment for it.
+    Commits. Callers check whether the order may be cancelled first."""
+    for item in order.items:
+        product = Product.query.get(item.product_id)
+        if product:
+            product.stock_quantity += item.quantity
+    order.status = 'cancelled'
+    order.updated_at = datetime.utcnow()
+    for txn in order.transactions:
+        if txn.payment_status in ('pending', 'rejected'):
+            txn.payment_status = 'cancelled'
+            txn.updated_at = datetime.utcnow()
+    if order.payment_status != 'confirmed':
+        order.payment_status = 'cancelled'
+    db.session.commit()
+    cache.delete('active_products')
 
 @app.route('/api/order/<int:order_id>/cancel', methods=['POST'])
 @login_required
@@ -2225,25 +3343,15 @@ def api_order_cancel(order_id):
             'message': 'This order has a confirmed GCash payment. Please contact support to cancel and process a refund.'
         }), 400
     
-    # Restore stock for each item in the order
-    for item in order.items:
-        product = Product.query.get(item.product_id)
-        if product:
-            product.stock_quantity += item.quantity
-            db.session.add(product)
-    
-    # Update order status
-    order.status = 'cancelled'
-    order.updated_at = datetime.utcnow()
-    db.session.commit()
-    cache.delete('active_products')
+    _cancel_order(order)
     
     # Create notification for user
     create_notification(
         user_id,
         'Order Cancelled',
         f'Your order #{order.order_number} has been cancelled. Stock has been restored.',
-        'warning'
+        'warning',
+        role='customer'
     )
     
     return jsonify({
@@ -2301,7 +3409,7 @@ def api_order_detail(order_id):
 @app.route('/user/troubleshooting')
 @login_required
 def user_troubleshooting():
-    notifications = Notification.query.filter_by(user_id=session.get('user_id'), is_read=False).order_by(Notification.created_at.desc()).limit(5).all()
+    notifications = _unread_notifs(session.get('user_id'))
     return render_template('user/troubleshooting.html', notifications=notifications)
 
 # ==================== ADMIN ROUTES ====================
@@ -2315,15 +3423,15 @@ def get_cached_dashboard_stats():
     this route every 45 seconds from every open tab; without this cache,
     each poll re-runs 7 separate aggregate queries against the database
     for no new information 29 times out of 30."""
-    total_users = User.query.filter_by(role='customer').count()
-    total_technicians = User.query.filter_by(role='technician').count()
+    total_users = Customer.query.count()
+    total_technicians = Technician.query.count()
     total_bookings = Booking.query.count()
     pending_bookings = Booking.query.filter_by(status='pending').count()
     total_transactions = Transaction.query.count()
     pending_payments = Transaction.query.filter_by(payment_status='pending').count()
     total_revenue = db.session.query(db.func.sum(Transaction.amount)).filter_by(payment_status='confirmed').scalar() or 0
 
-    users_trend = calculate_trend(User, User.created_at, User.role == 'customer')
+    users_trend = calculate_trend(Customer, Customer.created_at)
     requests_trend = calculate_trend(Booking, Booking.created_at, Booking.status == 'pending')
     payments_trend = calculate_trend(Transaction, Transaction.transaction_date, Transaction.payment_status == 'pending')
     services_trend = calculate_trend(Booking, Booking.created_at)
@@ -2350,7 +3458,7 @@ def admin_dashboard():
     open_incidents = IncidentReport.query.filter_by(status='open').count()
 
     recent_bookings = Booking.query.order_by(Booking.created_at.desc()).limit(5).all()
-    recent_users = User.query.order_by(User.created_at.desc()).limit(5).all()
+    recent_users = all_accounts()[:5]
     recent_activities = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(10).all()
     recent_pending_payments = Transaction.query.filter_by(payment_status='pending').order_by(Transaction.transaction_date.desc()).limit(3).all()
 
@@ -2373,14 +3481,17 @@ def admin_dashboard():
                          services_trend=stats['services_trend'])
 
 def build_admin_user_summary(user):
-    """Row-level shape for the User Management table - list view + live polling."""
+    """Row-level shape for the User Management table - list view + live polling.
+    `key` ('customer-5') identifies the account; `id` alone repeats across tables."""
     presence = get_user_presence(user)
     return {
+        'key': user.key,
         'id': user.id,
         'full_name': user.full_name,
         'email': user.email,
         'phone': user.phone,
         'role': user.role,
+        'username': getattr(user, 'username', None),
         'is_active': user.is_active,
         'id_verified': user.id_verified if user.role == 'technician' else None,
         'created_at': user.created_at.strftime('%Y-%m-%d') if user.created_at else None,
@@ -2390,39 +3501,49 @@ def build_admin_user_summary(user):
 def build_admin_user_detail(user):
     """Full-detail shape for the eye-icon modal: profile + presence + activity stats."""
     presence = get_user_presence(user)
-    orders_count = Order.query.filter_by(user_id=user.id).count()
-    bookings_count = Booking.query.filter_by(user_id=user.id).count()
-    total_spent = db.session.query(db.func.sum(Transaction.amount)).filter_by(
-        user_id=user.id, payment_status='confirmed'
-    ).scalar() or 0
-
-    recent_orders = Order.query.filter_by(user_id=user.id).order_by(Order.created_at.desc()).limit(5).all()
-    recent_bookings = Booking.query.filter_by(user_id=user.id).order_by(Booking.created_at.desc()).limit(5).all()
+    stats, recent_orders, recent_bookings = {}, [], []
+    if user.role == 'customer':
+        total_spent = db.session.query(db.func.sum(Transaction.amount)).filter_by(
+            customer_id=user.id, payment_status='confirmed').scalar() or 0
+        stats = {'orders_count': Order.query.filter_by(customer_id=user.id).count(),
+                 'bookings_count': Booking.query.filter_by(customer_id=user.id).count(),
+                 'total_spent': float(total_spent)}
+        recent_orders = Order.query.filter_by(customer_id=user.id).order_by(Order.created_at.desc()).limit(5).all()
+        recent_bookings = Booking.query.filter_by(customer_id=user.id).order_by(Booking.created_at.desc()).limit(5).all()
+    elif user.role == 'technician':
+        from models.technician_models import technician_rating
+        rating, rating_count = technician_rating(user.id)
+        stats = {'orders_count': 0,
+                 'bookings_count': Booking.query.filter_by(technician_id=user.id).count(),
+                 'jobs_finished': Booking.query.filter(Booking.technician_id == user.id,
+                                                       Booking.status.in_(FINISHED_STATUSES)).count(),
+                 'rating': rating, 'rating_count': rating_count, 'total_spent': 0.0}
+        recent_bookings = Booking.query.filter_by(technician_id=user.id).order_by(Booking.created_at.desc()).limit(5).all()
+    else:
+        stats = {'orders_count': 0, 'bookings_count': 0, 'total_spent': 0.0}
 
     return {
+        'key': user.key,
         'id': user.id,
-        'username': user.username,
+        'username': getattr(user, 'username', None),
         'full_name': user.full_name,
         'email': user.email,
         'phone': user.phone,
-        'address': user.address,
-        'city': user.city,
-        'province': user.province,
-        'postal_code': user.postal_code,
-        'birth_date': user.birth_date.strftime('%Y-%m-%d') if user.birth_date else None,
+        'address': getattr(user, 'address', None),
+        'city': getattr(user, 'city', None),
+        'province': getattr(user, 'province', None),
+        'postal_code': getattr(user, 'postal_code', None),
+        'birth_date': user.birth_date.strftime('%Y-%m-%d') if getattr(user, 'birth_date', None) else None,
         'role': user.role,
         'is_active': user.is_active,
         'id_type': user.id_type if user.role == 'technician' else None,
         'id_verified': user.id_verified if user.role == 'technician' else None,
-        'id_verified_at': user.id_verified_at.strftime('%Y-%m-%d %H:%M:%S') if user.id_verified_at else None,
+        'id_verified_at': user.id_verified_at.strftime('%Y-%m-%d %H:%M:%S')
+                          if user.role == 'technician' and user.id_verified_at else None,
         'created_at': user.created_at.strftime('%Y-%m-%d %H:%M:%S') if user.created_at else None,
         'updated_at': user.updated_at.strftime('%Y-%m-%d %H:%M:%S') if user.updated_at else None,
         **presence,
-        'stats': {
-            'orders_count': orders_count,
-            'bookings_count': bookings_count,
-            'total_spent': float(total_spent)
-        },
+        'stats': stats,
         'recent_orders': [{
             'order_number': o.order_number,
             'total_amount': float(o.total_amount),
@@ -2437,26 +3558,41 @@ def build_admin_user_detail(user):
         } for b in recent_bookings]
     }
 
+def _admin_target(role, user_id):
+    """The account an admin action targets, or a 404."""
+    account = get_account(role, user_id)
+    if not account:
+        abort(404)
+    return account
+
+def _is_me(account):
+    return session.get('role') == account.role and session.get('user_id') == account.id
+
+def _next_tech_id():
+    nums = [int(t.username[5:]) for t in Technician.query.filter(Technician.username.like('TECH-%')).all()
+            if t.username[5:].isdigit()]
+    return f"TECH-{(max(nums) + 1 if nums else 1):04d}"
+
 @app.route('/admin/users')
 @admin_required
 def admin_users():
-    users = User.query.order_by(User.created_at.desc()).all()
+    users = all_accounts()
     users_json = [build_admin_user_summary(u) for u in users]
-    return render_template('admin/users_management.html', users=users, users_json=users_json)
+    return render_template('admin/users_management.html', users=users, users_json=users_json,
+                           current_admin_key=f"admin-{session.get('user_id')}")
 
 @app.route('/api/admin/users')
+@limiter.exempt
 @admin_required
 def api_admin_users():
     """Polled by the User Management page to refresh online status and
     'time ago' text without a page reload."""
-    users = User.query.order_by(User.created_at.desc()).all()
-    return jsonify({'users': [build_admin_user_summary(u) for u in users]})
+    return jsonify({'users': [build_admin_user_summary(u) for u in all_accounts()]})
 
-@app.route('/api/admin/users/<int:user_id>')
+@app.route('/api/admin/users/<role>/<int:user_id>')
 @admin_required
-def api_admin_user_detail(user_id):
-    user = User.query.get_or_404(user_id)
-    return jsonify({'user': build_admin_user_detail(user)})
+def api_admin_user_detail(role, user_id):
+    return jsonify({'user': build_admin_user_detail(_admin_target(role, user_id))})
 
 @app.route('/api/admin/users', methods=['POST'])
 @admin_required
@@ -2468,11 +3604,14 @@ def api_admin_create_user():
     full_name = (data.get('full_name') or '').strip()
     phone = (data.get('phone') or '').strip()
     role = (data.get('role') or 'customer').strip()
-    
+
+    if role not in ACCOUNT_MODELS:
+        return jsonify({'success': False, 'message': 'Invalid role.'}), 400
+    model = ACCOUNT_MODELS[role]
     if role == 'technician':
-        nums = [int(u.username[5:]) for u in User.query.filter(User.username.like('TECH-%')).all()
-                if u.username[5:].isdigit()]
-        username = f"TECH-{(max(nums) + 1 if nums else 1):04d}"
+        username = _next_tech_id()
+    elif not username:
+        username = email.split('@')[0] if email else ''
 
     missing = [label for label, value in [
         ('username', username), ('email', email), ('password', password), ('full name', full_name)
@@ -2480,37 +3619,27 @@ def api_admin_create_user():
     if missing:
         return jsonify({'success': False, 'message': f"Please fill in: {', '.join(missing)}."}), 400
 
-    if role not in ('customer', 'technician', 'admin'):
-        return jsonify({'success': False, 'message': 'Invalid role.'}), 400
-
     if len(password) < 6:
         return jsonify({'success': False, 'message': 'Password must be at least 6 characters.'}), 400
 
-    if User.query.filter_by(username=username).first():
+    if model.query.filter_by(username=username).first():
         return jsonify({'success': False, 'message': 'That username is already taken.'}), 400
 
-    if User.query.filter_by(email=email).first():
+    if email_in_use(email):
         return jsonify({'success': False, 'message': 'That email is already registered.'}), 400
 
-    user = User(
-        username=username,
-        email=email,
-        full_name=full_name,
-        phone=phone or None,
-        role=role,
-        is_active=True
-    )
+    user = model(username=username, email=email, full_name=full_name, phone=phone or None, is_active=True)
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
 
-    log_activity(session.get('user_id'), 'user_create', f'Created user account: {full_name} ({email})')
+    log_activity(session.get('user_id'), 'user_create', f'Created {role} account: {full_name} ({email})')
 
     return jsonify({'success': True, 'message': f'{full_name} was added.', 'user': build_admin_user_summary(user)})
 
-@app.route('/api/admin/users/<int:user_id>/verify-id', methods=['POST'])
+@app.route('/api/admin/users/<role>/<int:user_id>/verify-id', methods=['POST'])
 @admin_required
-def api_admin_verify_technician_id(user_id):
+def api_admin_verify_technician_id(role, user_id):
     """Records identity-verification for a technician account. The ID
     number is stored so the shop has a real audit record on file (the
     same way any employer keeps a copy of a hired worker's ID), but it is
@@ -2518,7 +3647,7 @@ def api_admin_verify_technician_id(user_id):
     accepts it, and no GET endpoint anywhere serializes id_number back
     out. Every other view of a technician only ever sees the boolean
     id_verified flag."""
-    user = User.query.get_or_404(user_id)
+    user = _admin_target(role, user_id)
     if user.role != 'technician':
         return jsonify({'success': False, 'message': 'Identity verification only applies to technician accounts.'}), 400
 
@@ -2542,26 +3671,31 @@ def api_admin_verify_technician_id(user_id):
         user.id,
         'Identity Verified',
         'Your identity document has been verified by an administrator. You can now be assigned to service bookings.',
-        'success'
+        'success', role='technician'
     )
 
     return jsonify({'success': True, 'message': f"{user.full_name}'s identity has been verified."})
 
-@app.route('/api/admin/users/<int:user_id>/verify-id', methods=['DELETE'])
+@app.route('/api/admin/users/<role>/<int:user_id>/verify-id', methods=['DELETE'])
 @admin_required
-def api_admin_revoke_technician_verification(user_id):
+def api_admin_revoke_technician_verification(role, user_id):
     """Lets an admin revoke a verification (e.g. an ID turned out to be
     fraudulent, or expired) without deleting the account outright."""
-    user = User.query.get_or_404(user_id)
+    user = _admin_target(role, user_id)
+    if user.role != 'technician':
+        return jsonify({'success': False, 'message': 'Only technicians have ID verification.'}), 400
     user.id_verified = False
     db.session.commit()
     log_activity(session.get('user_id'), 'technician_verify_revoke', f'Revoked identity verification for: {user.full_name}')
     return jsonify({'success': True, 'message': f"{user.full_name}'s verification has been revoked."})
 
-@app.route('/api/admin/users/<int:user_id>', methods=['PUT'])
+ROLE_CHANGE_MESSAGE = ("Customers, technicians and admins are separate accounts, so an account's type "
+                       "can't be changed. Create a new account of the other type instead.")
+
+@app.route('/api/admin/users/<role>/<int:user_id>', methods=['PUT'])
 @admin_required
-def api_admin_update_user(user_id):
-    user = User.query.get_or_404(user_id)
+def api_admin_update_user(role, user_id):
+    user = _admin_target(role, user_id)
     data = request.get_json(silent=True) or {}
 
     full_name = (data.get('full_name') or '').strip()
@@ -2571,52 +3705,56 @@ def api_admin_update_user(user_id):
     city = (data.get('city') or '').strip()
     province = (data.get('province') or '').strip()
     postal_code = (data.get('postal_code') or '').strip()
-    role = (data.get('role') or user.role).strip()
+    new_role = (data.get('role') or user.role).strip()
 
     if not full_name or not email:
         return jsonify({'success': False, 'message': 'Full name and email are required.'}), 400
-
-    if role not in ('customer', 'technician', 'admin'):
-        return jsonify({'success': False, 'message': 'Invalid role.'}), 400
-
-    if user_id == session.get('user_id') and role != 'admin':
-        return jsonify({'success': False, 'message': "You can't change your own role while logged in."}), 400
-
-    existing = User.query.filter(User.email == email, User.id != user_id).first()
-    if existing:
+    if new_role != user.role:
+        return jsonify({'success': False, 'message': ROLE_CHANGE_MESSAGE}), 400
+    if email_in_use(email, exclude=user):
         return jsonify({'success': False, 'message': 'That email is already used by another account.'}), 400
-
-    if user.role == 'admin' and role != 'admin' and User.query.filter_by(role='admin').count() <= 1:
-        return jsonify({'success': False, 'message': 'Cannot change the role of the last remaining admin.'}), 400
 
     user.full_name = full_name
     user.email = email
     user.phone = phone or None
-    user.address = address or None
-    user.city = city or None
-    user.province = province or None
-    user.postal_code = postal_code or None
-    user.role = role
+    columns = user.__table__.columns
+    for field, value in (('address', address), ('city', city), ('province', province), ('postal_code', postal_code)):
+        if field in columns:
+            setattr(user, field, value or None)
     db.session.commit()
 
-    if session.get('user_id') == user.id:
-        session['role'] = user.role
-        session['username'] = user.username
-
-    log_activity(session.get('user_id'), 'user_update', f'Updated user account: {user.full_name} (#{user.id})')
+    log_activity(session.get('user_id'), 'user_update', f'Updated {user.role} account: {user.full_name} ({user.key})')
 
     return jsonify({'success': True, 'message': 'User updated.', 'user': build_admin_user_summary(user)})
 
-@app.route('/api/admin/users/<int:user_id>/status', methods=['POST'])
+@app.route('/api/admin/users/<role>/<int:user_id>/reset-password', methods=['POST'])
 @admin_required
-def api_admin_toggle_user_status(user_id):
-    if user_id == session.get('user_id'):
+def api_admin_reset_password(role, user_id):
+    """Give a user a one-time temporary password (shown to the admin once).
+    Used when a customer contacts the shop because they forgot theirs."""
+    user = _admin_target(role, user_id)
+    if _is_me(user):
+        return jsonify({'success': False, 'message': 'Change your own password from your profile.'}), 400
+    temp = 'Temp-' + secrets.token_urlsafe(8)
+    user.set_password(temp)
+    db.session.commit()
+    log_activity(session.get('user_id'), 'password_reset', f'Reset password for {user.full_name} ({user.key})')
+    create_notification(user.id, 'Password Reset',
+                        'An administrator reset your password. Sign in with the temporary password '
+                        'they gave you, then change it in your profile.', 'warning', role=user.role)
+    return jsonify({'success': True, 'temporary_password': temp,
+                    'message': f"Temporary password created for {user.full_name}."})
+
+@app.route('/api/admin/users/<role>/<int:user_id>/status', methods=['POST'])
+@admin_required
+def api_admin_toggle_user_status(role, user_id):
+    user = _admin_target(role, user_id)
+    if _is_me(user):
         return jsonify({'success': False, 'message': "You can't deactivate your own account while logged in."}), 400
 
-    user = User.query.get_or_404(user_id)
     data = request.get_json(silent=True) or {}
 
-    if user.role == 'admin' and user.is_active and User.query.filter_by(role='admin', is_active=True).count() <= 1:
+    if user.role == 'admin' and user.is_active and Admin.query.filter_by(is_active=True).count() <= 1:
         return jsonify({'success': False, 'message': 'Cannot deactivate the last active admin account.'}), 400
 
     if 'is_active' in data:
@@ -2626,107 +3764,48 @@ def api_admin_toggle_user_status(user_id):
     db.session.commit()
 
     log_activity(session.get('user_id'), 'user_status_change',
-                 f'{"Activated" if user.is_active else "Deactivated"} user: {user.full_name} (#{user.id})')
+                 f'{"Activated" if user.is_active else "Deactivated"} {user.role}: {user.full_name} ({user.key})')
 
     return jsonify({'success': True, 'is_active': user.is_active})
 
-@app.route('/api/admin/users/<int:user_id>/role', methods=['POST'])
+@app.route('/api/admin/users/<role>/<int:user_id>/role', methods=['POST'])
 @admin_required
-def api_admin_update_role(user_id):
-    user = User.query.get_or_404(user_id)
-    data = request.get_json(silent=True) or {}
-    new_role = (data.get('role') or '').strip()
+def api_admin_update_role(role, user_id):
+    """Account types are separate tables now; a role can't be changed in place."""
+    _admin_target(role, user_id)
+    return jsonify({'success': False, 'message': ROLE_CHANGE_MESSAGE}), 400
 
-    if new_role not in ('customer', 'technician', 'admin'):
-        return jsonify({'success': False, 'message': 'Invalid role.'}), 400
-
-    # An admin must never be able to change their OWN role away from
-    # 'admin' - doing so instantly locks them out of every /admin/* page
-    # on their very next click, since admin_required re-checks the role
-    # from the database on every request.
-    if user_id == session.get('user_id') and new_role != 'admin':
-        return jsonify({'success': False, 'message': "You can't change your own role while logged in."}), 400
-
-    if user.role == 'admin' and new_role != 'admin' and User.query.filter_by(role='admin').count() <= 1:
-        return jsonify({'success': False, 'message': 'Cannot change the role of the last remaining admin.'}), 400
-
-    user.role = new_role
-    db.session.commit()
-
-    if session.get('user_id') == user.id:
-        session['role'] = user.role
-
-    log_activity(session.get('user_id'), 'user_role_change', f'Changed role of {user.full_name} (#{user.id}) to {new_role}')
-
-    return jsonify({'success': True, 'role': user.role})
-
-@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@app.route('/api/admin/users/<role>/<int:user_id>', methods=['DELETE'])
 @admin_required
-def api_admin_delete_user(user_id):
-    if user_id == session.get('user_id'):
+def api_admin_delete_user(role, user_id):
+    user = _admin_target(role, user_id)
+    if _is_me(user):
         return jsonify({'success': False, 'message': "You can't delete your own account while logged in."}), 400
 
-    user = User.query.get_or_404(user_id)
-
-    if user.role == 'admin' and User.query.filter_by(role='admin').count() <= 1:
+    if user.role == 'admin' and Admin.query.count() <= 1:
         return jsonify({'success': False, 'message': 'Cannot delete the last remaining admin account.'}), 400
 
-    has_history = (
-        Booking.query.filter_by(user_id=user_id).first() is not None or
-        Order.query.filter_by(user_id=user_id).first() is not None or
-        Transaction.query.filter_by(user_id=user_id).first() is not None or
-        SupportTicket.query.filter_by(user_id=user_id).first() is not None
-    )
-    if has_history:
+    if _account_has_history(user):
         return jsonify({
             'success': False,
-            'message': 'This user has bookings, orders, or transactions on record and cannot be deleted. '
+            'message': 'This account has bookings, orders, jobs or payments on record and cannot be deleted. '
                        'Deactivate the account instead to preserve that history.'
         }), 400
 
     try:
-        Notification.query.filter_by(user_id=user_id).delete()
-        Message.query.filter_by(sender_id=user_id).delete()
-        Message.query.filter_by(recipient_id=user_id).delete()
-        ActivityLog.query.filter_by(user_id=user_id).delete()
-        for cart in ShoppingCart.query.filter_by(user_id=user_id).all():
-            CartItem.query.filter_by(cart_id=cart.id).delete()
-            db.session.delete(cart)
-        UserPreference.query.filter_by(user_id=user_id).delete()
-
-        full_name = user.full_name
+        full_name, key = user.full_name, user.key
+        _delete_account_private_rows(user)
+        _delete_account_messages(user)
         db.session.delete(user)
         db.session.commit()
 
-        log_activity(session.get('user_id'), 'user_delete', f'Deleted user account: {full_name} (#{user_id})')
+        log_activity(session.get('user_id'), 'user_delete', f'Deleted account: {full_name} ({key})')
 
         return jsonify({'success': True, 'message': f'{full_name} has been deleted.'})
     except Exception:
         db.session.rollback()
+        app.logger.exception('Deleting %s-%s failed', role, user_id)
         return jsonify({'success': False, 'message': 'Could not delete user due to a database error.'}), 500
-
-@app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
-@admin_required
-def admin_user_toggle(user_id):
-    user = User.query.get_or_404(user_id)
-    user.is_active = not user.is_active
-    db.session.commit()
-    flash(f'User status updated to {"Active" if user.is_active else "Inactive"}.', 'success')
-    return redirect(url_for('admin_users'))
-
-@app.route('/admin/users/<int:user_id>/role', methods=['POST'])
-@admin_required
-def admin_user_role(user_id):
-    user = User.query.get_or_404(user_id)
-    new_role = request.form.get('role')
-    if user_id == session.get('user_id') and new_role != 'admin':
-        flash("You can't change your own role while logged in.", 'danger')
-        return redirect(url_for('admin_users'))
-    if new_role in ['customer', 'technician', 'admin']:
-        user.role = new_role
-        db.session.commit()
-        flash(f'User role updated to {new_role}.', 'success')
-    return redirect(url_for('admin_users'))
 
 @app.route('/api/booking/<int:booking_id>')
 @login_required
@@ -2742,11 +3821,18 @@ def api_booking_detail(booking_id):
     service = booking.service
     txn = booking.transaction
     tech = booking.technician
+    status_note = None
+    if booking.status == 'cancelled':
+        from models.technician_models import JobLog
+        last = JobLog.query.filter_by(booking_id=booking.id, action='status')\
+            .order_by(JobLog.id.desc()).first()
+        status_note = last.text if last else None
 
     return jsonify({
         'id': booking.id,
         'booking_number': booking.booking_number,
         'status': booking.status,
+        'status_note': status_note,
         'device_type': booking.device_type,
         'description': booking.description,
         'address': booking.address,
@@ -2776,7 +3862,7 @@ def api_booking_detail(booking_id):
 @admin_required
 def admin_requests():
     bookings = Booking.query.order_by(Booking.created_at.desc()).all()
-    technicians = User.query.filter_by(role='technician').order_by(User.full_name).all()
+    technicians = Technician.query.order_by(Technician.full_name).all()
     return render_template('admin/request_management.html', bookings=bookings, technicians=technicians)
 
 @app.route('/admin/requests/<int:booking_id>/status', methods=['POST'])
@@ -2799,7 +3885,7 @@ def admin_request_status(booking_id):
         if booking.status != 'pending':
             flash('Only pending requests can be approved.', 'danger')
             return redirect(url_for('admin_requests'))
-        tech = User.query.filter_by(id=technician_id, role='technician', is_active=True).first() if technician_id else None
+        tech = Technician.query.filter_by(id=technician_id, is_active=True).first() if technician_id else None
         if not tech:
             flash('Please select a technician before approving.', 'danger')
             return redirect(url_for('admin_requests'))
@@ -2816,10 +3902,10 @@ def admin_request_status(booking_id):
         create_notification(booking.user_id, 'Booking Approved - Technician Assigned',
             f'Your booking #{booking.booking_number} has been approved!\n\n'
             f'Assigned Technician: {tech.full_name} (Verified ✓)\n'
-            f'Contact: {tech.phone or "Available through Messages"}', 'success')
+            f'Contact: {tech.phone or "Available through Messages"}', 'success', role='customer')
         create_notification(tech.id, 'New Job Assigned',
             f'{booking.booking_number} - {booking.service.name} on '
-            f'{booking.booking_date.strftime("%b %d")} at {booking.booking_time.strftime("%I:%M %p")}.', 'info')
+            f'{booking.booking_date.strftime("%b %d")} at {booking.booking_time.strftime("%I:%M %p")}.', 'info', role='technician')
         flash('Request approved and technician notified.', 'success')
     else:
         if booking.status in FINISHED_STATUSES or booking.status == 'cancelled':
@@ -2833,10 +3919,10 @@ def admin_request_status(booking_id):
         msg = f'Your booking #{booking.booking_number} has been rejected.'
         if reason:
             msg += f'\n\nReason: {reason}'
-        create_notification(booking.user_id, 'Booking Rejected', msg, 'error')
+        create_notification(booking.user_id, 'Booking Rejected', msg, 'error', role='customer')
         if booking.technician_id:
             create_notification(booking.technician_id, 'Job Cancelled',
-                                f'{booking.booking_number} was cancelled by an admin.', 'warning')
+                                f'{booking.booking_number} was cancelled by an admin.', 'warning', role='technician')
         flash('Request rejected.', 'warning')
     return redirect(url_for('admin_requests'))
 
@@ -2894,6 +3980,345 @@ def api_admin_booking_detail(booking_id):
         } if txn else None
     })
 
+ORDER_TRANSITIONS = {  # current status -> statuses an admin may move it to
+    'pending': ('processing', 'cancelled'),
+    'processing': ('completed', 'cancelled'),
+}
+
+@app.route('/admin/orders')
+@admin_required
+def admin_orders():
+    status_filter = request.args.get('status', 'all')
+    q = Order.query
+    if status_filter != 'all':
+        q = q.filter_by(status=status_filter)
+    orders = q.order_by(Order.created_at.desc()).all()
+    counts = dict(db.session.query(Order.status, func.count(Order.id)).group_by(Order.status).all())
+    return render_template('admin/orders.html', orders=orders, counts=counts,
+                           status_filter=status_filter, transitions=ORDER_TRANSITIONS)
+
+@app.route('/admin/orders/<int:order_id>/status', methods=['POST'])
+@admin_required
+def admin_order_status(order_id):
+    order = Order.query.get_or_404(order_id)
+    new_status = request.form.get('status')
+    if new_status not in ORDER_TRANSITIONS.get(order.status, ()):
+        flash(f'An order that is {order.status} cannot be moved to {new_status}.', 'danger')
+        return redirect(url_for('admin_orders'))
+
+    if new_status == 'cancelled':
+        _cancel_order(order)
+        msg = f'Your order #{order.order_number} was cancelled by our team.'
+        if order.payment_status == 'confirmed':
+            msg += ' Your payment will be refunded; we will contact you.'
+    else:
+        order.status = new_status
+        order.updated_at = datetime.utcnow()
+        # Cash on delivery is paid when the order is handed over.
+        if new_status == 'completed' and order.payment_method == 'cod':
+            order.payment_status = 'confirmed'
+            for txn in order.transactions:
+                if txn.payment_status == 'pending':
+                    txn.payment_status = 'confirmed'
+                    txn.updated_at = datetime.utcnow()
+        db.session.commit()
+        msg = {'processing': f'Your order #{order.order_number} is being prepared.',
+               'completed': f'Your order #{order.order_number} has been completed.'}[new_status]
+    create_notification(order.user_id, 'Order Update', msg, 'warning' if new_status == 'cancelled' else 'info',
+                        role='customer')
+    log_activity(session.get('user_id'), 'order_status', f'Order {order.order_number} -> {new_status}')
+    flash(f'Order {order.order_number} marked {new_status}.', 'success')
+    return redirect(url_for('admin_orders', status=request.args.get('filter', 'all')))
+
+
+# ==================== ADMIN: PRODUCTS ====================
+
+def _slugify(text):
+    return re.sub(r'[^a-z0-9]+', '-', (text or '').lower()).strip('-')[:50]
+
+def _decimal_field(raw, label, minimum=0, maximum=10_000_000):
+    """Parse a money field. Returns (value, error)."""
+    from decimal import Decimal, InvalidOperation
+    try:
+        value = Decimal(str(raw).strip()).quantize(Decimal('0.01'))
+    except (InvalidOperation, ValueError):
+        return None, f'{label} must be a number.'
+    if not minimum <= value <= maximum:
+        return None, f'{label} must be between {minimum} and {maximum:,}.'
+    return value, None
+
+def _int_field(raw, label, minimum=0, maximum=1_000_000):
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None, f'{label} must be a whole number.'
+    if not minimum <= value <= maximum:
+        return None, f'{label} must be between {minimum} and {maximum:,}.'
+    return value, None
+
+def _product_from_form(form):
+    """Validated product fields from a submitted form. Returns (data, error)."""
+    name = (form.get('name') or '').strip()
+    if not name or len(name) > 100:
+        return None, 'Product name is required (max 100 characters).'
+    price, err = _decimal_field(form.get('price'), 'Price')
+    if err:
+        return None, err
+    stock, err = _int_field(form.get('stock_quantity'), 'Stock')
+    if err:
+        return None, err
+    image_url = (form.get('image_url') or '').strip()
+    if image_url and not (image_url.startswith('https://') or image_url.startswith('/static/')):
+        return None, 'Image URL must start with https:// or /static/.'
+    return {
+        'name': name,
+        'description': (form.get('description') or '').strip()[:2000] or None,
+        'price': price,
+        'category': (form.get('category') or '').strip().lower()[:50] or None,
+        'stock_quantity': stock,
+        'compatibility': (form.get('compatibility') or '').strip()[:100] or None,
+        'image_url': image_url[:255] or None,
+    }, None
+
+@app.route('/admin/products')
+@admin_required
+def admin_products():
+    products = Product.query.order_by(Product.is_active.desc(), Product.name).all()
+    categories = sorted({p.category for p in products if p.category})
+    return render_template('admin/products.html', products=products, categories=categories,
+                           low_stock=5)
+
+@app.route('/admin/products', methods=['POST'])
+@admin_required
+def admin_product_create():
+    data, err = _product_from_form(request.form)
+    if err:
+        flash(err, 'danger')
+        return redirect(url_for('admin_products'))
+    product = Product(is_active=True, **data)
+    db.session.add(product)
+    db.session.commit()
+    cache.delete('active_products')
+    log_activity(session.get('user_id'), 'product_create', f'Added product: {product.name}')
+    flash(f'{product.name} added.', 'success')
+    return redirect(url_for('admin_products'))
+
+@app.route('/admin/products/<int:product_id>', methods=['POST'])
+@admin_required
+def admin_product_update(product_id):
+    product = Product.query.get_or_404(product_id)
+    data, err = _product_from_form(request.form)
+    if err:
+        flash(err, 'danger')
+        return redirect(url_for('admin_products'))
+    for key, value in data.items():
+        setattr(product, key, value)
+    db.session.commit()
+    cache.delete('active_products')
+    log_activity(session.get('user_id'), 'product_update', f'Updated product: {product.name}')
+    flash(f'{product.name} updated.', 'success')
+    return redirect(url_for('admin_products'))
+
+@app.route('/admin/products/<int:product_id>/toggle', methods=['POST'])
+@admin_required
+def admin_product_toggle(product_id):
+    product = Product.query.get_or_404(product_id)
+    product.is_active = not product.is_active
+    db.session.commit()
+    cache.delete('active_products')
+    state = 'listed in the shop' if product.is_active else 'hidden from the shop'
+    log_activity(session.get('user_id'), 'product_toggle', f'{product.name} {state}')
+    flash(f'{product.name} is now {state}.', 'success')
+    return redirect(url_for('admin_products'))
+
+# ==================== ADMIN: SERVICES & CATEGORIES ====================
+
+@app.route('/admin/services')
+@admin_required
+def admin_services():
+    categories = ServiceCategory.query.order_by(ServiceCategory.display_order, ServiceCategory.name).all()
+    return render_template('admin/services.html', categories=categories)
+
+def _service_from_form(form):
+    name = (form.get('name') or '').strip()
+    if not name or len(name) > 100:
+        return None, 'Service name is required (max 100 characters).'
+    category = db.session.get(ServiceCategory, form.get('category_id', type=int) or 0)
+    if not category:
+        return None, 'Choose a category.'
+    price, err = _decimal_field(form.get('price'), 'Price')
+    if err:
+        return None, err
+    hours, err = _int_field(form.get('estimated_hours') or 1, 'Estimated hours', 1, 200)
+    if err:
+        return None, err
+    return {'name': name, 'category_id': category.id, 'price': price, 'estimated_hours': hours,
+            'description': (form.get('description') or '').strip()[:2000] or None}, None
+
+@app.route('/admin/services', methods=['POST'])
+@admin_required
+def admin_service_create():
+    data, err = _service_from_form(request.form)
+    if err:
+        flash(err, 'danger')
+        return redirect(url_for('admin_services'))
+    service = Service(is_active=True, **data)
+    db.session.add(service)
+    db.session.commit()
+    log_activity(session.get('user_id'), 'service_create', f'Added service: {service.name}')
+    flash(f'{service.name} added.', 'success')
+    return redirect(url_for('admin_services'))
+
+@app.route('/admin/services/<int:service_id>', methods=['POST'])
+@admin_required
+def admin_service_update(service_id):
+    service = Service.query.get_or_404(service_id)
+    data, err = _service_from_form(request.form)
+    if err:
+        flash(err, 'danger')
+        return redirect(url_for('admin_services'))
+    for key, value in data.items():
+        setattr(service, key, value)
+    db.session.commit()
+    log_activity(session.get('user_id'), 'service_update', f'Updated service: {service.name}')
+    flash(f'{service.name} updated. New bookings use the new price.', 'success')
+    return redirect(url_for('admin_services'))
+
+@app.route('/admin/services/<int:service_id>/toggle', methods=['POST'])
+@admin_required
+def admin_service_toggle(service_id):
+    service = Service.query.get_or_404(service_id)
+    service.is_active = not service.is_active
+    db.session.commit()
+    flash(f'{service.name} is now {"bookable" if service.is_active else "hidden from customers"}.', 'success')
+    return redirect(url_for('admin_services'))
+
+@app.route('/admin/categories', methods=['POST'])
+@admin_required
+def admin_category_create():
+    name = (request.form.get('name') or '').strip()
+    if not name or len(name) > 50:
+        flash('Category name is required (max 50 characters).', 'danger')
+        return redirect(url_for('admin_services'))
+    slug = _slugify(name)
+    if ServiceCategory.query.filter(or_(ServiceCategory.name == name, ServiceCategory.slug == slug)).first():
+        flash('A category with that name already exists.', 'danger')
+        return redirect(url_for('admin_services'))
+    icon = (request.form.get('icon') or 'fa-tools').strip()
+    if not re.fullmatch(r'fa-[a-z0-9-]{1,40}', icon):
+        icon = 'fa-tools'
+    db.session.add(ServiceCategory(name=name, slug=slug, icon=icon, is_active=True,
+                                   description=(request.form.get('description') or '').strip()[:500] or None))
+    db.session.commit()
+    flash(f'Category {name} added.', 'success')
+    return redirect(url_for('admin_services'))
+
+@app.route('/admin/categories/<int:category_id>/toggle', methods=['POST'])
+@admin_required
+def admin_category_toggle(category_id):
+    category = ServiceCategory.query.get_or_404(category_id)
+    category.is_active = not category.is_active
+    db.session.commit()
+    flash(f'{category.name} is now {"visible" if category.is_active else "hidden from customers"}.', 'success')
+    return redirect(url_for('admin_services'))
+
+# ==================== ADMIN: SUPPORT ====================
+
+@app.route('/admin/support')
+@admin_required
+def admin_support():
+    status_order = db.case((SupportTicket.status == 'open', 0), (SupportTicket.status == 'in_progress', 1), else_=2)
+    tickets = SupportTicket.query.order_by(status_order, SupportTicket.created_at.desc()).limit(200).all()
+    inquiries = ContactInquiry.query.order_by(
+        (ContactInquiry.status == 'new').desc(), ContactInquiry.created_at.desc()).limit(200).all()
+    return render_template('admin/support.html', tickets=tickets, inquiries=inquiries)
+
+@app.route('/admin/support/<int:ticket_id>/respond', methods=['POST'])
+@admin_required
+def admin_ticket_respond(ticket_id):
+    ticket = SupportTicket.query.get_or_404(ticket_id)
+    response = (request.form.get('admin_response') or '').strip()
+    status = request.form.get('status', 'resolved')
+    if status not in ('open', 'in_progress', 'resolved'):
+        status = 'resolved'
+    if not response and status == ticket.status:
+        flash('Write a reply or change the status.', 'danger')
+        return redirect(url_for('admin_support'))
+    if response:
+        ticket.admin_response = response[:5000]
+    ticket.status = status
+    ticket.updated_at = datetime.utcnow()
+    db.session.commit()
+    msg = f'Your support ticket "{ticket.subject}" is now {status.replace("_", " ")}.'
+    if response:
+        msg += ' We replied: ' + (response[:300] + ('…' if len(response) > 300 else ''))
+    create_notification(ticket.user_id, 'Support Ticket Updated', msg, 'info', role='customer')
+    log_activity(session.get('user_id'), 'ticket_respond', f'Ticket #{ticket.id} -> {status}')
+    flash('Ticket updated and the customer was notified.', 'success')
+    return redirect(url_for('admin_support'))
+
+@app.route('/admin/inquiries/<int:inquiry_id>/status', methods=['POST'])
+@admin_required
+def admin_inquiry_status(inquiry_id):
+    inquiry = ContactInquiry.query.get_or_404(inquiry_id)
+    inquiry.status = 'handled' if inquiry.status == 'new' else 'new'
+    db.session.commit()
+    flash('Inquiry updated.', 'success')
+    return redirect(url_for('admin_support') + '#inquiries')
+
+# ==================== ADMIN: MESSAGES ====================
+
+@app.route('/admin/messages')
+@admin_required
+def admin_messages():
+    conv = request.args.get('conv')
+    conversations, selected, thread = _load_inbox(current_account(), _account_from_key(conv))
+    if not selected and conversations and not conv:
+        return redirect(url_for('admin_messages', conv=conversations[0]['key']))
+    return render_template('admin/messages.html', conversations=conversations,
+                           selected_conversation=selected, messages=thread)
+
+@app.route('/admin/messages/send', methods=['POST'])
+@admin_required
+def admin_message_send():
+    me = current_account()
+    content = (request.form.get('content') or '').strip()
+    recipient = None
+    if request.form.get('recipient_key'):
+        recipient = _account_from_key(request.form['recipient_key'])
+    elif request.form.get('recipient_email'):
+        recipient = find_account_by_email(request.form['recipient_email'])
+    if not recipient or recipient.key == me.key:
+        flash('Recipient not found.', 'danger')
+        return redirect(url_for('admin_messages'))
+    checked, file_error = check_message_attachment(request.files.get('attachment'))
+    if file_error:
+        flash(file_error, 'danger')
+        return redirect(url_for('admin_messages', conv=recipient.key))
+    if (not content and not checked) or len(content) > MAX_MESSAGE_LENGTH:
+        flash(f'Write a message (up to {MAX_MESSAGE_LENGTH} characters) or attach a file.', 'danger')
+        return redirect(url_for('admin_messages', conv=recipient.key))
+    send_message(me, recipient, content, checked=checked)
+    return redirect(url_for('admin_messages', conv=recipient.key))
+
+@app.route('/admin/notifications')
+@admin_required
+def admin_notifications():
+    uid = session['user_id']
+    rows = _notifications_for('admin', uid).order_by(Notification.created_at.desc()).limit(100).all()
+    unread_ids = {n.id for n in rows if not n.is_read}
+    _notifications_for('admin', uid).filter_by(is_read=False).update({'is_read': True})
+    db.session.commit()
+    return render_template('admin/notifications.html', rows=rows, unread_ids=unread_ids)
+
+@app.route('/admin/notifications/clear', methods=['POST'])
+@admin_required
+def admin_notifications_clear():
+    _notifications_for('admin', session['user_id']).filter_by(is_read=True).delete()
+    db.session.commit()
+    flash('Read notifications cleared.', 'success')
+    return redirect(url_for('admin_notifications'))
+
 @app.route('/admin/payments')
 @admin_required
 def admin_payments():
@@ -2904,15 +4329,24 @@ def admin_payments():
 @admin_required
 def admin_payment_confirm(transaction_id):
     transaction = Transaction.query.get_or_404(transaction_id)
+    if transaction.payment_status == 'confirmed':
+        flash('This payment is already confirmed.', 'info')
+        return redirect(url_for('admin_payments'))
+    if transaction.payment_status == 'cancelled':
+        flash('This payment belongs to a cancelled order and cannot be confirmed.', 'danger')
+        return redirect(url_for('admin_payments'))
     transaction.payment_status = 'confirmed'
     transaction.updated_at = datetime.utcnow()
+    if transaction.order:
+        transaction.order.payment_status = 'confirmed'
     db.session.commit()
+    log_activity(session.get('user_id'), 'payment_confirm', f'Confirmed payment {transaction.transaction_number}')
     
     create_notification(
         transaction.user_id,
         'Payment Confirmed',
         f'Your payment for transaction #{transaction.transaction_number} has been confirmed.',
-        'success'
+        'success', role='customer'
     )
     
     flash('Payment confirmed successfully.', 'success')
@@ -2922,25 +4356,64 @@ def admin_payment_confirm(transaction_id):
 @admin_required
 def admin_payment_reject(transaction_id):
     transaction = Transaction.query.get_or_404(transaction_id)
-    reason = request.form.get('reason', 'Payment rejected by admin.')
+    if transaction.payment_status in ('confirmed', 'cancelled'):
+        flash(f'A {transaction.payment_status} payment cannot be rejected.', 'danger')
+        return redirect(url_for('admin_payments'))
+    reason = (request.form.get('reason') or '').strip() or 'Payment rejected by admin.'
     transaction.payment_status = 'rejected'
     transaction.rejection_reason = reason
     transaction.updated_at = datetime.utcnow()
+    if transaction.order:
+        transaction.order.payment_status = 'rejected'
     db.session.commit()
+    log_activity(session.get('user_id'), 'payment_reject', f'Rejected payment {transaction.transaction_number}')
     
     create_notification(
         transaction.user_id,
         'Payment Rejected',
         f'Your payment for transaction #{transaction.transaction_number} was rejected. Reason: {reason}',
-        'error'
+        'error', role='customer'
     )
     
     flash('Payment rejected.', 'warning')
     return redirect(url_for('admin_payments'))
 
+MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+def _last_n_months(now, n):
+    """[(year, month), ...] for the n calendar months ending with now's month, oldest first."""
+    year, month = now.year, now.month
+    months = []
+    for _ in range(n):
+        months.append((year, month))
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    return months[::-1]
+
+def _monthly_series(date_col, value_expr, now, n, *filters):
+    """Labels and values for the last n calendar months (zero-filled).
+    Uses extract() so it runs on MySQL and SQLite alike."""
+    from sqlalchemy import extract
+    months = _last_n_months(now, n)
+    since = datetime(months[0][0], months[0][1], 1)
+    rows = db.session.query(extract('year', date_col), extract('month', date_col), value_expr)\
+        .filter(date_col >= since, *filters)\
+        .group_by(extract('year', date_col), extract('month', date_col)).all()
+    totals = {(int(y), int(m)): v for y, m, v in rows}
+    labels = [f"{MONTH_NAMES[m - 1]} {y}" for y, m in months]
+    values = [float(totals.get((y, m)) or 0) for y, m in months]
+    return labels, values
+
+def _day_label(d):
+    """func.date() gives a date on MySQL but a 'YYYY-MM-DD' string on SQLite."""
+    if isinstance(d, str):
+        d = datetime.strptime(d[:10], '%Y-%m-%d')
+    return d.strftime('%b %d')
+
+# Not page-cached: the rendered page embeds the viewer's CSRF token.
 @app.route('/admin/analytics')
 @admin_required
-@cache.cached(timeout=60, query_string=True)
 def admin_analytics():
     from sqlalchemy import func, extract
     
@@ -2962,63 +4435,54 @@ def admin_analytics():
     # KEY METRICS
     # ============================================
     
-    # Total Users
-    total_users = User.query.filter_by(role='customer').count()
-    new_users = User.query.filter(User.created_at >= start_date, User.role == 'customer').count()
-    user_growth_percent = round((new_users / total_users * 100) if total_users > 0 else 0)
-    
-    # Total Bookings
+    # Each KPI shows its all-time total plus how much was added in the selected
+    # period, compared with the period of the same length just before it.
+    period = now - start_date
+    prev_start = start_date - period
+
+    def period_change(current, previous):
+        """% change vs the previous period, or None when there is nothing to compare."""
+        if not previous:
+            return None
+        return round((float(current) - float(previous)) / float(previous) * 100)
+
+    # Customers
+    total_users = Customer.query.count()
+    new_users = Customer.query.filter(Customer.created_at >= start_date).count()
+    prev_users = Customer.query.filter(Customer.created_at >= prev_start,
+                                       Customer.created_at < start_date).count()
+    user_change = period_change(new_users, prev_users)
+
+    # Bookings
     total_bookings = Booking.query.count()
     new_bookings = Booking.query.filter(Booking.created_at >= start_date).count()
-    bookings_growth_percent = round((new_bookings / total_bookings * 100) if total_bookings > 0 else 0)
-    
-    # Total Revenue (confirmed payments only)
-    total_revenue = db.session.query(func.sum(Transaction.amount)).filter_by(payment_status='confirmed').scalar() or 0
+    prev_bookings = Booking.query.filter(Booking.created_at >= prev_start, Booking.created_at < start_date).count()
+    bookings_change = period_change(new_bookings, prev_bookings)
+
+    # Revenue (confirmed payments only)
+    confirmed = Transaction.payment_status == 'confirmed'
+    total_revenue = db.session.query(func.sum(Transaction.amount)).filter(confirmed).scalar() or 0
     revenue_this_period = db.session.query(func.sum(Transaction.amount)).filter(
-        Transaction.payment_status == 'confirmed',
-        Transaction.transaction_date >= start_date
-    ).scalar() or 0
-    revenue_growth_percent = round((revenue_this_period / total_revenue * 100) if total_revenue > 0 else 0)
-    
-    # Average Rating (if you have a ratings system, otherwise use completion rate)
-    completed_bookings = Booking.query.filter_by(status='completed').count()
-    completion_rate = round((completed_bookings / total_bookings * 100) if total_bookings > 0 else 0)
+        confirmed, Transaction.transaction_date >= start_date).scalar() or 0
+    revenue_prev_period = db.session.query(func.sum(Transaction.amount)).filter(
+        confirmed, Transaction.transaction_date >= prev_start,
+        Transaction.transaction_date < start_date).scalar() or 0
+    revenue_change = period_change(revenue_this_period, revenue_prev_period)
+
+    # Completion rate: finished jobs out of every booking that wasn't cancelled.
+    finished_bookings = Booking.query.filter(Booking.status.in_(FINISHED_STATUSES)).count()
+    open_or_done = Booking.query.filter(Booking.status != 'cancelled').count()
+    completion_rate = round(finished_bookings / open_or_done * 100) if open_or_done else 0
+    period_label = {'7d': 'last 7 days', '90d': 'last 90 days', '1y': 'last year'}.get(date_range, 'last 30 days')
     
     # ============================================
     # MONTHLY REVENUE (Last 12 months)
     # ============================================
     
-    monthly_revenue = db.session.query(
-        func.date_format(Transaction.transaction_date, '%Y-%m').label('month'),
-        func.sum(Transaction.amount).label('total')
-    ).filter(Transaction.payment_status == 'confirmed')\
-     .group_by('month')\
-     .order_by('month')\
-     .limit(12).all()
-    
-    revenue_labels = []
-    revenue_data = []
-    for item in monthly_revenue:
-        # Format: Jan 2024
-        year_month = item.month.split('-')
-        month_name = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][int(year_month[1]) - 1]
-        revenue_labels.append(f"{month_name} {year_month[0]}")
-        revenue_data.append(float(item.total) if item.total else 0)
-    
-    # If no revenue data, fill with zeros for the last 12 months
-    if len(revenue_labels) < 12:
-        # Get the last 12 months
-        months = []
-        for i in range(11, -1, -1):
-            d = now - timedelta(days=30 * i)
-            month_name = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.month - 1]
-            months.append(f"{month_name} {d.year}")
-        
-        # Create a dict from existing data
-        revenue_dict = dict(zip(revenue_labels, revenue_data))
-        revenue_labels = months
-        revenue_data = [revenue_dict.get(m, 0) for m in months]
-    
+    revenue_labels, revenue_data = _monthly_series(
+        Transaction.transaction_date, func.sum(Transaction.amount), now, 12,
+        Transaction.payment_status == 'confirmed')
+
     # ============================================
     # SERVICE DISTRIBUTION
     # ============================================
@@ -3041,33 +4505,9 @@ def admin_analytics():
     # USER GROWTH (Last 6 months)
     # ============================================
     
-    user_growth = db.session.query(
-        func.date_format(User.created_at, '%Y-%m').label('month'),
-        func.count(User.id).label('count')
-    ).group_by('month')\
-     .order_by('month')\
-     .limit(6).all()
-    
-    growth_labels = []
-    growth_data = []
-    for item in user_growth:
-        year_month = item.month.split('-')
-        month_name = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][int(year_month[1]) - 1]
-        growth_labels.append(f"{month_name} {year_month[0]}")
-        growth_data.append(item.count)
-    
-    # Fill missing months
-    if len(growth_labels) < 6:
-        months = []
-        for i in range(5, -1, -1):
-            d = now - timedelta(days=30 * i)
-            month_name = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.month - 1]
-            months.append(f"{month_name} {d.year}")
-        
-        growth_dict = dict(zip(growth_labels, growth_data))
-        growth_labels = months
-        growth_data = [growth_dict.get(m, 0) for m in months]
-    
+    growth_labels, growth_data = _monthly_series(Customer.created_at, func.count(Customer.id), now, 6)
+    growth_data = [int(v) for v in growth_data]
+
     # ============================================
     # PAYMENT METHODS
     # ============================================
@@ -3133,7 +4573,7 @@ def admin_analytics():
      .order_by('date')\
      .all()
     
-    day_labels = [b.date.strftime('%b %d') for b in bookings_by_day]
+    day_labels = [_day_label(b.date) for b in bookings_by_day]
     day_data = [b.count for b in bookings_by_day]
     
     # ============================================
@@ -3150,7 +4590,7 @@ def admin_analytics():
      .order_by('date')\
      .all()
     
-    revenue_day_labels = [r.date.strftime('%b %d') for r in revenue_by_day]
+    revenue_day_labels = [_day_label(r.date) for r in revenue_by_day]
     revenue_day_data = [float(r.total) if r.total else 0 for r in revenue_by_day]
 
     # ============================================
@@ -3158,13 +4598,19 @@ def admin_analytics():
     # entire feature had zero analytics coverage before)
     # ============================================
 
-    shop_revenue = db.session.query(func.sum(Order.total_amount)).filter(
-        Order.status != 'cancelled'
+    # Confirmed payments only, same as Total Revenue: shop = order payments,
+    # repairs = everything else (bookings and approved extra work).
+    shop_revenue = db.session.query(func.sum(Transaction.amount)).filter(
+        Transaction.payment_status == 'confirmed',
+        Transaction.order_id.isnot(None)
     ).scalar() or 0
     booking_revenue_confirmed = db.session.query(func.sum(Transaction.amount)).filter(
         Transaction.payment_status == 'confirmed',
-        Transaction.booking_id.isnot(None)
+        Transaction.order_id.is_(None)
     ).scalar() or 0
+    monthly_booking_labels, monthly_booking_data = _monthly_series(
+        Booking.created_at, func.count(Booking.id), now, 12)
+    monthly_booking_data = [int(v) for v in monthly_booking_data]
 
     top_products = db.session.query(
         Product.name,
@@ -3195,13 +4641,12 @@ def admin_analytics():
     # ============================================
 
     technician_stats = db.session.query(
-        User.full_name,
-        User.id_verified,
+        Technician.full_name,
+        Technician.id_verified,
         func.count(Booking.id).label('assigned_count'),
         func.sum(db.case((Booking.status == 'completed', 1), else_=0)).label('completed_count')
-    ).join(Booking, Booking.technician_id == User.id)\
-     .filter(User.role == 'technician')\
-     .group_by(User.id)\
+    ).join(Booking, Booking.technician_id == Technician.id)\
+     .group_by(Technician.id)\
      .order_by(func.count(Booking.id).desc())\
      .all()
 
@@ -3209,8 +4654,8 @@ def admin_analytics():
     technician_assigned_data = [int(t.assigned_count) for t in technician_stats]
     technician_completed_data = [int(t.completed_count or 0) for t in technician_stats]
 
-    total_technicians_all = User.query.filter_by(role='technician').count()
-    verified_technicians = User.query.filter_by(role='technician', id_verified=True).count()
+    total_technicians_all = Technician.query.count()
+    verified_technicians = Technician.query.filter_by(id_verified=True).count()
     unassigned_bookings = Booking.query.filter(
         Booking.status.in_(['confirmed', 'in_progress']),
         Booking.technician_id.is_(None)
@@ -3238,23 +4683,29 @@ def admin_analytics():
     ).scalar() or 0
 
     top_customers = db.session.query(
-        User.full_name,
+        Customer.full_name,
         func.sum(Transaction.amount).label('total_spent'),
         func.count(Transaction.id).label('txn_count')
-    ).join(Transaction, Transaction.user_id == User.id)\
+    ).join(Transaction, Transaction.customer_id == Customer.id)\
      .filter(Transaction.payment_status == 'confirmed')\
-     .group_by(User.id)\
+     .group_by(Customer.id)\
      .order_by(func.sum(Transaction.amount).desc())\
      .limit(5).all()
 
     return render_template('admin/analytics.html',
                          total_users=total_users,
-                         user_growth_percent=user_growth_percent,
+                         new_users=new_users,
+                         user_change=user_change,
                          total_bookings=total_bookings,
-                         bookings_growth_percent=bookings_growth_percent,
+                         new_bookings=new_bookings,
+                         bookings_change=bookings_change,
                          total_revenue=float(total_revenue),
-                         revenue_growth_percent=revenue_growth_percent,
+                         revenue_this_period=float(revenue_this_period),
+                         revenue_change=revenue_change,
                          completion_rate=completion_rate,
+                         finished_bookings=finished_bookings,
+                         period_label=period_label,
+                         monthly_booking_data=monthly_booking_data,
                          revenue_labels=revenue_labels,
                          revenue_data=revenue_data,
                          service_labels=service_labels,
@@ -3293,34 +4744,41 @@ def admin_analytics():
 @app.route('/admin/technician-activity')
 @admin_required
 def admin_technician_activity():
-    from models.technician_models import IncidentReport, ServiceReport, ServiceRating
+    from models.technician_models import IncidentReport, ServiceReport, ServiceRating, ApprovalRequest
 
     incidents = IncidentReport.query.order_by(IncidentReport.reported_at.desc()).limit(100).all()
+    approvals = ApprovalRequest.query.order_by((ApprovalRequest.status == 'pending').desc(),
+                                               ApprovalRequest.id.desc()).limit(50).all()
     reports = ServiceReport.query.filter_by(status='submitted')\
         .order_by(ServiceReport.submitted_at.desc()).limit(50).all()
     ratings = ServiceRating.query.order_by(ServiceRating.submitted_at.desc()).limit(50).all()
 
-    uids, bids = set(), set()
+    tech_ids, customer_ids, bids = set(), set(), set()
     for i in incidents:
-        uids.add(i.technician_id)
+        tech_ids.add(i.technician_id)
         if i.booking_id:
             bids.add(i.booking_id)
     for r in reports:
-        uids.add(r.technician_id)
+        tech_ids.add(r.technician_id)
         if r.booking_id:
             bids.add(r.booking_id)
     for r in ratings:
-        uids.update([r.technician_id, r.customer_id])
+        tech_ids.add(r.technician_id)
+        customer_ids.add(r.customer_id)
         if r.booking_id:
             bids.add(r.booking_id)
+    for a in approvals:
+        tech_ids.add(a.technician_id)
+        bids.add(a.booking_id)
 
-    users = {u.id: u for u in User.query.filter(User.id.in_(uids)).all()} if uids else {}
+    technicians = {t.id: t for t in Technician.query.filter(Technician.id.in_(tech_ids)).all()} if tech_ids else {}
+    customers = {c.id: c for c in Customer.query.filter(Customer.id.in_(customer_ids)).all()} if customer_ids else {}
     bookings = {b.id: b for b in Booking.query.filter(Booking.id.in_(bids)).all()} if bids else {}
 
     return render_template(
         'admin/technician_activity.html',
-        incidents=incidents, reports=reports, ratings=ratings,
-        users=users, bookings=bookings
+        incidents=incidents, reports=reports, ratings=ratings, approvals=approvals,
+        technicians=technicians, customers=customers, bookings=bookings
     )
 
 @app.route('/admin/incidents/<int:incident_id>/review', methods=['POST'])
@@ -3340,31 +4798,59 @@ def admin_incident_review(incident_id):
     db.session.commit()
     create_notification(
         r.technician_id, 'Incident Report Updated',
-        f'Your incident report #{r.id} is now: {status}.', 'info'
+        f'Your incident report #{r.id} is now: {status}.', 'info', role='technician'
     )
     flash('Incident updated.', 'success')
     return redirect(url_for('admin_technician_activity'))
 
+# Settings the admin Settings page may write, with their validators.
+# Anything else in the request (including csrf_token) is ignored.
+EDITABLE_SETTINGS = {
+    'system_name':      lambda v: 0 < len(v) <= 100,
+    'system_email':     lambda v: len(v) <= 120 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', v),
+    'default_currency': lambda v: v in ('PHP', 'USD', 'EUR'),
+    'timezone':         lambda v: v in ('Asia/Manila', 'Asia/Singapore', 'America/New_York'),
+    'gcash_account':    lambda v: len(v) <= 30,
+    'service_fee':      lambda v: re.fullmatch(r'\d{1,2}(\.\d{1,2})?|100', v),
+    'enable_gcash':     lambda v: v in ('true', 'false'),
+    'enable_cod':       lambda v: v in ('true', 'false'),
+    # Public business details shown on the home, support and payment pages.
+    # Blank means "don't show it" - no placeholder numbers are ever displayed.
+    'contact_phone':    lambda v: len(v) <= 40 and re.fullmatch(r'[0-9+()\- ]*', v),
+    'contact_email':    lambda v: v == '' or (len(v) <= 120 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', v)),
+    'contact_address':  lambda v: len(v) <= 200,
+    'business_hours':   lambda v: len(v) <= 100,
+    'gcash_name':       lambda v: len(v) <= 100,
+}
+
 @app.route('/admin/settings')
 @admin_required
 def admin_settings():
-    settings = SystemSetting.query.all()
-    return render_template('admin/settings.html', settings=settings)
+    values = {row.setting_key: row.value for row in SystemSetting.query.all()}
+    return render_template('admin/settings.html', settings=values)
 
 @app.route('/admin/settings/update', methods=['POST'])
 @admin_required
 def admin_settings_update():
-    for setting_key, value in request.form.items():
-        setting = SystemSetting.query.filter_by(setting_key=setting_key).first()
+    data = request.get_json(silent=True) or {}
+    updates = {}
+    for key, valid in EDITABLE_SETTINGS.items():
+        if key not in data:
+            continue
+        value = str(data[key]).strip()
+        if not valid(value):
+            return jsonify({'success': False, 'message': f'Invalid value for {key.replace("_", " ")}.'}), 400
+        updates[key] = value
+    for key, value in updates.items():
+        setting = SystemSetting.query.filter_by(setting_key=key).first()
         if setting:
             setting.value = value
             setting.updated_at = datetime.utcnow()
         else:
-            setting = SystemSetting(setting_key=setting_key, value=value)
-            db.session.add(setting)
+            db.session.add(SystemSetting(setting_key=key, value=value))
     db.session.commit()
-    flash('Settings updated successfully.', 'success')
-    return redirect(url_for('admin_settings'))
+    log_activity(session.get('user_id'), 'settings_update', f'Updated settings: {", ".join(sorted(updates)) or "none"}')
+    return jsonify({'success': True, 'message': 'Settings saved.'})
 
 # ==================== ERROR HANDLERS ====================
 
@@ -3379,8 +4865,43 @@ def internal_error(error):
 
 # ==================== INIT DATABASE ====================
 
+def move_legacy_receipts():
+    """Receipts used to be saved under static/, where anyone could fetch them.
+    Move them to the private folder that receipt_file() serves from."""
+    if not os.path.isdir(LEGACY_RECEIPT_FOLDER):
+        return
+    for name in os.listdir(LEGACY_RECEIPT_FOLDER):
+        src = os.path.join(LEGACY_RECEIPT_FOLDER, name)
+        dst = os.path.join(app.config['RECEIPT_UPLOAD_FOLDER'], name)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            shutil.move(src, dst)
+
+CART_STOCK_MIGRATION_KEY = 'cart_stock_released_v1'
+
+def release_reserved_cart_stock():
+    """One-time migration. Stock used to be deducted when an item was added to
+    a cart; it is now deducted at checkout. Give back what open carts were
+    holding, exactly once (guarded by a system_settings flag).
+    Returns the number of units released, or None if it already ran."""
+    if SystemSetting.query.filter_by(setting_key=CART_STOCK_MIGRATION_KEY).first():
+        return None
+    released = 0
+    open_items = CartItem.query.join(ShoppingCart, CartItem.cart_id == ShoppingCart.id)\
+        .filter(ShoppingCart.status == 'active').all()
+    for item in open_items:
+        product = db.session.get(Product, item.product_id)
+        if product and item.quantity and item.quantity > 0:
+            product.stock_quantity += item.quantity
+            released += item.quantity
+    db.session.add(SystemSetting(setting_key=CART_STOCK_MIGRATION_KEY, value=str(released),
+                                 description='Units returned to stock when cart reservations were removed'))
+    db.session.commit()
+    cache.delete('active_products')
+    return released
+
 def init_db():
     with app.app_context():
+        move_legacy_receipts()
         db.create_all()
         print("Tables created successfully")
         
@@ -3397,26 +4918,14 @@ def init_db():
         # release. Safe to run every startup - each is a no-op once the
         # column/constraint already exists.
         add_receipt_image_column()
-        add_oauth_columns()
-        add_order_address_columns()
-        add_user_presence_columns()
         add_service_category_columns()
+        add_profile_columns()
         
-        # Create admin user
-        admin = User.query.filter_by(email='admin@devtech.com').first()
-        if not admin:
-            admin = User(
-                username='admin',
-                email='admin@devtech.com',
-                full_name='System Administrator',
-                phone='09171234567',
-                role='admin',
-                is_active=True
-            )
-            admin.set_password('admin123')
-            db.session.add(admin)
-            print("Admin user created: admin@devtech.com / admin123")
-        
+        # No default admin is ever created here. Create one with
+        # `flask --app app create-admin` (or /setup/first-admin with SETUP_TOKEN).
+        if not Admin.query.first():
+            print("No admin account exists yet. Create one with: flask --app app create-admin")
+
         # Add service categories
         if ServiceCategory.query.count() == 0:
             categories = [
@@ -3444,35 +4953,35 @@ def init_db():
             db.session.add_all(services)
             print("Default services added successfully!")
         
-        # Add sample products
-        if Product.query.count() == 0:
-            products = [
-                Product(name='DDR4 RAM 16GB', description='High-performance 3200MHz memory module', price=2500.00, category='memory', stock_quantity=12, compatibility='DDR4'),
-                Product(name='SSD 512GB', description='NVMe M.2 SSD with read speeds up to 3500MB/s', price=3200.00, category='storage', stock_quantity=8, compatibility='M.2 NVMe'),
-                Product(name='Laptop Battery', description='Replacement lithium-ion battery 5200mAh', price=1800.00, category='battery', stock_quantity=5, compatibility='Universal'),
-                Product(name='Charger Adapter', description='65W USB-C fast charger', price=1200.00, category='accessory', stock_quantity=15, compatibility='USB-C'),
-                Product(name='Intel i5-12400', description='6-core 12-thread processor with 4.4GHz boost', price=8500.00, category='cpu', stock_quantity=3, compatibility='LGA1700'),
-                Product(name='RTX 3060', description='12GB GDDR6 graphics card with ray tracing', price=12500.00, category='gpu', stock_quantity=2, compatibility='PCIe 4.0')
-            ]
-            db.session.add_all(products)
-            print("Sample products added successfully!")
-        
+        # No sample products: the shop's real inventory is added in Admin > Products.
+
         # Add system settings
-        if SystemSetting.query.count() == 0:
-            settings = [
-                SystemSetting(setting_key='system_name', value='DEVTech Computer Services', description='System name displayed throughout'),
-                SystemSetting(setting_key='system_email', value='admin@devtech.com', description='Primary system email'),
-                SystemSetting(setting_key='default_currency', value='PHP', description='Default currency for transactions'),
-                SystemSetting(setting_key='timezone', value='Asia/Manila', description='System timezone'),
-                SystemSetting(setting_key='service_fee', value='5', description='Service fee percentage'),
-                SystemSetting(setting_key='gcash_account', value='0917 123 4567', description='GCash account number'),
-                SystemSetting(setting_key='enable_gcash', value='true', description='Enable GCash payments'),
-                SystemSetting(setting_key='enable_cod', value='true', description='Enable Cash on Delivery')
-            ]
-            db.session.add_all(settings)
-            print("Default settings added successfully!")
+        # Add each default that is missing (never overwrites an admin's value).
+        # Checked per key, not "table is empty", because migration flags such
+        # as CART_STOCK_MIGRATION_KEY also live in this table.
+        default_settings = [
+            ('system_name', 'DEVTech Computer Services', 'System name displayed throughout'),
+            ('system_email', 'admin@devtech.com', 'Primary system email'),
+            ('default_currency', 'PHP', 'Default currency for transactions'),
+            ('timezone', 'Asia/Manila', 'System timezone'),
+            ('service_fee', '5', 'Service fee percentage'),
+            ('gcash_account', '0917 123 4567', 'GCash account number'),
+            ('enable_gcash', 'true', 'Enable GCash payments'),
+            ('enable_cod', 'true', 'Enable Cash on Delivery'),
+            ('contact_address', 'Tacloban City, Leyte', 'Shop address shown to customers'),
+        ]
+        existing_keys = {s.setting_key for s in SystemSetting.query.all()}
+        missing = [SystemSetting(setting_key=k, value=v, description=d)
+                   for k, v, d in default_settings if k not in existing_keys]
+        if missing:
+            db.session.add_all(missing)
+            print(f"Added {len(missing)} default setting(s).")
         
         db.session.commit()
+
+        released = release_reserved_cart_stock()
+        if released:
+            print(f"Returned {released} unit(s) held in open carts to product stock.")
         print("Database initialized successfully!")
 
 # ==================== TECHNICIAN BLUEPRINTS ====================
@@ -3484,10 +4993,15 @@ from blueprints.technician_api import technician_api_bp
 app.register_blueprint(technician_bp, url_prefix='/technician')
 app.register_blueprint(technician_api_bp, url_prefix='/technician/api')
 
+# CLI: flask --app app create-admin | list-admins | deactivate-admin | activate-admin | ...
+register_commands(app)
+
 
 if __name__ == '__main__':
     with app.app_context():
         init_db()
         
     dev_host = os.environ.get('DEV_HOST', '127.0.0.1')
-    app.run(debug=app.config['DEBUG'], host=dev_host, port=5000, ssl_context='adhoc')
+    # DEV_SSL=1 serves a self-signed HTTPS cert (needed for OAuth callbacks).
+    ssl_context = 'adhoc' if os.environ.get('DEV_SSL') == '1' else None
+    app.run(debug=app.config['DEBUG'], host=dev_host, port=5000, ssl_context=ssl_context)

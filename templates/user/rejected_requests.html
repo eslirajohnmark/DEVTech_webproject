@@ -15,7 +15,7 @@
         </a>
         <button class="user-icon-btn" onclick="showUserToast('Notifications')">
             <i class="fas fa-bell"></i>
-            <span class="user-badge">{{ notifications|length }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length }}</span>
         </button>
     </div>
 </div>
@@ -109,7 +109,67 @@
 </div>
 
 <script>
-    // Include the same JavaScript from completed_bookings.html
-    // (Copy the script from completed_bookings.html)
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function detailRow(label, value) {
+        return `<div class="booking-detail-row">
+                    <span class="booking-detail-label">${label}</span>
+                    <span class="booking-detail-value">${escapeHtml(value)}</span>
+                </div>`;
+    }
+
+    function openBookingDetails(bookingId) {
+        const content = document.getElementById('bookingDetailsContent');
+        content.innerHTML = '<div class="booking-detail-loading"><i class="fas fa-spinner fa-spin"></i><p>Loading booking details...</p></div>';
+        document.getElementById('bookingDetailsModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+
+        fetch('/api/booking/' + encodeURIComponent(bookingId), { credentials: 'same-origin' })
+            .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            .then(b => {
+                content.innerHTML = `
+                    <div class="booking-detail-item">
+                        <div class="booking-detail-header">
+                            <span class="booking-detail-id">${escapeHtml(b.booking_number)}</span>
+                            <span class="booking-detail-status cancelled">REJECTED / CANCELLED</span>
+                        </div>
+                        ${b.status_note ? `<div class="booking-detail-section">
+                            <h4><i class="fas fa-circle-info"></i> Reason</h4>
+                            <p>${escapeHtml(b.status_note)}</p>
+                        </div>` : ''}
+                        <div class="booking-detail-section">
+                            <h4><i class="fas fa-wrench"></i> Service Details</h4>
+                            ${detailRow('Service:', b.service.name)}
+                            ${detailRow('Device:', b.device_type)}
+                            ${detailRow('Price:', '₱' + Number(b.service.price).toFixed(2))}
+                            ${b.description ? detailRow('Description:', b.description) : ''}
+                        </div>
+                        <div class="booking-detail-section">
+                            <h4><i class="fas fa-calendar-alt"></i> Schedule</h4>
+                            ${detailRow('Date:', b.booking_date)}
+                            ${detailRow('Time:', b.booking_time)}
+                            ${detailRow('Location:', b.is_in_shop ? 'In-shop repair' : (b.address || 'Home service'))}
+                        </div>
+                        ${b.payment ? `<div class="booking-detail-section">
+                            <h4><i class="fas fa-credit-card"></i> Payment</h4>
+                            ${detailRow('Method:', b.payment.method)}
+                            ${detailRow('Status:', b.payment.status)}
+                        </div>` : ''}
+                        <p style="margin-top:1rem;"><a class="user-btn-primary" href="{{ url_for('book_appointment') }}"><i class="fas fa-plus"></i> Book again</a></p>
+                    </div>`;
+            })
+            .catch(() => {
+                content.innerHTML = '<p style="color:var(--danger); text-align:center; padding:2rem;">Could not load booking details. Please try again.</p>';
+            });
+    }
+
+    function closeBookingDetails() {
+        document.getElementById('bookingDetailsModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
 </script>
 {% endblock %}

@@ -2,7 +2,7 @@
 {% block title %}Technician Activity{% endblock %}
 {% block content %}
 <div class="admin-top-bar"><div class="admin-page-title">
-  <h1>Technician Activity</h1><p>Incidents, submitted reports and customer ratings</p></div></div>
+  <h1>Technician Activity</h1><p>Incidents, approval requests, submitted reports and customer ratings</p></div></div>
 
 <h3 class="admin-panel-title" style="margin:1rem 0;"><i class="fas fa-shield-halved"></i> Incident Reports</h3>
 <div class="admin-table-container"><table class="admin-table">
@@ -11,7 +11,7 @@
 {% for i in incidents %}
 <tr>
   <td>#{{ i.id }}</td>
-  <td>{{ users[i.technician_id].full_name if i.technician_id in users else '—' }}</td>
+  <td>{{ technicians[i.technician_id].full_name if i.technician_id in technicians else '—' }}</td>
   <td>{{ bookings[i.booking_id].booking_number if i.booking_id in bookings else '—' }}</td>
   <td>{{ i.type }}</td><td>{{ i.severity|title }}</td>
   <td style="max-width:320px;">{{ i.description }}</td>
@@ -30,6 +30,22 @@
 {% else %}<tr><td colspan="8" style="text-align:center;padding:1.5rem;">No incidents filed.</td></tr>{% endfor %}
 </tbody></table></div>
 
+<h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-handshake"></i> Customer Approval Requests</h3>
+<div class="admin-table-container"><table class="admin-table">
+<thead><tr><th>Job</th><th>Technician</th><th>Proposed work</th><th>Extra cost</th><th>Extra days</th><th>Status</th><th>Customer note</th></tr></thead>
+<tbody>
+{% for a in approvals %}
+<tr>
+  <td>{{ bookings[a.booking_id].booking_number if a.booking_id in bookings else '—' }}</td>
+  <td>{{ technicians[a.technician_id].full_name if a.technician_id in technicians else '—' }}</td>
+  <td style="max-width:300px;">{{ a.proposed_work }}<br><span class="admin-muted">Found: {{ a.findings }}</span></td>
+  <td>₱{{ '%.2f'|format(a.additional_cost or 0) }}</td><td>{{ a.extra_days or 0 }}</td>
+  <td><span class="admin-status-badge {{ 'warning' if a.status == 'pending' else ('active' if a.status == 'approved' else 'inactive') }}">{{ a.status|title }}</span><br><span class="admin-muted">{{ a.requested_at }}</span></td>
+  <td style="max-width:220px;">{{ a.customer_response or '—' }}</td>
+</tr>
+{% else %}<tr><td colspan="7" style="text-align:center;padding:1.5rem;">No approval requests yet.</td></tr>{% endfor %}
+</tbody></table></div>
+
 <h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-file-lines"></i> Submitted Service Reports</h3>
 <div class="admin-table-container"><table class="admin-table">
 <thead><tr><th>Job</th><th>Technician</th><th>Outcome</th><th>Hours</th><th>Diagnosis</th><th>Private note</th><th>Submitted</th></tr></thead>
@@ -37,7 +53,7 @@
 {% for r in reports %}
 <tr>
   <td>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</td>
-  <td>{{ users[r.technician_id].full_name if r.technician_id in users else '—' }}</td>
+  <td>{{ technicians[r.technician_id].full_name if r.technician_id in technicians else '—' }}</td>
   <td>{{ (r.outcome or '')|replace('_',' ')|title }}</td><td>{{ r.hours_spent or 0 }}</td>
   <td style="max-width:280px;">{{ r.diagnosis }}</td><td style="max-width:220px;">{{ r.admin_note or '—' }}</td>
   <td>{{ r.submitted_at }}</td>
@@ -52,8 +68,8 @@
 {% for r in ratings %}
 <tr>
   <td>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</td>
-  <td>{{ users[r.technician_id].full_name if r.technician_id in users else '—' }}</td>
-  <td>{{ users[r.customer_id].full_name if r.customer_id in users else '—' }}</td>
+  <td>{{ technicians[r.technician_id].full_name if r.technician_id in technicians else '—' }}</td>
+  <td>{{ customers[r.customer_id].full_name if r.customer_id in customers else '—' }}</td>
   <td>{{ r.stars }}/5</td><td style="max-width:320px;">{{ r.experience }}</td>
 </tr>
 {% else %}<tr><td colspan="5" style="text-align:center;padding:1.5rem;">No ratings yet.</td></tr>{% endfor %}

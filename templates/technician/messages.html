@@ -20,7 +20,7 @@
 
 <section class="tech-msg-layout">
 
-    <aside class="tech-msg-list">
+    <aside class="tech-msg-list" id="techThreadList" data-live-region="list">
         <div style="padding:0.9rem 1rem 0.6rem; border-bottom:1px solid var(--t-glass-edge-2);">
             <h3 style="font-size:0.94rem; font-weight:700; display:flex;
                        align-items:center; gap:0.5rem;">
@@ -31,7 +31,7 @@
 
         {% for conv in conversations %}
         <a class="tech-thread {% if conv.is_active %}is-active{% endif %}"
-           href="{{ url_for('technician.messages', thread=conv.other_user_id) }}">
+           href="{{ url_for('technician.messages', thread=conv.key) }}">
 
             <div class="tech-thread-avatar">
                 {{ conv.initials }}
@@ -72,11 +72,16 @@
             </div>
         </div>
 
-        <div class="tech-msg-body" id="msgBody">
+        <div class="tech-msg-body" id="msgBody" data-live-region="chat">
             {% if thread_messages %}
                 {% for m in thread_messages %}
                 <div class="tech-bubble from-{{ 'tech' if m.is_sent else 'customer' }}">
                     {{ m.content }}
+                    {% for f in m.attachments %}
+                        <a class="msg-attachment {% if not f.is_image %}msg-attachment-file{% endif %}" href="{{ f.url }}" {% if f.is_image %}target="_blank" rel="noopener"{% endif %}>
+                            {% if f.is_image %}<img src="{{ f.url }}" alt="{{ f.name }}">{% else %}<i class="fas fa-file-pdf"></i> {{ f.name }}{% endif %}
+                        </a>
+                    {% endfor %}
                     <span class="tech-bubble-time">{{ m.created_at }}</span>
                 </div>
                 {% endfor %}
@@ -88,11 +93,15 @@
             {% endif %}
         </div>
 
-        <form class="tech-msg-compose" method="POST"
-              action="{{ url_for('technician.message_send', other_user_id=active_thread.other_user_id) }}">
+        <form class="tech-msg-compose" method="POST" enctype="multipart/form-data"
+              action="{{ url_for('technician.message_send', other_key=active_thread.key) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="tech-btn tech-btn--ghost" title="Attach an image or PDF (max 5 MB)" style="cursor:pointer;">
+                <i class="fas fa-paperclip"></i>
+                <input type="file" name="attachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" style="display:none;">
+            </label>
             <textarea class="tech-textarea" name="content" rows="1"
-                      placeholder="Write a message..." required></textarea>
+                      placeholder="Write a message..."></textarea>
             <button class="tech-btn tech-btn--primary" type="submit"
                     aria-label="Send">
                 <i class="fas fa-paper-plane"></i>

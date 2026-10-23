@@ -1,0 +1,133 @@
+{# "Profile look" editor, shared by the customer, technician and admin profile pages.
+   Posts to /account/appearance. Behaviour lives in static/js/profile-studio.js
+   (no inline handlers, so it also works under the technician portal's strict CSP).
+   Usage: {% from 'partials/profile_studio.html' import profile_studio %} {{ profile_studio(account, 'Customer') }} #}
+{% from 'partials/avatar.html' import avatar %}
+{% macro profile_studio(acct, role_label) -%}
+{%- set P = profile_presets -%}
+<section class="pf-studio" id="look" data-pf-studio
+         data-initials="{{ acct.initials }}" data-full-name="{{ acct.full_name }}">
+    <div class="pf-studio-head">
+        <div>
+            <h3><i class="fas fa-wand-magic-sparkles"></i> Profile look</h3>
+            <p>Pick how you appear across DEVTech: your photo or an icon, colours, frame and banner.</p>
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('account_appearance') }}" enctype="multipart/form-data" class="pf-studio-grid">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <!-- Live preview -->
+        <aside class="pf-preview" aria-live="polite">
+            <div class="pf-banner pf-banner--{{ acct.banner_key }}" data-pf-preview-banner></div>
+            <div class="pf-preview-body">
+                <span data-pf-preview-avatar>{{ avatar(acct, 'xl') }}</span>
+                <p class="pf-preview-name" data-pf-preview-name>{{ acct.shown_name }}</p>
+                <p class="pf-preview-headline" data-pf-preview-headline>{{ acct.headline or '' }}</p>
+                <span class="pf-preview-role"><i class="fas fa-circle-check"></i> {{ role_label }}</span>
+                <p class="pf-preview-note">Live preview · saved when you press Save look</p>
+            </div>
+        </aside>
+
+        <div class="pf-fields">
+            <div class="pf-row">
+                <label class="pf-field">
+                    <span class="pf-label">Display name <span class="pf-count" data-pf-count-for="pfDisplayName"></span></span>
+                    <input class="pf-input" id="pfDisplayName" name="display_name" maxlength="{{ P.DISPLAY_NAME_MAX }}"
+                           value="{{ acct.display_name or '' }}" placeholder="{{ acct.full_name }}" autocomplete="nickname">
+                </label>
+                <label class="pf-field">
+                    <span class="pf-label">Headline <span class="pf-count" data-pf-count-for="pfHeadline"></span></span>
+                    <input class="pf-input" id="pfHeadline" name="headline" maxlength="{{ P.HEADLINE_MAX }}"
+                           value="{{ acct.headline or '' }}" placeholder="e.g. Laptop whisperer · Always backing up">
+                </label>
+            </div>
+
+            <div class="pf-field">
+                <span class="pf-label">Avatar</span>
+                <div class="pf-segment" role="radiogroup" aria-label="Avatar type">
+                    {% for mode, icon, label in [('photo', 'camera', 'Photo'), ('icon', 'icons', 'Icon'), ('initials', 'font', 'Initials')] %}
+                    <label class="pf-choice">
+                        <input type="radio" name="avatar_mode" value="{{ mode }}" {% if acct.avatar_mode == mode %}checked{% endif %}>
+                        <span><i class="fas fa-{{ icon }}"></i> {{ label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pf-panel" data-pf-panel="photo">
+                <label class="pf-drop" data-pf-drop>
+                    <span class="pf-drop-icon"><i class="fas fa-cloud-arrow-up"></i></span>
+                    <span>
+                        <strong data-pf-file-label>{% if acct.avatar_file %}Replace your photo{% else %}Upload a photo{% endif %}</strong>
+                        <small>Drop an image here or click to browse · JPG, PNG, WEBP or GIF up to 3 MB</small>
+                    </span>
+                    <input type="file" name="avatar_photo" accept="image/jpeg,image/png,image/webp,image/gif" data-pf-file>
+                </label>
+            </div>
+
+            <div class="pf-panel" data-pf-panel="icon">
+                <div class="pf-icon-grid" role="radiogroup" aria-label="Avatar icon">
+                    {% for icon in P.AVATAR_ICONS %}
+                    <label class="pf-choice" title="{{ icon|replace('-', ' ')|title }}">
+                        <input type="radio" name="avatar_icon" value="{{ icon }}"
+                               {% if acct.avatar_icon == icon or (not acct.avatar_icon and loop.first) %}checked{% endif %}>
+                        <span><i class="fas fa-{{ icon }}"></i></span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pf-panel" data-pf-panel="initials">
+                <p class="pf-hint"><i class="fas fa-circle-info"></i>
+                    Shows <strong data-pf-initials-sample>{{ acct.initials }}</strong> from your display name on your colour.</p>
+            </div>
+
+            <div class="pf-field">
+                <span class="pf-label">Colour</span>
+                <div class="pf-swatches" role="radiogroup" aria-label="Avatar colour">
+                    {% for key, c in P.AVATAR_COLORS.items() %}
+                    <label class="pf-choice pf-c-{{ key }}" title="{{ c[0] }}">
+                        <input type="radio" name="avatar_color" value="{{ key }}" {% if acct.avatar_color_key == key %}checked{% endif %}
+                               aria-label="{{ c[0] }}">
+                        <span></span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pf-field">
+                <span class="pf-label">Frame</span>
+                <div class="pf-frames" role="radiogroup" aria-label="Avatar frame">
+                    {% for key, label in P.AVATAR_FRAMES.items() %}
+                    <label class="pf-choice">
+                        <input type="radio" name="avatar_frame" value="{{ key }}" {% if acct.avatar_frame_key == key %}checked{% endif %}>
+                        <span><span class="pf-avatar pf-avatar--xs pf-c-{{ acct.avatar_color_key }} pf-frame--{{ key }}" data-pf-frame-sample aria-hidden="true"></span>{{ label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pf-field">
+                <span class="pf-label">Banner</span>
+                <div class="pf-banners" role="radiogroup" aria-label="Profile banner">
+                    {% for key, label in P.BANNERS.items() %}
+                    <label class="pf-choice">
+                        <input type="radio" name="banner" value="{{ key }}" {% if acct.banner_key == key %}checked{% endif %}>
+                        <span class="pf-banner pf-banner--{{ key }}">{{ label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pf-studio-actions">
+                <button type="button" class="pf-btn pf-btn--ghost pf-btn--dice" data-pf-surprise>
+                    <i class="fas fa-dice"></i> Surprise me
+                </button>
+                <button type="reset" class="pf-btn" data-pf-reset><i class="fas fa-rotate-left"></i> Undo changes</button>
+                <button type="submit" class="pf-btn pf-btn--primary"><i class="fas fa-floppy-disk"></i> Save look</button>
+            </div>
+        </div>
+    </form>
+</section>
+{%- endmacro %}

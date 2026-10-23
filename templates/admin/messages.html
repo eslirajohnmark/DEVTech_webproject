@@ -1,0 +1,76 @@
+{% extends "base/admin_base.html" %}
+{% block title %}Messages{% endblock %}
+{% block content %}
+<div class="admin-top-bar"><div class="admin-page-title">
+    <h1>Messages</h1><p>Conversations with customers and technicians</p></div></div>
+
+<details class="admin-card" {% if not conversations %}open{% endif %}>
+    <summary>New message</summary>
+    <form method="POST" action="{{ url_for('admin_message_send') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="admin-form-grid">
+            <div class="admin-form-group"><label>Recipient email</label>
+                <input type="email" name="recipient_email" required placeholder="customer@example.com"></div>
+            <div class="admin-form-group admin-form-wide"><label>Message</label>
+                <textarea name="content" rows="3" maxlength="5000"></textarea></div>
+            <div class="admin-form-group admin-form-wide"><label>Attach an image or PDF (optional, max 5 MB)</label>
+                <input type="file" name="attachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"></div>
+        </div>
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-paper-plane"></i> Send</button>
+    </form>
+</details>
+
+<div class="admin-inbox">
+    <div class="admin-card admin-inbox-list" id="adminInboxList" data-live-region="list">
+        {% for c in conversations %}
+        <a href="{{ url_for('admin_messages', conv=c.key) }}" class="admin-inbox-item {% if c.is_active %}active{% endif %}">
+            <strong>{{ c.name }}</strong>
+            {% if c.unread_count %}<span class="admin-nav-badge" style="float:right;">{{ c.unread_count }}</span>{% endif %}
+            <span class="admin-muted">{{ c.role|title }}{% if c.is_online %} · online{% endif %}</span>
+            <span class="admin-muted">{{ c.last_message }}</span>
+        </a>
+        {% else %}
+        <p class="admin-muted" style="padding:0.8rem;">No conversations yet.</p>
+        {% endfor %}
+    </div>
+
+    <div class="admin-card admin-thread">
+        {% if selected_conversation %}
+        <div style="border-bottom:1px solid var(--dark-border); padding-bottom:0.6rem; margin-bottom:0.4rem;">
+            <strong>{{ selected_conversation.name }}</strong>
+            <span class="admin-muted">· {{ selected_conversation.role|title }} · {{ selected_conversation.email }}</span>
+        </div>
+        <div class="admin-thread-messages" id="adminThread" data-live-region="chat">
+            {% for m in messages %}
+            <div class="admin-bubble {% if m.is_sent %}sent{% endif %}">{% if m.subject %}<strong>{{ m.subject }}</strong>
+{% endif %}{{ m.content }}{% for f in m.attachments %}
+<a class="msg-attachment {% if not f.is_image %}msg-attachment-file{% endif %}" href="{{ f.url }}" {% if f.is_image %}target="_blank" rel="noopener"{% endif %}>{% if f.is_image %}<img src="{{ f.url }}" alt="{{ f.name }}">{% else %}<i class="fas fa-file-pdf"></i> {{ f.name }}{% endif %}</a>{% endfor %}<small>{{ m.created_at.strftime('%b %d, %I:%M %p') if m.created_at else '' }}</small></div>
+            {% else %}
+            <p class="admin-muted">No messages yet. Say hello below.</p>
+            {% endfor %}
+        </div>
+        <form method="POST" action="{{ url_for('admin_message_send') }}" enctype="multipart/form-data" style="margin-top:0.6rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="recipient_key" value="{{ selected_conversation.key }}">
+            <div class="admin-form-group" style="margin-bottom:0.5rem;">
+                <textarea name="content" rows="2" maxlength="5000" placeholder="Write a reply…"></textarea>
+            </div>
+            <div class="admin-form-group" style="margin-bottom:0.5rem;">
+                <label>Attach an image or PDF (optional, max 5 MB)</label>
+                <input type="file" name="attachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf">
+            </div>
+            <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-paper-plane"></i> Send</button>
+        </form>
+        {% else %}
+        <p class="admin-muted">Select a conversation, or start a new one above.</p>
+        {% endif %}
+    </div>
+</div>
+<script>
+    // Show the newest message first time the thread opens.
+    (function () {
+        var t = document.getElementById('adminThread');
+        if (t) t.scrollTop = t.scrollHeight;
+    })();
+</script>
+{% endblock %}

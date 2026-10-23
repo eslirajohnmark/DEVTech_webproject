@@ -1,53 +1,51 @@
 {% extends 'base/technician_base.html' %}
+{% from 'partials/avatar.html' import avatar %}
+{% from 'partials/profile_studio.html' import profile_studio %}
 
 {% block title %}My Profile{% endblock %}
 {% block meta_title %}My Profile{% endblock %}
-{% block meta_subtitle %}Your technician account details{% endblock %}
+{% block meta_subtitle %}How customers and admins see you{% endblock %}
 
 {% block body %}
 
 <section class="tech-profile-page">
 
-    <section class="tech-card"
-             style="margin-bottom:1.35rem; background:linear-gradient(120deg, var(--t-surface), var(--t-surface-2));">
-        <div style="display:flex; align-items:center; gap:1.1rem; flex-wrap:wrap;">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="pf-flash pf-flash--{{ category }}" role="status">
+            <i class="fas fa-{{ 'circle-check' if category == 'success' else 'circle-exclamation' }}"></i>
+            <span>{{ message }}</span>
+        </div>
+        {% endfor %}
+    {% endwith %}
 
-            <div class="tech-account-avatar"
-                 style="width:62px; height:62px; font-size:1.2rem; flex-shrink:0;">
-                {{ (tech.full_name or 'TT').split() | map('first') | join('') | upper | truncate(2, True, '') }}
-            </div>
-
-            <div style="min-width:0; flex:1;">
-                <h2 style="font-size:1.24rem; font-weight:780; letter-spacing:-0.02em;">
-                    {{ tech.full_name }}
-                </h2>
-                <p style="font-size:0.83rem; color:var(--t-text-muted);">
-                    Technician
-                </p>
-                <div class="tech-job-badges" style="margin-top:0.55rem;">
-                    <span class="tech-chip">
-                        <i class="fas fa-id-badge"></i> {{ tech.username }}
-                    </span>
+    <section class="pf-hero">
+        <div class="pf-hero-banner pf-banner pf-banner--{{ tech.banner_key }}"></div>
+        <div class="pf-hero-body">
+            {{ avatar(tech, 'lg') }}
+            <div class="pf-hero-text">
+                <h2>{{ tech.shown_name }}</h2>
+                <p class="pf-hero-sub">{% if tech.display_name %}{{ tech.full_name }} · {% endif %}Technician</p>
+                {% if tech.headline %}<p class="pf-hero-headline">“{{ tech.headline }}”</p>{% endif %}
+                <div class="pf-chips">
+                    <span class="pf-chip"><i class="fas fa-id-badge"></i> {{ tech.username }}</span>
                     {% if tech.id_verified %}
-                    <span class="tech-chip">
-                        <i class="fas fa-circle-check"
-                           style="color:var(--t-yellow);"></i> Verified
-                    </span>
+                    <span class="pf-chip"><i class="fas fa-circle-check"></i> ID verified</span>
                     {% else %}
-                    <span class="tech-chip">
-                        <i class="fas fa-clock"></i> Verification pending
-                    </span>
+                    <span class="pf-chip"><i class="fas fa-clock"></i> Verification pending</span>
                     {% endif %}
-                    <span class="tech-chip"><i class="fas fa-star" style="color:var(--t-yellow);"></i>
+                    <span class="pf-chip"><i class="fas fa-star"></i>
                         {% if rating %}{{ rating }} / 5 ({{ rating_count }}){% else %}No ratings yet{% endif %}
                     </span>
-                    <span class="tech-chip">
-                        <i class="fas fa-calendar-check"></i>
+                    <span class="pf-chip"><i class="fas fa-calendar-check"></i>
                         Joined {{ tech.created_at.strftime('%b %d, %Y') if tech.created_at else '—' }}
                     </span>
                 </div>
             </div>
-
+            <div class="pf-hero-actions">
+                <a class="pf-btn" href="#look"><i class="fas fa-wand-magic-sparkles"></i> Customize look</a>
+                <a class="pf-btn pf-btn--primary" href="#details"><i class="fas fa-pen"></i> Edit details</a>
+            </div>
         </div>
     </section>
 
@@ -82,42 +80,55 @@
         </div>
     </div>
 
+    {{ profile_studio(tech, 'Technician') }}
+
     <div class="tech-split" style="align-items:start;">
 
         <div>
-            <section class="tech-card" style="margin-bottom:1.1rem;">
+            <section class="tech-card" id="details" style="margin-bottom:1.1rem; scroll-margin-top:1rem;">
                 <div class="tech-card-head">
                     <h3 class="tech-card-title">
                         <i class="fas fa-address-card"></i> Contact Details
                     </h3>
                 </div>
-                <div class="tech-kv">
-                    <div class="tech-kv-item">
-                        <span class="tech-kv-key">Email address</span>
-                        <span class="tech-kv-val">{{ tech.email }}</span>
+                <form method="POST" action="{{ url_for('technician.update_details') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="tech-field">
+                        <label class="tech-label" for="tdFullName">Full name <span class="req">*</span></label>
+                        <input class="tech-input" id="tdFullName" name="full_name" maxlength="100" required
+                               value="{{ tech.full_name }}" autocomplete="name">
                     </div>
-                    <div class="tech-kv-item">
-                        <span class="tech-kv-key">Mobile number</span>
-                        <span class="tech-kv-val">{{ tech.phone or '—' }}</span>
+                    <div class="tech-field">
+                        <label class="tech-label" for="tdEmail">Email address</label>
+                        <input class="tech-input" id="tdEmail" value="{{ tech.email }}" disabled>
+                        <p class="tech-hint"><i class="fas fa-lock"></i> Your sign-in email and Tech ID are managed by an administrator.</p>
                     </div>
-                    <div class="tech-kv-item">
-                        <span class="tech-kv-key">Home address</span>
-                        <span class="tech-kv-val">{{ tech.address or '—' }}</span>
+                    <div class="tech-field">
+                        <label class="tech-label" for="tdPhone">Mobile number</label>
+                        <input class="tech-input" id="tdPhone" name="phone" maxlength="20" type="tel"
+                               value="{{ tech.phone or '' }}" placeholder="09XX XXX XXXX" autocomplete="tel">
                     </div>
-                    <div class="tech-kv-item">
-                        <span class="tech-kv-key">City</span>
-                        <span class="tech-kv-val">{{ tech.city or '—' }}</span>
+                    <div class="tech-field">
+                        <label class="tech-label" for="tdAddress">Home address</label>
+                        <input class="tech-input" id="tdAddress" name="address" maxlength="255"
+                               value="{{ tech.address or '' }}" autocomplete="street-address">
                     </div>
-                    <div class="tech-kv-item">
-                        <span class="tech-kv-key">Province</span>
-                        <span class="tech-kv-val">{{ tech.province or '—' }}</span>
+                    <div class="pf-row tech-field">
+                        <div>
+                            <label class="tech-label" for="tdCity">City</label>
+                            <input class="tech-input" id="tdCity" name="city" maxlength="50"
+                                   value="{{ tech.city or '' }}" autocomplete="address-level2">
+                        </div>
+                        <div>
+                            <label class="tech-label" for="tdProvince">Province</label>
+                            <input class="tech-input" id="tdProvince" name="province" maxlength="50"
+                                   value="{{ tech.province or '' }}" autocomplete="address-level1">
+                        </div>
                     </div>
-                </div>
-                <p class="tech-hint" style="margin-top:0.9rem;">
-                    <i class="fas fa-circle-info"></i>
-                    Your name, email, and phone are managed by an administrator.
-                    Contact them to change your details.
-                </p>
+                    <button class="tech-btn tech-btn--primary" type="submit">
+                        <i class="fas fa-floppy-disk"></i> Save details
+                    </button>
+                </form>
             </section>
 
             <section class="tech-card">
@@ -178,18 +189,6 @@
                     </h3>
                 </div>
 
-                {% with messages = get_flashed_messages(with_categories=true) %}
-                    {% if messages %}
-                        {% for category, message in messages %}
-                        <div class="tech-login-{{ 'success' if category == 'success' else 'error' }} is-shown"
-                             style="margin-bottom:1rem;">
-                            <i class="fas fa-{{ 'circle-check' if category == 'success' else 'circle-exclamation' }}"></i>
-                            <span>{{ message }}</span>
-                        </div>
-                        {% endfor %}
-                    {% endif %}
-                {% endwith %}
-
                 <form method="POST"
                       action="{{ url_for('technician.change_password') }}"
                       novalidate>
@@ -234,4 +233,9 @@
     </div>
 
 </section>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/profile-studio.js') }}" defer></script>
 {% endblock %}

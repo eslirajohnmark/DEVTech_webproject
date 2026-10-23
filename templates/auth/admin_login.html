@@ -303,7 +303,10 @@
             color: var(--text-muted);
             cursor: pointer;
             font-size: 1rem;
-            padding: 0.4rem 0.6rem;
+            width: 2.2rem;
+            height: 2.2rem;
+            padding: 0;
+            line-height: 1;
             transition: var(--transition);
             z-index: 2;
             border-radius: var(--radius-sm);
@@ -567,6 +570,8 @@
             }
         }
     </style>
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
 </head>
 <body>
     <div class="admin-login-wrapper">
@@ -656,7 +661,7 @@
                                 <input type="checkbox" name="remember" checked />
                                 <span>Remember me</span>
                             </label>
-                            <a href="#" class="admin-forgot-link">Forgot Password?</a>
+                            <a href="{{ url_for('forgot_password') }}" class="admin-forgot-link">Forgot Password?</a>
                         </div>
 
                         <button type="submit" class="admin-login-btn">

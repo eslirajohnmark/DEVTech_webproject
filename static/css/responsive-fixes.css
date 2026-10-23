@@ -1,0 +1,81 @@
+/* ==========================================================================
+   DEVTech — layout fixes for in-between window sizes (narrow desktop windows,
+   split screen, zoomed-in browsers, tablets). Loaded last by all three portals.
+   Found with a page-by-page scan at 1280 / 1100 / 1024 / 900 / 768 / 600 / 390 px.
+   ========================================================================== */
+
+/* ---- Customer messages ------------------------------------------------- */
+/* The chat column was a plain 1fr track, so long content made it wider than
+   the card and the card clipped it (cut-off bubbles, header and send box). */
+.user-messages-layout { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
+.user-messages-sidebar, .user-messages-main { min-width: 0; }
+.user-chat-header { gap: 0.6rem; flex-wrap: wrap; }
+.user-chat-header-info { min-width: 0; }
+.user-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-chat-message { max-width: min(78%, 560px); }
+.user-chat-bubble, .user-chat-bubble p { overflow-wrap: anywhere; }
+.user-chat-input-wrapper { min-width: 0; }
+.user-chat-input-field { min-width: 0; flex: 1; }
+.user-chat-send, .user-chat-attach { flex-shrink: 0; }
+.user-conversation-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Stack the list above the chat whenever the content area is too narrow
+   for both side by side (the 270px sidebar takes the rest). */
+@media (max-width: 1200px) {
+    .user-messages-layout { grid-template-columns: minmax(0, 1fr); min-height: auto; }
+    .user-messages-sidebar {
+        border-right: none;
+        border-bottom: 1px solid var(--user-border);
+        max-height: 260px;
+    }
+    .user-chat-messages { min-height: 320px; max-height: 60vh; }
+}
+
+/* ---- Admin and technician inboxes: same idea ---------------------------- */
+.admin-inbox > *, .tech-msg-layout > * { min-width: 0; }
+.admin-bubble, .tech-bubble { overflow-wrap: anywhere; }
+
+/* ---- Repair progress tracker (customer Monitor Device + technician job) --
+   Six stages with a 118px minimum each overflowed any card narrower than
+   ~710px. Stages now share the width, and when the card itself is narrow
+   the tracker turns into a vertical list. */
+.usr-track-card, .tech-track-wrap, .tech-card:has(> .tech-track), .tech-card:has(.tech-track) { container-type: inline-size; }
+.usr-track { overflow-x: visible; }
+.usr-stage { min-width: 0; flex: 1 1 0; padding: 0 0.15rem; }
+.usr-stage-name, .tech-stage-name { overflow-wrap: anywhere; hyphens: auto; }
+
+@container (max-width: 560px) {
+    .usr-track, .tech-track { flex-direction: column; align-items: stretch; gap: 0.15rem; overflow: visible; }
+    .usr-stage, .tech-stage {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        text-align: left;
+        padding: 0.3rem 0;
+        min-width: 0;
+    }
+    .usr-stage-dot, .tech-stage-dot { margin: 0; flex-shrink: 0; }
+    .usr-stage::before, .tech-stage::before {
+        left: 14px;
+        top: -50%;
+        width: 2px;
+        height: 100%;
+    }
+    .usr-stage-name, .tech-stage-name { font-size: 0.82rem; }
+}
+
+/* ---- Filter tabs (Notifications, Transactions): wrap instead of hiding
+        tabs off to the side on phones. ------------------------------------ */
+@media (max-width: 768px) {
+    .user-filter-tabs { flex-wrap: wrap; overflow-x: visible; padding-bottom: 0; }
+    .user-filter-tab { flex-shrink: 1; }
+}
+
+/* ---- Admin inbox: chat column may shrink; stack when the content area is
+        too narrow for a list plus a usable chat (sidebar is 270px). -------- */
+.admin-inbox { grid-template-columns: minmax(200px, 300px) minmax(0, 1fr); }
+.admin-thread form input[type=file] { max-width: 100%; }
+@media (max-width: 1100px) {
+    .admin-inbox { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+    .admin-inbox-list { max-height: 30vh; }
+}

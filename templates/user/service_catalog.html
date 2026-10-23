@@ -20,7 +20,7 @@
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="Notifications">
             <i class="fas fa-bell"></i>
             {% if notifications and notifications|length > 0 %}
-            <span class="user-badge">{{ notifications|length }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length }}</span>
             {% endif %}
         </a>
     </div>

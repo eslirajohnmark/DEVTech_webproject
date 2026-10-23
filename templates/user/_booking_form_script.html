@@ -1,6 +1,8 @@
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+(function () {
+    // Own scope: user.js defines generic functions/variables with the same names.
     // ============================================
     // TIME SLOT BOOKING SYSTEM
     // Max 5 bookings per time slot
@@ -11,7 +13,7 @@
     let currentSelectedDate = '';
     let map = null;
     let marker = null;
-    let isMapInitialized = false;
+    let bookingMapInitialized = false;
     let isLocationValid = false;
 
     // Tacloban City boundary and isInsideTacloban(lat, lng) are provided
@@ -341,7 +343,7 @@
     // ============================================
 
     function initMap() {
-        if (isMapInitialized) return;
+        if (bookingMapInitialized) return;
         
         const defaultLat = 11.2444;
         const defaultLng = 125.0039;
@@ -393,7 +395,7 @@
             }
         });
         
-        isMapInitialized = true;
+        bookingMapInitialized = true;
     }
 
     function placeMarker(lat, lng) {
@@ -481,7 +483,8 @@
         // Add "Tacloban City" to the search query to prioritize local results
         const searchQuery = `${address}, Tacloban City, Philippines`;
         
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`)
+        // Limited to the Tacloban service area (same box the server checks).
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1&countrycodes=ph&bounded=1&viewbox=124.90,11.10,125.12,11.36`)
             .then(response => response.json())
             .then(data => {
                 if (data && data.length > 0) {
@@ -869,15 +872,13 @@
         });
     }, 5000);
 
-    // ============================================
-    // KEYBOARD SHORTCUT: Ctrl + Shift + L
-    // ============================================
-    document.addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-            e.preventDefault();
-            window.location.href = '/admin/login';
-        }
-    });
 
     console.log('✅ Booking system initialized with Tacloban City geofencing');
+
+    // Publish what the page's buttons call. Re-applied after load so these win
+    // over user.js's generic functions of the same name, which load later.
+    const handlers = { getUserLocation, resetForm, resetMap, searchLocation, submitBooking, toggleAddress };
+    Object.assign(window, handlers);
+    document.addEventListener('DOMContentLoaded', function () { Object.assign(window, handlers); });
+})();
 </script>

@@ -206,7 +206,8 @@ function showUserToast(message, type = 'info') {
     else if (type === 'error') icon = 'fa-exclamation-circle';
     else if (type === 'warning') icon = 'fa-exclamation-triangle';
     
-    toast.innerHTML = `<i class="fas ${icon}"></i> ${message}`;
+    toast.innerHTML = `<i class="fas ${icon}"></i> `;
+    toast.appendChild(document.createTextNode(String(message)));
     toast.className = 'user-toast show';
     
     clearTimeout(toast._timeout);
@@ -545,18 +546,21 @@ function loadTaclobanBoundary() {
             return TACLOBAN_POLYGONS;
         })
         .catch(function(err) {
-            console.error('Failed to load Tacloban boundary data:', err);
-            TACLOBAN_POLYGONS = [];
+            // Fall back to the same box the server enforces, so a missing file
+            // can never make every home-service pin look "outside Tacloban".
+            console.warn('Tacloban boundary file unavailable, using the service-area box:', err);
+            TACLOBAN_POLYGONS = [[[[11.10, 124.90], [11.10, 125.12], [11.36, 125.12], [11.36, 124.90], [11.10, 124.90]]]];
             return TACLOBAN_POLYGONS;
         });
 
     return taclobanBoundaryLoadPromise;
 }
 
-// Kick the fetch off immediately - don't wait for DOMContentLoaded, since
-// the sooner this starts the more certain it's already finished by the
-// time any map on the page is actually opened.
-loadTaclobanBoundary();
+// Fetch only on pages that show a map (they load Leaflet before this file).
+// Starting immediately means it has finished long before anyone opens a map.
+if (window.L) {
+    loadTaclobanBoundary();
+}
 
 function pointInRing(lat, lng, ring) {
     let inside = false;
@@ -1134,145 +1138,4 @@ window.initLocationMap = initLocationMap;
 
 console.log('✅ Map functions loaded successfully');
 
-// ==========================================
-// ADMIN SHORTCUT - Ctrl + Shift + L (Hidden)
-// ==========================================
-
-/**
- * Setup admin shortcut for user pages
- * No visual indicator shown anywhere
- */
-function setupAdminShortcut() {
-    document.addEventListener('keydown', function(e) {
-        // Check for Ctrl + Shift + L
-        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-            e.preventDefault();
-            
-            // Check if we're already on the admin login page
-            const currentPath = window.location.pathname;
-            if (currentPath === '/admin/login' || currentPath === '/admin/login/') {
-                return;
-            }
-            
-            // Check if user is already logged in as admin
-            const isAdmin = document.body.dataset.userRole === 'admin';
-            if (isAdmin) {
-                window.location.href = '/admin/dashboard';
-                return;
-            }
-            
-            // Redirect silently - no toast, no visual indicator
-            window.location.href = '/admin/login';
-        }
-    });
-}
-
-// Initialize admin shortcut when DOM is ready
-document.addEventListener('DOMContentLoaded', function() {
-    setupAdminShortcut();
-});
-
-// ==========================================
-// TIME SLOT BOOKING FUNCTIONS
-// ==========================================
-
-// Store booked slots (in a real app, this would come from the server)
-let bookedSlots = {};
-
-/**
- * Fetch booked slots from the server
- */
-function fetchBookedSlots() {
-    // This would be an API call in a real app
-    // For demo, we'll use simulated data
-    const today = new Date().toISOString().split('T')[0];
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
-    const dayAfter = new Date();
-    dayAfter.setDate(dayAfter.getDate() + 2);
-    const dayAfterStr = dayAfter.toISOString().split('T')[0];
-    
-    bookedSlots = {
-        [today]: ['09:00', '12:00', '15:00'],
-        [tomorrowStr]: ['10:00', '14:00'],
-        [dayAfterStr]: ['08:00', '13:00', '17:00']
-    };
-    
-    return bookedSlots;
-}
-
-/**
- * Check if a time slot is booked for a given date
- */
-function isSlotBooked(date, time) {
-    if (!date || !time) return false;
-    
-    // Fetch booked slots if not already fetched
-    if (Object.keys(bookedSlots).length === 0) {
-        fetchBookedSlots();
-    }
-    
-    // Check if the date exists in bookedSlots
-    if (bookedSlots[date]) {
-        return bookedSlots[date].includes(time);
-    }
-    return false;
-}
-
-/**
- * Update time slot availability based on selected date
- */
-function updateTimeSlots() {
-    const selectedDate = document.getElementById('bookingDate')?.value;
-    if (!selectedDate) return;
-    
-    const timeSlots = document.querySelectorAll('.user-time-slot');
-    let hasAvailableSlot = false;
-
-    timeSlots.forEach(slot => {
-        // Skip lunch break slots
-        if (slot.classList.contains('lunch')) {
-            return;
-        }
-
-        const time = slot.dataset.time;
-        const isBooked = isSlotBooked(selectedDate, time);
-
-        // Reset classes
-        slot.classList.remove('booked', 'available');
-
-        if (isBooked) {
-            slot.classList.add('booked');
-            slot.innerHTML = `
-                <span>${slot.querySelector('span:first-child')?.textContent || time}</span>
-                <span class="user-slot-badge booked-badge">Booked</span>
-            `;
-        } else {
-            slot.classList.add('available');
-            slot.innerHTML = `
-                <span>${slot.querySelector('span:first-child')?.textContent || time}</span>
-                <span class="user-slot-badge available-badge">Available</span>
-            `;
-            hasAvailableSlot = true;
-        }
-
-        // Remove selection if slot becomes booked
-        if (slot.classList.contains('selected') && isBooked) {
-            slot.classList.remove('selected');
-            document.getElementById('bookingTime').value = '';
-        }
-    });
-
-    // Update UI to show if any slots are available
-    const availabilityText = document.querySelector('.user-availability-text');
-    if (availabilityText) {
-        if (hasAvailableSlot) {
-            availabilityText.innerHTML = `<i class="fas fa-check-circle" style="color:var(--success);"></i> Available slots found for this date`;
-            availabilityText.style.color = 'var(--success)';
-        } else {
-            availabilityText.innerHTML = `<i class="fas fa-exclamation-circle" style="color:var(--danger);"></i> No available slots for this date. Please select another date.`;
-            availabilityText.style.color = 'var(--danger)';
-        }
-    }
-}
+// Portal shortcuts (Ctrl+Shift+L / Y / U) live in portal-shortcuts.js.

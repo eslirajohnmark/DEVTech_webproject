@@ -1,0 +1,6 @@
+{# Top-bar bell: real unread count, opens the admin Notifications page. #}
+{% set _unread = nav_counts().get('notifications', 0) %}
+<a href="{{ url_for('admin_notifications') }}" class="admin-icon-btn" title="{{ _unread }} unread notification{{ '' if _unread == 1 else 's' }}">
+    <i class="fas fa-bell"></i>
+    <span class="admin-badge" data-live-count="notifications" {% if not _unread %}hidden{% endif %}>{{ _unread }}</span>
+</a>

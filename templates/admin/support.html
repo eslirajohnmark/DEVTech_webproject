@@ -1,0 +1,67 @@
+{% extends "base/admin_base.html" %}
+{% block title %}Support{% endblock %}
+{% block content %}
+<div class="admin-top-bar"><div class="admin-page-title">
+    <h1>Support</h1><p>Customer support tickets and website contact inquiries</p></div></div>
+
+<h3 class="admin-panel-title" style="margin:1rem 0;"><i class="fas fa-headset"></i> Support Tickets</h3>
+<div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
+<thead><tr><th>#</th><th>Customer</th><th>Subject</th><th>Message</th><th>Status</th><th>Reply</th></tr></thead>
+<tbody>
+{% for t in tickets %}
+<tr>
+    <td>{{ t.id }}</td>
+    <td>{{ t.user.full_name if t.user else 'Unknown' }}<br><span class="admin-muted">{{ t.user.email if t.user else '' }}</span></td>
+    <td><strong>{{ t.subject }}</strong><br><span class="admin-muted">{{ (t.category or 'general')|title }} · {{ t.created_at.strftime('%b %d, %Y %I:%M %p') if t.created_at else '' }}</span></td>
+    <td style="max-width:320px; white-space:pre-wrap;">{{ t.message }}</td>
+    <td><span class="admin-status-badge {{ 'active' if t.status == 'resolved' else 'warning' }}">{{ (t.status or 'open')|replace('_', ' ')|title }}</span></td>
+    <td style="min-width:260px;">
+        {% if t.admin_response %}<p class="admin-muted" style="white-space:pre-wrap; margin-bottom:0.5rem;"><strong>Sent:</strong> {{ t.admin_response }}</p>{% endif %}
+        <details class="admin-row-edit" {% if t.status == 'open' and not t.admin_response %}open{% endif %}>
+            <summary><i class="fas fa-reply"></i> {{ 'Update reply' if t.admin_response else 'Reply' }}</summary>
+            <form method="POST" action="{{ url_for('admin_ticket_respond', ticket_id=t.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="admin-form-group">
+                    <textarea name="admin_response" rows="3" maxlength="5000" placeholder="Your reply to the customer">{{ t.admin_response or '' }}</textarea>
+                </div>
+                <div class="admin-form-group">
+                    <select name="status">
+                        {% for value, label in [('resolved', 'Mark resolved'), ('in_progress', 'In progress'), ('open', 'Keep open')] %}
+                        <option value="{{ value }}" {% if (t.status == value) or (value == 'resolved' and t.status != 'in_progress' and t.status != 'resolved') %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Send &amp; notify customer</button>
+            </form>
+        </details>
+    </td>
+</tr>
+{% else %}
+<tr><td colspan="6" style="text-align:center;padding:1.5rem;">No support tickets.</td></tr>
+{% endfor %}
+</tbody></table></div>
+
+<h3 class="admin-panel-title" id="inquiries" style="margin:1.5rem 0 1rem;"><i class="fas fa-envelope-open-text"></i> Website Inquiries</h3>
+<p class="admin-muted" style="margin-bottom:0.8rem;">Sent from the contact form on the public home page. These visitors may not have an account, so reply by email.</p>
+<div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
+<thead><tr><th>From</th><th>Subject</th><th>Message</th><th>Received</th><th>Status</th><th></th></tr></thead>
+<tbody>
+{% for q in inquiries %}
+<tr {% if q.status == 'handled' %}style="opacity:0.6;"{% endif %}>
+    <td>{{ q.name }}<br><a href="mailto:{{ q.email }}?subject={{ ('Re: ' ~ q.subject)|urlencode }}">{{ q.email }}</a></td>
+    <td>{{ q.subject }}</td>
+    <td style="max-width:340px; white-space:pre-wrap;">{{ q.message }}</td>
+    <td>{{ q.created_at.strftime('%b %d, %Y %I:%M %p') if q.created_at else '' }}</td>
+    <td><span class="admin-status-badge {{ 'active' if q.status == 'handled' else 'warning' }}">{{ q.status|title }}</span></td>
+    <td>
+        <form method="POST" action="{{ url_for('admin_inquiry_status', inquiry_id=q.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="admin-btn admin-btn-sm">{{ 'Mark handled' if q.status == 'new' else 'Reopen' }}</button>
+        </form>
+    </td>
+</tr>
+{% else %}
+<tr><td colspan="6" style="text-align:center;padding:1.5rem;">No inquiries yet.</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% endblock %}

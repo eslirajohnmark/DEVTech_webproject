@@ -1,11 +1,10 @@
 """Technician registration.
 
-Uses the existing User model — a technician is a User row with
-role='technician' whose username doubles as their login ID. No
-separate Technician table exists.
+Technicians have their own `technicians` table; the username column
+holds the Tech ID they sign in with.
 """
 import re
-from app import db, User
+from app import db, Technician, email_in_use, notify_admins
 
 
 TECH_ID_RE = re.compile(r'^TECH-\d{4}$')
@@ -47,20 +46,26 @@ def register_technician(form):
     if errors:
         return {'ok': False, 'reason': errors[0]}
 
-    if User.query.filter_by(username=staff_id).first():
+    if Technician.query.filter_by(username=staff_id).first():
         return {'ok': False, 'reason': 'That Tech ID is already registered.'}
-    if User.query.filter_by(email=email).first():
+    if email_in_use(email):
         return {'ok': False, 'reason': 'That email is already registered.'}
 
-    user = User(
+    user = Technician(
         username=staff_id,
         email=email,
         full_name=full_name,
-        role='technician',
-        is_active=True,
+        # Self-registered technicians stay inactive until an admin
+        # activates them in User Management.
+        is_active=False,
     )
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
+
+    notify_admins('Technician Awaiting Approval',
+                  f'{full_name} ({staff_id}) registered as a technician. '
+                  'Activate the account in User Management once verified.',
+                  'warning')
 
     return {'ok': True, 'technician_id': staff_id}

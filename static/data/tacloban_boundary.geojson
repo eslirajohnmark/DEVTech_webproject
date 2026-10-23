@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "DEVTech home-service area (Tacloban City)",
+        "note": "Same box the server enforces in request_service(): lat 11.10-11.36, lng 124.90-125.12. Replace with the official city boundary if you have it; keep the server check in sync."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [124.90, 11.10],
+          [125.12, 11.10],
+          [125.12, 11.36],
+          [124.90, 11.36],
+          [124.90, 11.10]
+        ]]
+      }
+    }
+  ]
+}

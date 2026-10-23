@@ -15,7 +15,7 @@
         </a>
         <button class="user-icon-btn" onclick="showUserToast('Notifications')">
             <i class="fas fa-bell"></i>
-            <span class="user-badge">{{ notifications|length }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length }}</span>
         </button>
     </div>
 </div>
@@ -148,20 +148,20 @@
         {% for booking in bookings %}
         "{{ booking.id }}": {
             id: {{ booking.id }},
-            booking_number: "{{ booking.booking_number }}",
-            service_name: "{{ booking.service.name }}",
-            service_price: "{{ "%.2f"|format(booking.service.price) }}",
-            device_type: "{{ booking.device_type }}",
-            description: "{{ booking.description|escape }}",
-            address: "{{ booking.address or 'In-shop repair' }}",
-            booking_date: "{{ booking.booking_date.strftime('%B %d, %Y') }}",
-            booking_time: "{{ booking.booking_time.strftime('%I:%M %p') }}",
-            status: "{{ booking.status }}",
+            booking_number: {{ (booking.booking_number)|js_html }},
+            service_name: {{ (booking.service.name)|js_html }},
+            service_price: {{ ("%.2f"|format(booking.service.price))|js_html }},
+            device_type: {{ (booking.device_type)|js_html }},
+            description: {{ (booking.description)|js_html }},
+            address: {{ (booking.address or 'In-shop repair')|js_html }},
+            booking_date: {{ (booking.booking_date.strftime('%B %d, %Y'))|js_html }},
+            booking_time: {{ (booking.booking_time.strftime('%I:%M %p'))|js_html }},
+            status: {{ (booking.status)|js_html }},
             is_in_shop: {{ 'true' if booking.is_in_shop else 'false' }},
-            created_at: "{{ booking.created_at.strftime('%B %d, %Y at %I:%M %p') }}",
-            updated_at: "{{ booking.updated_at.strftime('%B %d, %Y at %I:%M %p') if booking.updated_at else 'N/A' }}",
-            technician_name: {{ ('"' + booking.technician.full_name + '"') if booking.technician else 'null' }},
-            technician_phone: {{ ('"' + (booking.technician.phone or 'N/A') + '"') if booking.technician else 'null' }},
+            created_at: {{ (booking.created_at.strftime('%B %d, %Y at %I:%M %p'))|js_html }},
+            updated_at: {{ (booking.updated_at.strftime('%B %d, %Y at %I:%M %p') if booking.updated_at else 'N/A')|js_html }},
+            technician_name: {{ (booking.technician.full_name if booking.technician else none)|js_html }},
+            technician_phone: {{ ((booking.technician.phone or 'N/A') if booking.technician else none)|js_html }},
             technician_verified: {{ 'true' if (booking.technician and booking.technician.id_verified) else 'false' }}
         }{% if not loop.last %},{% endif %}
         {% endfor %}
@@ -171,13 +171,13 @@
         {% for booking in bookings %}
             {% if booking.transaction %}
             "{{ booking.id }}": {
-                transaction_number: "{{ booking.transaction.transaction_number }}",
-                payment_method: "{{ booking.transaction.payment_method }}",
-                payment_status: "{{ booking.transaction.payment_status }}",
-                amount: "{{ "%.2f"|format(booking.transaction.amount) }}",
-                gcash_reference: "{{ booking.transaction.gcash_reference or 'N/A' }}",
-                rejection_reason: "{{ booking.transaction.rejection_reason or '' }}",
-                transaction_date: "{{ booking.transaction.transaction_date.strftime('%B %d, %Y at %I:%M %p') }}"
+                transaction_number: {{ (booking.transaction.transaction_number)|js_html }},
+                payment_method: {{ (booking.transaction.payment_method)|js_html }},
+                payment_status: {{ (booking.transaction.payment_status)|js_html }},
+                amount: {{ ("%.2f"|format(booking.transaction.amount))|js_html }},
+                gcash_reference: {{ (booking.transaction.gcash_reference or 'N/A')|js_html }},
+                rejection_reason: {{ (booking.transaction.rejection_reason or '')|js_html }},
+                transaction_date: {{ (booking.transaction.transaction_date.strftime('%B %d, %Y at %I:%M %p'))|js_html }}
             }{% if not loop.last %},{% endif %}
             {% endif %}
         {% endfor %}
@@ -450,7 +450,7 @@
         toast.className = `user-toast ${type}`;
         toast.innerHTML = `
             <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
-            ${message}
+            ${String(message).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
         `;
         document.body.appendChild(toast);
         setTimeout(() => {

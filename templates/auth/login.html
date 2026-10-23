@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DEVTech - Login</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
 </head>
 <body>
     <div class="login-container">
@@ -51,7 +54,7 @@
                         <input type="checkbox" name="remember" checked>
                         Remember me
                     </label>
-                    <a href="#" class="forgot-link">Forgot Password?</a>
+                    <a href="{{ url_for('forgot_password') }}" class="forgot-link">Forgot Password?</a>
                 </div>
 
                 <button type="submit" class="login-btn neon-btn">Log In</button>

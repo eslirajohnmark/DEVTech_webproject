@@ -45,12 +45,12 @@
             </div>
         </div>
 
-        <div class="user-conversation-list" id="conversationList">
+        <div class="user-conversation-list" id="conversationList" data-live-region="list">
             {% if conversations %}
                 {% for conv in conversations %}
                 <div class="user-conversation-item {% if conv.is_active %}active{% endif %}" 
                      data-search="{{ conv.name }} {{ conv.last_message }}" 
-                     onclick="selectConversation('{{ conv.id }}')">
+                     onclick="selectConversation('{{ conv.key }}')">
                     <div class="user-conversation-avatar">
                         <i class="fas fa-user-circle"></i>
                         {% if conv.unread_count > 0 %}
@@ -86,7 +86,7 @@
         {% if selected_conversation %}
             <!-- Chat Header -->
             <div class="user-chat-header">
-                <div class="user-chat-header-info">
+                <div class="user-chat-header-info" id="chatHeaderInfo" data-live-region="header">
                     <div class="user-chat-avatar">
                         <i class="fas fa-user-circle"></i>
                     </div>
@@ -109,12 +109,19 @@
             </div>
 
             <!-- Chat Messages -->
-            <div class="user-chat-messages" id="chatMessages">
+            <div class="user-chat-messages" id="chatMessages" data-live-region="chat">
                 {% if messages %}
                     {% for msg in messages %}
                     <div class="user-chat-message {% if msg.is_sent %}sent{% else %}received{% endif %}">
                         <div class="user-chat-bubble">
-                            <p>{{ msg.content }}</p>
+                            {% if msg.content %}<p>{{ msg.content }}</p>{% endif %}
+                            {% for f in msg.attachments %}
+                                {% if f.is_image %}
+                                <a class="msg-attachment" href="{{ f.url }}" target="_blank" rel="noopener"><img src="{{ f.url }}" alt="{{ f.name }}"></a>
+                                {% else %}
+                                <a class="msg-attachment msg-attachment-file" href="{{ f.url }}"><i class="fas fa-file-pdf"></i> {{ f.name }}</a>
+                                {% endif %}
+                            {% endfor %}
                             <span class="user-chat-time">{{ msg.created_at.strftime('%I:%M %p') }}</span>
                         </div>
                     </div>
@@ -129,11 +136,17 @@
             </div>
 
             <!-- Chat Input -->
+            <div class="msg-attachment-chip" id="attachmentChip" style="display:none;">
+                <i class="fas fa-paperclip"></i> <span id="attachmentName"></span>
+                <button type="button" onclick="clearAttachment()" title="Remove attachment">&times;</button>
+            </div>
             <div class="user-chat-input">
                 <div class="user-chat-input-wrapper">
-                    <button class="user-chat-attach" onclick="showUserToast('Attach file feature coming soon')">
+                    <label class="user-chat-attach" for="messageAttachment" title="Attach an image or PDF (max 5 MB)">
                         <i class="fas fa-paperclip"></i>
-                    </button>
+                    </label>
+                    <input type="file" id="messageAttachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+                           style="display:none;" onchange="showAttachmentChip()">
                     <input type="text" class="user-chat-input-field" placeholder="Type your message here..." 
                            onkeydown="if(event.key==='Enter') sendMessage()" id="messageInput">
                     <button class="user-chat-send" onclick="sendMessage()">
@@ -194,11 +207,17 @@
     // MESSAGE FUNCTIONS
     // ============================================
 
-    let selectedConversationId = {{ selected_conversation.id if selected_conversation else 'null' }};
+    let selectedConversationId = {{ selected_conversation.key|tojson if selected_conversation else 'null' }};
 
     function selectConversation(convId) {
-        window.location.href = `/messages/${convId}`;
+        window.location.href = `/messages?conv=${encodeURIComponent(convId)}`;
     }
+
+    // Live updates replace the conversation list; keep the search filter applied.
+    document.addEventListener('devtech:live-updated', function () {
+        const box = document.querySelector('.user-messages-search input');
+        if (box && box.value) searchConversations(box.value);
+    });
 
     function searchConversations(query) {
         const items = document.querySelectorAll('.user-conversation-item');
@@ -214,14 +233,59 @@
         });
     }
 
+    function showAttachmentChip() {
+        const file = document.getElementById('messageAttachment').files[0];
+        const chip = document.getElementById('attachmentChip');
+        if (!file) { chip.style.display = 'none'; return; }
+        if (file.size > 5 * 1024 * 1024) {
+            showUserToast('That file is larger than 5 MB.', 'error');
+            clearAttachment();
+            return;
+        }
+        document.getElementById('attachmentName').textContent = file.name;
+        chip.style.display = 'flex';
+    }
+
+    function clearAttachment() {
+        const picker = document.getElementById('messageAttachment');
+        if (picker) picker.value = '';
+        const chip = document.getElementById('attachmentChip');
+        if (chip) chip.style.display = 'none';
+    }
+
+    // Builds attachment links with DOM methods so file names are never parsed as HTML.
+    function appendAttachments(bubble, attachments, before) {
+        (attachments || []).forEach(f => {
+            const a = document.createElement('a');
+            a.href = f.url;
+            a.className = 'msg-attachment' + (f.is_image ? '' : ' msg-attachment-file');
+            if (f.is_image) {
+                a.target = '_blank';
+                a.rel = 'noopener';
+                const img = document.createElement('img');
+                img.src = f.url;
+                img.alt = f.name;
+                a.appendChild(img);
+            } else {
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-file-pdf';
+                a.appendChild(icon);
+                a.appendChild(document.createTextNode(' ' + f.name));
+            }
+            bubble.insertBefore(a, before);
+        });
+    }
+
     function sendMessage() {
         const input = document.getElementById('messageInput');
         if (!input) return;
-        
+
         const content = input.value.trim();
-        
-        if (!content || !selectedConversationId) {
-            showUserToast('Please type a message', 'warning');
+        const picker = document.getElementById('messageAttachment');
+        const file = picker && picker.files[0];
+
+        if ((!content && !file) || !selectedConversationId) {
+            showUserToast('Type a message or attach a file', 'warning');
             return;
         }
 
@@ -229,13 +293,20 @@
         const sendBtn = document.querySelector('.user-chat-send');
         sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
+        let body, headers = { 'X-Requested-With': 'XMLHttpRequest' };
+        if (file) {
+            body = new FormData();
+            body.append('content', content);
+            body.append('attachment', file);
+        } else {
+            headers['Content-Type'] = 'application/json';
+            body = JSON.stringify({ content: content });
+        }
+
         fetch(`/messages/${selectedConversationId}/send`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({ content: content })
+            headers: headers,
+            body: body
         })
         .then(response => response.json())
         .then(data => {
@@ -248,13 +319,19 @@
                 messageDiv.className = 'user-chat-message sent';
                 messageDiv.innerHTML = `
                     <div class="user-chat-bubble">
-                        <p>${content}</p>
-                        <span class="user-chat-time">${data.time || 'Just now'}</span>
+                        <p></p>
+                        <span class="user-chat-time"></span>
                     </div>
                 `;
+                const textEl = messageDiv.querySelector('p');
+                if (content) { textEl.textContent = content; } else { textEl.remove(); }
+                const timeEl = messageDiv.querySelector('.user-chat-time');
+                timeEl.textContent = data.time || 'Just now';
+                appendAttachments(messageDiv.querySelector('.user-chat-bubble'), data.attachments, timeEl);
                 messagesContainer.appendChild(messageDiv);
-                
+
                 input.value = '';
+                clearAttachment();
                 showUserToast('Message sent!', 'success');
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             } else {
@@ -369,7 +446,7 @@
         toast.className = `user-toast ${type}`;
         toast.innerHTML = `
             <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
-            ${message}
+            ${String(message).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
         `;
         document.body.appendChild(toast);
         setTimeout(() => {

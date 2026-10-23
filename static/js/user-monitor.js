@@ -205,12 +205,12 @@
                    * MESSAGE TECHNICIAN BUTTON
                    *
                    * Opens the existing DEVTech messaging page and
-                   * passes the technician's user ID as conv_id.
+                   * passes the technician's account key as conv.
                    */
                   '<a class="usr-btn usr-btn--primary" ' +
                      'style="margin-top:.8rem;width:100%;" ' +
-                     'href="/messages?conv_id=' +
-                     esc(data.technician.id) +
+                     'href="/messages?conv=' +
+                     encodeURIComponent(data.technician.key) +
                      '">' +
 
                      '<i class="fas fa-comments"></i> ' +
@@ -626,9 +626,48 @@
                     : ''
             );
 
+        var ap = data.approval;
+        var approvalBlock = ap
+            ? '<section class="usr-rating-section" id="approvalCard">' +
+                  '<div class="usr-rating-head">' +
+                      '<h2><i class="fas fa-handshake"></i> Your approval is needed</h2>' +
+                      '<p>Your technician found something that needs your OK before the repair continues. ' +
+                      'Work is paused until you answer.</p>' +
+                  '</div>' +
+                  '<div class="usr-rating-block">' +
+                      '<label class="usr-rating-block-label">What they found</label>' +
+                      '<p style="white-space:pre-wrap;">' + esc(ap.findings) + '</p>' +
+                  '</div>' +
+                  '<div class="usr-rating-block">' +
+                      '<label class="usr-rating-block-label">Proposed work</label>' +
+                      '<p style="white-space:pre-wrap;">' + esc(ap.proposedWork) + '</p>' +
+                  '</div>' +
+                  '<div class="usr-rating-block">' +
+                      '<label class="usr-rating-block-label">Extra cost and time</label>' +
+                      '<p><strong>&#8369;' + esc(Number(ap.additionalCost || 0).toFixed(2)) + '</strong>' +
+                      (ap.extraDays ? ' &middot; about ' + esc(ap.extraDays) + ' extra day(s)' : '') + '</p>' +
+                  '</div>' +
+                  '<form id="approvalForm" novalidate>' +
+                      '<div class="usr-rating-block">' +
+                          '<label class="usr-rating-block-label" for="approvalNote">Note for the technician (optional)</label>' +
+                          '<textarea id="approvalNote" class="usr-underline-input" rows="2" maxlength="1000"></textarea>' +
+                      '</div>' +
+                      '<div class="usr-rating-actions" style="display:flex; gap:0.6rem; flex-wrap:wrap;">' +
+                          '<button type="button" class="usr-btn usr-btn--primary" data-decision="approve">' +
+                              '<i class="fas fa-circle-check"></i> Approve' +
+                          '</button>' +
+                          '<button type="button" class="usr-btn" data-decision="decline">' +
+                              '<i class="fas fa-circle-xmark"></i> Decline' +
+                          '</button>' +
+                      '</div>' +
+                  '</form>' +
+              '</section>'
+            : '';
+
         root.innerHTML =
             header +
             track +
+            approvalBlock +
 
             '<div class="usr-tri-grid">' +
                 techColumn +
@@ -641,6 +680,59 @@
         if (data.canRate) {
             wireRating();
         }
+        if (ap) {
+            wireApproval(ap);
+        }
+    }
+
+    function wireApproval(ap) {
+        var form = document.getElementById('approvalForm');
+        if (!form) {
+            return;
+        }
+        form.addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-decision]');
+            if (!btn) {
+                return;
+            }
+            var decision = btn.dataset.decision;
+            var question = decision === 'approve'
+                ? 'Approve this work' + (ap.additionalCost > 0
+                    ? ' and the extra ₱' + Number(ap.additionalCost).toFixed(2) + ' charge' : '') + '?'
+                : 'Decline this work? The technician will continue with the original repair only.';
+            if (!confirm(question)) {
+                return;
+            }
+            form.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+            fetch('/api/booking/' + bookingId + '/approval/' + ap.id + '/respond', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({
+                    decision: decision,
+                    note: document.getElementById('approvalNote').value.trim()
+                })
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (!res.ok) {
+                    alert(res.reason || 'Could not send your answer. Please try again.');
+                    form.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+                    return;
+                }
+                load();
+            })
+            .catch(function () {
+                alert('Could not reach the server. Please try again.');
+                form.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+            });
+        });
+    }
+
+    // Don't re-render (and wipe) a form the customer is in the middle of filling in.
+    function isTyping() {
+        var el = document.activeElement;
+        return !!(el && root.contains(el) && /^(TEXTAREA|INPUT)$/.test(el.tagName));
     }
 
     function wireRating() {
@@ -953,7 +1045,11 @@
     // Auto-refresh every 45 seconds so the repair
     // status updates without a manual page reload.
     setInterval(
-        load,
+        function () {
+            if (!isTyping()) {
+                load();
+            }
+        },
         45000
     );
 

@@ -12,6 +12,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
     {% block extra_css %}{% endblock %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/profile.css') }}" />
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive-fixes.css') }}" />
+    <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
+    <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
 </head>
 <body data-user-role="{{ session.get('role', '') }}">
     <div class="admin-dashboard-wrapper">
@@ -32,19 +39,36 @@
                 <i class="fas fa-bars"></i>
             </button>
 
-            <div class="admin-user-mini">
-                <div class="admin-avatar-mini">
-                    <i class="fas fa-user-circle"></i>
-                </div>
-                <div>
-                    <div class="admin-user-mini-name">{{ session.get('username', 'Admin') }}</div>
-                    <div class="admin-user-mini-role">{{ session.get('role', 'Administrator')|capitalize }}</div>
-                </div>
+            {% from 'partials/avatar.html' import avatar %}
+            {% set _me = signed_in() %}
+            <div class="admin-user-mini pf-host">
+                <a class="pf-mini" href="{{ url_for('admin_profile') }}" title="Your profile">
+                    {{ avatar(_me, 'md') }}
+                    <span class="pf-mini-text">
+                        <strong>{{ _me.shown_name if _me else session.get('username', 'Admin') }}</strong>
+                        <small>{{ (_me.headline if _me and _me.headline) or 'Administrator' }}</small>
+                    </span>
+                    <span class="pf-mini-edit" aria-hidden="true"><i class="fas fa-pen"></i></span>
+                </a>
             </div>
 
             <nav class="admin-nav-menu" id="adminMobileNavMenu">
                 <a href="{{ url_for('admin_dashboard') }}" class="admin-nav-item {% if request.endpoint == 'admin_dashboard' %}admin-active{% endif %}">
                     <i class="fas fa-chart-pie"></i> Dashboard
+                </a>
+                {% set _nc = nav_counts() %}
+                <a href="{{ url_for('admin_messages') }}" class="admin-nav-item {% if request.endpoint == 'admin_messages' %}admin-active{% endif %}">
+                    <i class="fas fa-comments"></i> Messages
+                    <span class="admin-nav-badge" data-live-count="messages" {% if not _nc.get('messages') %}hidden{% endif %}>{{ _nc.get('messages') or 0 }}</span>
+                </a>
+                <a href="{{ url_for('admin_notifications') }}" class="admin-nav-item {% if request.endpoint == 'admin_notifications' %}admin-active{% endif %}">
+                    <i class="fas fa-bell"></i> Notifications
+                    <span class="admin-nav-badge" data-live-count="notifications" {% if not _nc.get('notifications') %}hidden{% endif %}>{{ _nc.get('notifications') or 0 }}</span>
+                </a>
+                <a href="{{ url_for('admin_support') }}" class="admin-nav-item {% if request.endpoint == 'admin_support' %}admin-active{% endif %}">
+                    <i class="fas fa-headset"></i> Support
+                    {% set _open = (_nc.get('tickets') or 0) + (_nc.get('inquiries') or 0) %}
+                    {% if _open %}<span class="admin-nav-badge">{{ _open }}</span>{% endif %}
                 </a>
                 <a href="{{ url_for('admin_users') }}" class="admin-nav-item {% if request.endpoint == 'admin_users' %}admin-active{% endif %}">
                     <i class="fas fa-users"></i> User Management
@@ -52,17 +76,29 @@
                 <a href="{{ url_for('admin_requests') }}" class="admin-nav-item {% if request.endpoint == 'admin_requests' %}admin-active{% endif %}">
                     <i class="fas fa-clipboard-list"></i> Service Requests
                 </a>
+                <a href="{{ url_for('admin_services') }}" class="admin-nav-item {% if request.endpoint == 'admin_services' %}admin-active{% endif %}">
+                    <i class="fas fa-screwdriver-wrench"></i> Services &amp; Prices
+                </a>
                 <a href="{{ url_for('admin_technician_activity') }}" class="admin-nav-item {% if request.endpoint == 'admin_technician_activity' %}admin-active{% endif %}">
                     <i class="fas fa-screwdriver-wrench"></i> Technician Activity
                 </a>
                 <a href="{{ url_for('admin_payments') }}" class="admin-nav-item {% if request.endpoint == 'admin_payments' %}admin-active{% endif %}">
                     <i class="fas fa-credit-card"></i> Payment Confirmation
                 </a>
+                <a href="{{ url_for('admin_products') }}" class="admin-nav-item {% if request.endpoint == 'admin_products' %}admin-active{% endif %}">
+                    <i class="fas fa-boxes-stacked"></i> Products
+                </a>
+                <a href="{{ url_for('admin_orders') }}" class="admin-nav-item {% if request.endpoint == 'admin_orders' %}admin-active{% endif %}">
+                    <i class="fas fa-shopping-cart"></i> Shop Orders
+                </a>
                 <a href="{{ url_for('admin_analytics') }}" class="admin-nav-item {% if request.endpoint == 'admin_analytics' %}admin-active{% endif %}">
                     <i class="fas fa-chart-line"></i> Analytics
                 </a>
                 <a href="{{ url_for('admin_settings') }}" class="admin-nav-item {% if request.endpoint == 'admin_settings' %}admin-active{% endif %}">
                     <i class="fas fa-cog"></i> Settings
+                </a>
+                <a href="{{ url_for('admin_profile') }}" class="admin-nav-item {% if request.endpoint == 'admin_profile' %}admin-active{% endif %}">
+                    <i class="fas fa-user-gear"></i> My Profile
                 </a>
                 <a href="{{ url_for('logout') }}" class="admin-nav-item" style="margin-top: auto; color: var(--danger);">
                     <i class="fas fa-sign-out-alt"></i> Logout
@@ -94,28 +130,9 @@
         <i class="fas fa-info-circle"></i>
         <span id="toastMessage"></span>
     </div>
-        <script>
-        // ============================================
-        // KEYBOARD SHORTCUTS
-        // ============================================
-        document.addEventListener('keydown', function (e) {
-            // Ctrl + Shift + L -> admin login (kept for consistency)
-            if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-                e.preventDefault();
-                if (window.location.pathname !== '/admin/login') {
-                    window.location.href = '/admin/login';
-                }
-                return;
-            }
-            // Ctrl + Shift + Y -> technician login
-            if (e.ctrlKey && e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
-                e.preventDefault();
-                window.location.href = '/technician/login';
-            }
-        });
-    </script>
 
     <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
     {% block extra_js %}{% endblock %}
+    <script type="application/json" id="devtechLiveBoot">{{ live_boot()|tojson }}</script>
 </body>
 </html>

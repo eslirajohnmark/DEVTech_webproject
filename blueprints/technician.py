@@ -1,6 +1,6 @@
 """Technician portal — server-rendered pages.
 
-A technician is a `User` row with role='technician'; a job they work
+A technician is a row in the `technicians` table; a job they work
 on is a `Booking` row with technician_id pointing at them. Nothing
 here duplicates the admin's own views — it just gives the assigned
 technician their own working surface for the same bookings.
@@ -13,9 +13,9 @@ from datetime import datetime
 from functools import wraps
 from services.job_status import ACTIVE_STATUSES, FINISHED_STATUSES
 from models.technician_models import technician_rating
-from app import db, User, Booking, create_notification
+from app import db, Technician, Booking, limiter, current_account
 from models.technician_models import (
-    IntakeRecord, ServiceReport, IncidentReport, JobLog,
+    IntakeRecord, ServiceReport, IncidentReport, JobLog, ApprovalRequest,
 )
 
 
@@ -36,8 +36,8 @@ def technician_required(fn):
         if 'user_id' not in session:
             flash('Please sign in as a technician.', 'warning')
             return redirect(url_for('technician.login'))
-        user = User.query.get(session['user_id'])
-        if not user or user.role != 'technician' or not user.is_active:
+        user = current_account() if session.get('role') == 'technician' else None
+        if not user or not user.is_active:
             session.clear()
             flash('Technician access required.', 'danger')
             return redirect(url_for('technician.login'))
@@ -50,32 +50,30 @@ def technician_required(fn):
 # ---------------------------------------------------------------------------
 
 @technician_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit('5 per minute', methods=['POST'])
 def login():
-    if session.get('user_id'):
-        u = User.query.get(session['user_id'])
-        if u and u.role == 'technician':
-            return redirect(url_for('technician.dashboard'))
+    if session.get('role') == 'technician' and current_account():
+        return redirect(url_for('technician.dashboard'))
 
     if request.method == 'POST':
         tech_id  = (request.form.get('technician_id') or '').strip().upper()
         password = request.form.get('password') or ''
 
-        user = User.query.filter_by(
-            username=tech_id, role='technician').first()
+        user = Technician.query.filter(db.func.upper(Technician.username) == tech_id).first()
         if not user or not user.check_password(password):
             flash('Incorrect Tech ID or password.', 'danger')
             return render_template('technician/login.html',
                                    prefill_id=tech_id), 401
 
         if not user.is_active:
-            flash('This technician account has been deactivated.', 'danger')
+            flash('This technician account is not active. It may be awaiting '
+                  'admin approval or has been deactivated.', 'danger')
             return render_template('technician/login.html',
                                    prefill_id=tech_id), 403
 
-        session['user_id']  = user.id
-        session['username'] = user.username
-        session['role']     = 'technician'
-        user.last_active    = datetime.utcnow()
+        from app import login_account
+        login_account(user, remember=bool(request.form.get('remember_me')))
+        user.last_active = datetime.utcnow()
         db.session.commit()
         return redirect(url_for('technician.dashboard'))
 
@@ -84,6 +82,7 @@ def login():
 
 
 @technician_bp.route('/register', methods=['GET', 'POST'])
+@limiter.limit('5 per hour', methods=['POST'])
 def register():
     if request.method == 'POST':
         from services.technician_service import register_technician
@@ -92,6 +91,8 @@ def register():
             flash(result['reason'], 'danger')
             return render_template('technician/registration.html',
                                    form=request.form), 400
+        flash('Registration received. An administrator must activate your '
+              'account before you can sign in.', 'success')
         return redirect(url_for('technician.login',
                                 registered=result['technician_id']))
     return render_template('technician/registration.html', form={})
@@ -111,12 +112,12 @@ def logout():
 @technician_required
 def dashboard():
     tid = session['user_id']
-    technician = User.query.get(tid)
+    technician = current_account()
 
     all_jobs = Booking.query.filter_by(technician_id=tid)\
         .order_by(Booking.created_at.desc()).all()
     
-    total = len([j for j in all_jobs if j.status == 'released'])
+    total = len(all_jobs)
     on_repair = sum(1 for j in all_jobs if j.status in ('diagnosis_pending', 'in_progress'))
     ready     = sum(1 for j in all_jobs if j.status == 'completed')
     released  = sum(1 for j in all_jobs if j.status == 'released')
@@ -127,7 +128,7 @@ def dashboard():
 
     return render_template('technician/dashboard.html',
                            technician=technician,
-                           total=total, on_repair=on_repair, ready=ready,
+                           total=total, on_repair=on_repair, ready=ready, released=released,
                            active=active, active_count=len(active),
                            todays_jobs=todays_jobs)
 
@@ -161,8 +162,12 @@ def job_detail(job_id):
         .order_by(ServiceReport.id.desc()).first()
     logs = JobLog.query.filter_by(booking_id=booking.id)\
         .order_by(JobLog.at.desc()).all()
+    approvals = ApprovalRequest.query.filter_by(booking_id=booking.id)\
+        .order_by(ApprovalRequest.id.desc()).all()
+    pending_approval = next((a for a in approvals if a.status == 'pending'), None)
     return render_template('technician/job_detail.html',
-                           job=booking, intake=intake, report=report, logs=logs)
+                           job=booking, intake=intake, report=report, logs=logs,
+                           approvals=approvals, pending_approval=pending_approval)
 
 
 @technician_bp.route('/intake')
@@ -242,144 +247,65 @@ def incidents():
 # MESSAGES
 # ---------------------------------------------------------------------------
 
+def _tech_thread(conv):
+    """Shape an inbox entry from app._load_inbox for the technician template."""
+    initials = ''.join(w[0] for w in (conv['name'] or '?').split()[:2]).upper() or '?'
+    return dict(conv, initials=initials,
+                role_label='Administrator' if conv['role'] == 'admin' else 'Customer',
+                last_message=conv['last_message'] or 'No messages yet',
+                last_time=conv['last_time'].strftime('%b %d, %I:%M %p') if conv['last_message'] else '')
+
+
 @technician_bp.route('/messages')
 @technician_required
 def messages():
-    from app import Message, or_, and_
-    tid = session['user_id']
-
-    sent_to = db.session.query(Message.recipient_id)\
-        .filter_by(sender_id=tid).distinct().all()
-    received_from = db.session.query(Message.sender_id)\
-        .filter_by(recipient_id=tid).distinct().all()
-    other_ids = {r[0] for r in sent_to} | {r[0] for r in received_from}
-
-    conversations = []
-    for other_id in other_ids:
-        other = User.query.get(other_id)
-        if not other:
-            continue
-
-        latest = Message.query.filter(
-            or_(
-                and_(Message.sender_id == tid, Message.recipient_id == other_id),
-                and_(Message.sender_id == other_id, Message.recipient_id == tid),
-            )
-        ).order_by(Message.created_at.desc()).first()
-
-        unread = Message.query.filter_by(
-            sender_id=other_id, recipient_id=tid, is_read=False
-        ).count()
-
-        initials = ''.join(
-            w[0] for w in (other.full_name or '?').split()[:2]
-        ).upper() or '?'
-
-        conversations.append({
-            'other_user_id': other_id,
-            'name': other.full_name,
-            'initials': initials,
-            'role_label': 'Administrator' if other.role == 'admin' else 'Customer',
-            'last_message': latest.content if latest else 'No messages yet',
-            'last_time': latest.created_at.strftime('%b %d, %I:%M %p')
-                         if latest else '',
-            'unread_count': unread,
-            'is_active': False,
-        })
-
-    conversations.sort(key=lambda c: c['last_time'], reverse=True)
-
+    from app import _load_inbox, _account_from_key
+    me = current_account()
     thread_param = request.args.get('thread')
-    active_thread = None
-    thread_messages = []
+    selected = _account_from_key(thread_param) if thread_param else None
+    if thread_param and not selected:
+        abort(404)
 
-    if thread_param:
-        try:
-            other_id = int(thread_param)
-        except ValueError:
-            other_id = None
+    conversations, active, rows = _load_inbox(me, selected)
+    if selected is not None and not active:
+        abort(403)
 
-        if other_id:
-            other = User.query.get(other_id)
-            if other and not (
-                other.role == 'admin' or
-                Booking.query.filter_by(technician_id=tid, user_id=other.id).first()
-            ):
-                abort(403)
-            if other:
-                Message.query.filter_by(
-                    sender_id=other_id, recipient_id=tid, is_read=False
-                ).update({'is_read': True})
-                db.session.commit()
-
-                for c in conversations:
-                    if c['other_user_id'] == other_id:
-                        c['is_active'] = True
-                        active_thread = c
-                        break
-
-                if not active_thread:
-                    initials = ''.join(
-                        w[0] for w in (other.full_name or '?').split()[:2]
-                    ).upper() or '?'
-                    active_thread = {
-                        'other_user_id': other_id,
-                        'name': other.full_name,
-                        'initials': initials,
-                        'role_label': 'Administrator' if other.role == 'admin' else 'Customer',
-                        'job_id': None,
-                        'job_number': None,
-                    }
-
-                rows = Message.query.filter(
-                    or_(
-                        and_(Message.sender_id == tid, Message.recipient_id == other_id),
-                        and_(Message.sender_id == other_id, Message.recipient_id == tid),
-                    )
-                ).order_by(Message.created_at.asc()).all()
-
-                thread_messages = [{
-                    'content': m.content,
-                    'created_at': m.created_at.strftime('%b %d, %I:%M %p'),
-                    'is_sent': m.sender_id == tid,
-                } for m in rows]
-
+    thread_messages = [{
+        'content': m.content,
+        'created_at': m.created_at.strftime('%b %d, %I:%M %p'),
+        'is_sent': m.is_sent,
+        'attachments': m.attachments,
+    } for m in rows]
     return render_template('technician/messages.html',
-                           conversations=conversations,
-                           active_thread=active_thread,
+                           conversations=[_tech_thread(c) for c in conversations],
+                           active_thread=_tech_thread(active) if active else None,
                            thread_messages=thread_messages)
 
 
-@technician_bp.route('/messages/<int:other_user_id>/send', methods=['POST'])
+@technician_bp.route('/messages/<other_key>/send', methods=['POST'])
 @technician_required
-def message_send(other_user_id):
-    from app import Message
+def message_send(other_key):
+    from app import (check_message_attachment, MAX_MESSAGE_LENGTH, send_message,
+                     _account_from_key, _can_message)
 
-    tid = session['user_id']
     content = (request.form.get('content') or '').strip()
+    checked, file_error = check_message_attachment(request.files.get('attachment'))
+    if file_error:
+        flash(file_error, 'danger')
+        return redirect(url_for('technician.messages', thread=other_key))
+    if (not content and not checked) or len(content) > MAX_MESSAGE_LENGTH:
+        flash('Write a message or attach a file.', 'danger')
+        return redirect(url_for('technician.messages', thread=other_key))
 
-    if not content:
-        flash('Message cannot be empty.', 'danger')
-        return redirect(url_for('technician.messages', thread=other_user_id))
-
-    other = User.query.get_or_404(other_user_id)
-    if not (other.role == 'admin' or
-            Booking.query.filter_by(technician_id=tid, user_id=other.id).first()):
+    me = current_account()
+    other = _account_from_key(other_key)
+    if not other:
+        abort(404)
+    if not _can_message(me, other):
         abort(403)
 
-    db.session.add(Message(
-        sender_id=tid, recipient_id=other_user_id,
-        content=content, is_read=False,
-    ))
-    db.session.commit()
-
-    create_notification(
-        other.id, 'New Message',
-        f'You have a new message from {User.query.get(tid).full_name}',
-        'info'
-    )
-
-    return redirect(url_for('technician.messages', thread=other_user_id))
+    send_message(me, other, content, checked=checked)
+    return redirect(url_for('technician.messages', thread=other.key))
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +316,7 @@ def message_send(other_user_id):
 @technician_required
 def profile():
     tid = session['user_id']
-    tech = User.query.get(tid)
+    tech = current_account()
     base = Booking.query.filter_by(technician_id=tid)
     stats = {
         'total': base.count(),
@@ -403,11 +329,33 @@ def profile():
                            rating=rating, rating_count=rating_count)
 
 
+@technician_bp.route('/profile/details', methods=['POST'])
+@technician_required
+def update_details():
+    """Name and contact details. Email (sign-in identity) and Tech ID stay fixed."""
+    tech = current_account()
+    values = {f: (request.form.get(f) or '').strip()
+              for f in ('full_name', 'phone', 'address', 'city', 'province')}
+    limits = {'full_name': 100, 'phone': 20, 'address': 255, 'city': 50, 'province': 50}
+    if not values['full_name']:
+        flash('Full name is required.', 'danger')
+        return redirect(url_for('technician.profile'))
+    too_long = [f for f, n in limits.items() if len(values[f]) > n]
+    if too_long:
+        flash('Some details are too long. Please shorten them.', 'danger')
+        return redirect(url_for('technician.profile'))
+    tech.full_name = values['full_name']
+    for f in ('phone', 'address', 'city', 'province'):
+        setattr(tech, f, values[f] or None)
+    db.session.commit()
+    flash('Your details were saved.', 'success')
+    return redirect(url_for('technician.profile'))
+
+
 @technician_bp.route('/profile/password', methods=['POST'])
 @technician_required
 def change_password():
-    tid = session['user_id']
-    tech = User.query.get(tid)
+    tech = current_account()
 
     current = request.form.get('current_password', '')
     new = request.form.get('new_password', '')
@@ -436,14 +384,15 @@ def _tech_notif_count():
     uid = session.get('user_id')
     if session.get('role') != 'technician' or not uid:
         return {}
-    return {'tech_unread': Notification.query.filter_by(user_id=uid, is_read=False).count()}
+    return {'tech_unread': Notification.query.filter_by(user_role='technician', user_id=uid,
+                                                        is_read=False).count()}
 
 @technician_bp.route('/notifications')
 @technician_required
 def notifications():
     from app import Notification
-    rows = Notification.query.filter_by(user_id=session['user_id'])\
-        .order_by(Notification.created_at.desc()).limit(50).all()
-    Notification.query.filter_by(user_id=session['user_id'], is_read=False).update({'is_read': True})
+    mine = Notification.query.filter_by(user_role='technician', user_id=session['user_id'])
+    rows = mine.order_by(Notification.created_at.desc()).limit(50).all()
+    mine.filter_by(is_read=False).update({'is_read': True})
     db.session.commit()
     return render_template('technician/notifications.html', rows=rows)

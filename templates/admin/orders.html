@@ -6,20 +6,31 @@
 
 {% block content %}
 <div class="admin-table-container">
-    <div style="padding:1rem 1.2rem;">
+    <div style="padding:1rem 1.2rem; display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between;">
         <h3 style="font-weight:600; color:var(--admin-text-primary);">
-            <i class="fas fa-shopping-cart" style="color:var(--admin-primary);"></i> All Orders
+            <i class="fas fa-shopping-cart" style="color:var(--admin-primary);"></i> Shop Orders
         </h3>
+        <div style="display:flex; flex-wrap:wrap; gap:0.4rem;">
+            {% for key, label in [('all', 'All'), ('pending', 'Pending'), ('processing', 'Processing'), ('completed', 'Completed'), ('cancelled', 'Cancelled')] %}
+            <a href="{{ url_for('admin_orders', status=key) }}"
+               class="admin-btn admin-btn-sm {% if status_filter == key %}admin-btn-primary{% endif %}">
+                {{ label }}
+                ({{ counts.values()|sum if key == 'all' else counts.get(key, 0) }})
+            </a>
+            {% endfor %}
+        </div>
     </div>
+    <div style="overflow-x:auto;">
     <table>
         <thead>
             <tr>
                 <th>Order #</th>
-                <th>User</th>
-                <th>Service</th>
-                <th>Status</th>
-                <th>Payment</th>
+                <th>Customer</th>
+                <th>Items</th>
+                <th>Deliver to</th>
                 <th>Total</th>
+                <th>Payment</th>
+                <th>Status</th>
                 <th>Date</th>
                 <th>Actions</th>
             </tr>
@@ -27,21 +38,44 @@
         <tbody>
             {% for order in orders %}
             <tr>
-                <td>{{ order.order_number or '#' + order.id|string }}</td>
-                <td>{{ order.username or 'Guest' }}</td>
-                <td>{{ order.service or 'N/A' }}</td>
-                <td><span class="admin-status-badge {% if order.status == 'completed' %}active{% elif order.status == 'pending' %}pending{% elif order.status == 'processing' %}processing{% else %}inactive{% endif %}">{{ order.status }}</span></td>
-                <td><span class="admin-status-badge {% if order.payment_status == 'paid' %}active{% elif order.payment_status == 'pending' %}pending{% else %}inactive{% endif %}">{{ order.payment_status }}</span></td>
-                <td>₱{{ order.total }}</td>
+                <td>{{ order.order_number }}</td>
+                <td>{{ order.recipient_name or (order.user.full_name if order.user else 'Unknown') }}<br>
+                    <small style="opacity:0.7;">{{ order.recipient_phone or '' }}</small></td>
+                <td>
+                    {% for item in order.items %}
+                    <div>{{ item.quantity }} × {{ item.product.name if item.product else 'Removed product' }}</div>
+                    {% endfor %}
+                </td>
+                <td>{{ order.address_line or order.shipping_address or 'N/A' }}{% if order.city %}, {{ order.city }}{% endif %}
+                    {% if order.latitude is not none and order.longitude is not none %}
+                    <br><a href="https://www.google.com/maps?q={{ order.latitude }},{{ order.longitude }}" target="_blank" rel="noopener"><small>Map pin</small></a>
+                    {% endif %}
+                </td>
+                <td>₱{{ '%.2f'|format(order.total_amount) }}</td>
+                <td>{{ (order.payment_method or 'N/A')|upper }}<br>
+                    <span class="admin-status-badge {% if order.payment_status == 'confirmed' %}active{% elif order.payment_status == 'pending' %}warning{% else %}inactive{% endif %}">{{ order.payment_status }}</span></td>
+                <td><span class="admin-status-badge {% if order.status == 'completed' %}active{% elif order.status in ('pending', 'processing') %}warning{% else %}inactive{% endif %}">{{ order.status }}</span></td>
                 <td>{{ order.created_at.strftime('%Y-%m-%d') if order.created_at else 'N/A' }}</td>
                 <td>
-                    <a href="{{ url_for('admin_order_detail', order_id=order.id) }}" class="admin-btn admin-btn-primary admin-btn-sm">
-                        <i class="fas fa-eye"></i>
-                    </a>
+                    {% for next_status in transitions.get(order.status, ()) %}
+                    <form method="POST" action="{{ url_for('admin_order_status', order_id=order.id, filter=status_filter) }}" style="display:inline;"
+                          {% if next_status == 'cancelled' %}onsubmit="return confirm('Cancel order {{ order.order_number }}? Its items go back into stock.');"{% endif %}>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="status" value="{{ next_status }}">
+                        <button type="submit" class="admin-btn admin-btn-sm {% if next_status == 'cancelled' %}admin-btn-danger{% else %}admin-btn-primary{% endif %}">
+                            {{ {'processing': 'Start processing', 'completed': 'Mark completed', 'cancelled': 'Cancel'}[next_status] }}
+                        </button>
+                    </form>
+                    {% else %}
+                    <small style="opacity:0.6;">No actions</small>
+                    {% endfor %}
                 </td>
             </tr>
+            {% else %}
+            <tr><td colspan="9" style="text-align:center; padding:2rem; opacity:0.6;">No orders found.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endblock %}

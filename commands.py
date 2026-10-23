@@ -8,24 +8,37 @@ them already has shell access to the server, so they're not a new attack
 surface; they replace the far worse pattern of a hardcoded admin sitting
 in the source tree.
 
-The imports below are deferred inside each command function where they'd
-otherwise create a circular dependency at module load. Specifically,
-this file imports `app`, `db`, and `User` from app.py — and app.py
-imports `register_commands` from this file. Keeping the heavy imports
-deferred to call time breaks the cycle.
+Admins live in their own `admins` table (customers and technicians have
+their own tables too), so an account can't be "promoted" — create a
+separate admin account instead.
+
+The imports below are deferred inside register_commands because app.py
+imports `register_commands` from this file; importing app at module load
+would create a cycle.
 """
 from getpass import getpass
 
 import click
 
 
+def _read_new_password(label='Password'):
+    password = getpass(f'{label} (min 8 chars): ')
+    confirm = getpass('Confirm password: ')
+    if password != confirm:
+        click.echo('Passwords do not match.', err=True)
+        raise SystemExit(1)
+    if len(password) < 8:
+        click.echo('Password must be at least 8 characters.', err=True)
+        raise SystemExit(1)
+    return password
+
+
 def register_commands(app):
     """Attach every CLI command to the Flask app. Called once from
-    app.py at module load time, after `db`, `User`, and the other
-    models already exist."""
+    app.py at module load time, after `db` and the models already exist."""
 
     # Pull in models lazily so the module can be imported safely.
-    from app import db, User
+    from app import db, Admin, email_in_use
 
     # ----------------------------------------------------------------
     # CREATE-ADMIN
@@ -46,35 +59,21 @@ def register_commands(app):
             click.echo('That does not look like a valid email.', err=True)
             raise SystemExit(1)
 
-        if User.query.filter_by(email=email).first():
+        if email_in_use(email):
             click.echo(f'{email} is already registered.', err=True)
             raise SystemExit(1)
 
-        password = getpass('Password (min 8 chars): ')
-        confirm = getpass('Confirm password: ')
-
-        if password != confirm:
-            click.echo('Passwords do not match.', err=True)
-            raise SystemExit(1)
-        if len(password) < 8:
-            click.echo('Password must be at least 8 characters.', err=True)
-            raise SystemExit(1)
+        password = _read_new_password()
 
         # Build a username from the email. Disambiguate on collision.
         username = email.split('@')[0]
-        if User.query.filter_by(username=username).first():
+        if Admin.query.filter_by(username=username).first():
             import secrets as _s
             username = f'{username}_{_s.token_hex(3)}'
 
-        user = User(
-            username=username,
-            email=email,
-            full_name=name,
-            role='admin',
-            is_active=True,
-        )
-        user.set_password(password)
-        db.session.add(user)
+        admin = Admin(username=username, email=email, full_name=name, is_active=True)
+        admin.set_password(password)
+        db.session.add(admin)
 
         try:
             db.session.commit()
@@ -87,69 +86,42 @@ def register_commands(app):
         click.echo('Sign in at /admin/login')
 
     # ----------------------------------------------------------------
-    # PROMOTE-ADMIN
+    # DEACTIVATE-ADMIN / ACTIVATE-ADMIN
     # ----------------------------------------------------------------
-    @app.cli.command('promote-admin')
+    @app.cli.command('deactivate-admin')
     @click.argument('email')
-    def promote_admin(email):
-        """Promote an existing user to admin by email.
-
-        Use this when you already have a customer or technician account
-        and want to grant it admin rights without creating a new row.
-        """
-        email = email.strip().lower()
-        user = User.query.filter_by(email=email).first()
-
-        if not user:
-            click.echo(f'No user with email {email}', err=True)
-            raise SystemExit(1)
-
-        if user.role == 'admin':
-            click.echo(f'{email} is already an admin.')
-            return
-
-        user.role = 'admin'
-        user.is_active = True
-        db.session.commit()
-        click.echo(f'Promoted {user.full_name} <{email}> to admin.')
-
-    # ----------------------------------------------------------------
-    # DEMOTE-ADMIN
-    # ----------------------------------------------------------------
-    @app.cli.command('demote-admin')
-    @click.argument('email')
-    def demote_admin(email):
-        """Demote an admin back to customer.
+    def deactivate_admin(email):
+        """Block an admin from signing in.
 
         Refuses if they are the last active admin, because that would
         lock you out of the panel entirely. Create another admin first.
         """
-        email = email.strip().lower()
-        user = User.query.filter_by(email=email).first()
-
-        if not user:
-            click.echo(f'No user with email {email}', err=True)
+        admin = Admin.query.filter_by(email=email.strip().lower()).first()
+        if not admin:
+            click.echo(f'No admin with email {email}', err=True)
             raise SystemExit(1)
-
-        if user.role != 'admin':
-            click.echo(f'{email} is not an admin.')
+        if not admin.is_active:
+            click.echo(f'{admin.email} is already inactive.')
             return
-
-        admin_count = User.query.filter_by(
-            role='admin', is_active=True
-        ).count()
-
-        if admin_count <= 1:
-            click.echo(
-                'Refusing: this is the last active admin. '
-                'Create another admin first, then try again.',
-                err=True,
-            )
+        if Admin.query.filter_by(is_active=True).count() <= 1:
+            click.echo('Refusing: this is the last active admin. '
+                       'Create another admin first, then try again.', err=True)
             raise SystemExit(1)
-
-        user.role = 'customer'
+        admin.is_active = False
         db.session.commit()
-        click.echo(f'Demoted {user.full_name} <{email}> to customer.')
+        click.echo(f'Deactivated {admin.full_name} <{admin.email}>.')
+
+    @app.cli.command('activate-admin')
+    @click.argument('email')
+    def activate_admin(email):
+        """Let a deactivated admin sign in again."""
+        admin = Admin.query.filter_by(email=email.strip().lower()).first()
+        if not admin:
+            click.echo(f'No admin with email {email}', err=True)
+            raise SystemExit(1)
+        admin.is_active = True
+        db.session.commit()
+        click.echo(f'Activated {admin.full_name} <{admin.email}>.')
 
     # ----------------------------------------------------------------
     # LIST-ADMINS
@@ -157,8 +129,7 @@ def register_commands(app):
     @app.cli.command('list-admins')
     def list_admins():
         """List every admin account and its status."""
-        admins = User.query.filter_by(role='admin') \
-            .order_by(User.created_at).all()
+        admins = Admin.query.order_by(Admin.created_at).all()
 
         if not admins:
             click.echo('No admins configured.')
@@ -167,9 +138,42 @@ def register_commands(app):
 
         click.echo(f'{"Email":<40} {"Name":<30} {"Status":<10}')
         click.echo('-' * 82)
-        for u in admins:
-            status = 'active' if u.is_active else 'INACTIVE'
-            click.echo(f'{u.email:<40} {(u.full_name or ""):<30} {status:<10}')
+        for a in admins:
+            status = 'active' if a.is_active else 'INACTIVE'
+            click.echo(f'{a.email:<40} {(a.full_name or ""):<30} {status:<10}')
+
+    # ----------------------------------------------------------------
+    # UPGRADE-DB
+    # ----------------------------------------------------------------
+    @app.cli.command('upgrade-db')
+    def upgrade_db():
+        """Bring an existing database up to date: create new tables, add
+        new columns, and run one-time data fixes. Never seeds demo data.
+        Safe to run on every deploy."""
+        import app as app_module
+        db.create_all()
+        for patch in ('update_payment_method_column', 'add_receipt_image_column',
+                      'add_service_category_columns', 'add_profile_columns'):
+            getattr(app_module, patch)()
+        app_module.move_legacy_receipts()
+        released = app_module.release_reserved_cart_stock()
+        if released:
+            click.echo(f'Returned {released} unit(s) held in open carts to product stock.')
+        click.echo('Database is up to date.')
+
+    # ----------------------------------------------------------------
+    # RELEASE-CART-STOCK
+    # ----------------------------------------------------------------
+    @app.cli.command('release-cart-stock')
+    def release_cart_stock():
+        """One-time fix: return stock that open carts were holding under the
+        old add-to-cart reservation model. Safe to run more than once."""
+        from app import release_reserved_cart_stock
+        released = release_reserved_cart_stock()
+        if released is None:
+            click.echo('Already done; nothing to release.')
+        else:
+            click.echo(f'Returned {released} unit(s) to product stock.')
 
     # ----------------------------------------------------------------
     # RESET-ADMIN-PASSWORD
@@ -181,22 +185,12 @@ def register_commands(app):
         run, or when you have locked yourself out.
         """
         email = email.strip().lower()
-        user = User.query.filter_by(email=email, role='admin').first()
+        admin = Admin.query.filter_by(email=email).first()
 
-        if not user:
+        if not admin:
             click.echo(f'No admin with email {email}', err=True)
             raise SystemExit(1)
 
-        password = getpass('New password (min 8 chars): ')
-        confirm = getpass('Confirm new password: ')
-
-        if password != confirm:
-            click.echo('Passwords do not match.', err=True)
-            raise SystemExit(1)
-        if len(password) < 8:
-            click.echo('Password must be at least 8 characters.', err=True)
-            raise SystemExit(1)
-
-        user.set_password(password)
+        admin.set_password(_read_new_password('New password'))
         db.session.commit()
-        click.echo(f'Password updated for {user.full_name} <{email}>.')
+        click.echo(f'Password updated for {admin.full_name} <{email}>.')

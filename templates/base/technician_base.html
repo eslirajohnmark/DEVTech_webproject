@@ -10,6 +10,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/profile.css') }}" />
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive-fixes.css') }}" />
+    <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
+    <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
@@ -29,12 +36,12 @@
             </button>
         </div>
 
-        <a class="tech-whoami" href="{{ url_for('technician.profile') }}">
-            <div class="tech-whoami-avatar">
-                {{ session.get('username', 'TT')[:2] | upper }}
-            </div>
+        {% from 'partials/avatar.html' import avatar %}
+        {% set _me = signed_in() %}
+        <a class="tech-whoami" href="{{ url_for('technician.profile') }}" title="Your profile">
+            {{ avatar(_me, 'md') }}
             <div class="tech-whoami-text">
-                <span class="tech-whoami-name">{{ session.get('username', 'Technician') }}</span>
+                <span class="tech-whoami-name">{{ _me.shown_name if _me else session.get('username', 'Technician') }}</span>
                 <span class="tech-whoami-role">
                     <i class="fas fa-circle tech-dot available"></i> Technician
                 </span>
@@ -61,6 +68,7 @@
             <a class="tech-nav-item {% if 'message' in endpoint %}is-active{% endif %}"
                href="{{ url_for('technician.messages') }}">
                 <i class="fas fa-comments"></i><span>Messages</span>
+                <span class="live-nav-badge" data-live-count="messages" hidden>0</span>
             </a>
             <a class="tech-nav-item {% if endpoint == 'technician.incidents' %}is-active{% endif %}"
                href="{{ url_for('technician.incidents') }}">
@@ -88,7 +96,7 @@
             </div>
             <div class="tech-topbar-actions">
                 <a class="tech-icon-btn" href="{{ url_for('technician.notifications') }}" aria-label="Notifications">
-                    <i class="fas fa-bell"></i>{% if tech_unread %}<span class="tech-icon-badge">{{ tech_unread }}</span>{% endif %}
+                    <i class="fas fa-bell"></i><span class="tech-icon-badge" data-live-count="notifications" {% if not tech_unread %}hidden{% endif %}>{{ tech_unread or 0 }}</span>
                 </a>
                 <span class="tech-today">
                     <i class="fas fa-calendar-day"></i> {{ today_str }}
@@ -124,5 +132,6 @@
 </script>
 
 {% block extra_js %}{% endblock %}
+    <script type="application/json" id="devtechLiveBoot" nonce="{{ tech_nonce }}">{{ live_boot()|tojson }}</script>
 </body>
 </html>

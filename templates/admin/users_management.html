@@ -12,10 +12,7 @@
         <p>View and manage all registered users</p>
     </div>
     <div class="admin-top-actions">
-        <button class="admin-icon-btn" onclick="showAdminToast('Notifications')">
-            <i class="fas fa-bell"></i>
-            <span class="admin-badge">5</span>
-        </button>
+        {% include 'admin/_notification_bell.html' %}
         <button class="admin-icon-btn" id="refreshUsersBtn" onclick="fetchUsers()" title="Refresh now">
             <i class="fas fa-sync-alt"></i>
         </button>
@@ -403,7 +400,10 @@
     let filteredUsers = [];
     let currentPage = 1;
     const rowsPerPage = 10;
-    const currentAdminId = {{ session.get('user_id') | tojson }};
+    // Accounts are keyed 'customer-5' / 'technician-3' / 'admin-1': ids repeat across the three tables.
+    const currentAdminKey = {{ current_admin_key | tojson }};
+    const userUrl = key => `/api/admin/users/${key.replace('-', '/')}`;
+    const findUser = key => allUsers.find(x => x.key === key);
     let pollTimer = null;
 
     // ============================================
@@ -426,17 +426,10 @@
 
     function userRowHtml(user) {
         const initials = (user.full_name || '?').trim().charAt(0).toUpperCase();
-        const isSelf = user.id === currentAdminId;
-        const roleCell = isSelf
-            ? `<span class="admin-role-badge ${user.role}" style="background:rgba(0,255,136,0.1); color:var(--primary); display:inline-block; padding:0.3rem 0.6rem; border-radius:6px;" title="You can't change your own role while logged in.">
-                   ${escapeHtml(user.role.charAt(0).toUpperCase() + user.role.slice(1))} (you)
-               </span>`
-            : `<select class="admin-role-badge ${user.role}" style="background:rgba(0,255,136,0.1); color:var(--primary);"
-                       onchange="changeUserRole(${user.id}, this.value)">
-                   <option value="customer" ${user.role === 'customer' ? 'selected' : ''}>Customer</option>
-                   <option value="technician" ${user.role === 'technician' ? 'selected' : ''}>Technician</option>
-                   <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
-               </select>`;
+        const isSelf = user.key === currentAdminKey;
+        const roleCell = `<span class="admin-role-badge ${user.role}" style="background:rgba(0,255,136,0.1); color:var(--primary); display:inline-block; padding:0.3rem 0.6rem; border-radius:6px;">
+                   ${escapeHtml(user.role.charAt(0).toUpperCase() + user.role.slice(1))}${isSelf ? ' (you)' : ''}
+               </span>`;
 
         // Technicians need identity verification before they can be
         // assigned to a booking in Requests Management - this badge is the
@@ -452,16 +445,16 @@
 
         const verifyActionButton = user.role === 'technician'
             ? (user.id_verified
-                ? `<button class="admin-btn-sm admin-btn-secondary" onclick="revokeVerification(${user.id}, '${escapeHtml(user.full_name)}')" title="Revoke ID Verification">
+                ? `<button class="admin-btn-sm admin-btn-secondary" onclick="revokeVerification('${user.key}', '${escapeHtml(user.full_name)}')" title="Revoke ID Verification">
                        <i class="fas fa-user-slash"></i>
                    </button>`
-                : `<button class="admin-btn-sm admin-btn-approve" onclick="openVerifyIdModal(${user.id}, '${escapeHtml(user.full_name)}')" title="Verify Identity">
+                : `<button class="admin-btn-sm admin-btn-approve" onclick="openVerifyIdModal('${user.key}', '${escapeHtml(user.full_name)}')" title="Verify Identity">
                        <i class="fas fa-id-card"></i>
                    </button>`)
             : '';
 
         return `
-            <tr data-user-id="${user.id}">
+            <tr data-user-key="${user.key}">
                 <td>
                     <div class="admin-user-cell">
                         <div class="admin-user-avatar-wrap">
@@ -480,21 +473,24 @@
                 <td>${presenceCellHtml(user)}</td>
                 <td>
                     <button type="button" class="admin-status-badge ${user.is_active ? 'active' : 'inactive'}"
-                            style="border:none; cursor:pointer;" onclick="toggleUserStatus(${user.id})">
+                            style="border:none; cursor:pointer;" onclick="toggleUserStatus('${user.key}')">
                         ${user.is_active ? 'Active' : 'Inactive'}
                     </button>
                 </td>
                 <td>${escapeHtml(user.created_at || 'N/A')}</td>
                 <td>
                     <div class="admin-action-buttons">
-                        <button class="admin-btn-sm admin-btn-info" onclick="viewUserDetails(${user.id})" title="View Details">
+                        <button class="admin-btn-sm admin-btn-info" onclick="viewUserDetails('${user.key}')" title="View Details">
                             <i class="fas fa-eye"></i>
                         </button>
-                        <button class="admin-btn-sm admin-btn-edit" onclick="openEditUserModal(${user.id})" title="Edit User">
+                        <button class="admin-btn-sm admin-btn-edit" onclick="openEditUserModal('${user.key}')" title="Edit User">
                             <i class="fas fa-edit"></i>
                         </button>
                         ${verifyActionButton}
-                        <button class="admin-btn-sm admin-btn-danger" onclick="deleteUser(${user.id})" title="Delete User">
+                        <button class="admin-btn-sm admin-btn-edit" onclick="resetUserPassword('${user.key}')" title="Reset Password">
+                            <i class="fas fa-key"></i>
+                        </button>
+                        <button class="admin-btn-sm admin-btn-danger" onclick="deleteUser('${user.key}')" title="Delete User">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
@@ -538,7 +534,7 @@
         const presence = document.getElementById('presenceFilter').value;
 
         filteredUsers = allUsers.filter(u => {
-            const text = `${u.full_name} ${u.email} ${u.phone || ''} #${u.id}`.toLowerCase();
+            const text = `${u.full_name} ${u.email} ${u.phone || ''} ${u.username || ''} #${u.id}`.toLowerCase();
             const matchesSearch = text.includes(search);
             const matchesRole = role === 'all' || u.role === role;
             const matchesStatus = status === 'all' || (status === 'active' ? u.is_active : !u.is_active);
@@ -602,32 +598,17 @@
 
     function startPolling() {
         if (pollTimer) clearInterval(pollTimer);
-        pollTimer = setInterval(fetchUsers, 3000);
+        pollTimer = setInterval(fetchUsers, 15000);   // presence/status refresh
     }
 
     // ============================================
-    // ROLE / STATUS - AJAX, no page reload
+    // VERIFICATION / STATUS - AJAX, no page reload
     // ============================================
 
-    function changeUserRole(userId, role) {
-        adminAjax(`/api/admin/users/${userId}/role`, 'POST', { role: role })
-            .then(data => {
-                if (data.success) {
-                    const u = allUsers.find(x => x.id === userId);
-                    if (u) u.role = data.role;
-                    renderStats();
-                    showAdminToast('Role updated', 'success');
-                } else {
-                    showAdminToast(data.message || 'Could not update role', 'error');
-                    fetchUsers();
-                }
-            });
-    }
+    let pendingVerifyUserKey = null;
 
-    let pendingVerifyUserId = null;
-
-    function openVerifyIdModal(userId, userName) {
-        pendingVerifyUserId = userId;
+    function openVerifyIdModal(userKey, userName) {
+        pendingVerifyUserKey = userKey;
         document.getElementById('verifyIdUserName').textContent = userName;
         document.getElementById('verifyIdType').value = 'National ID';
         document.getElementById('verifyIdNumber').value = '';
@@ -647,7 +628,7 @@
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
 
-        adminAjax(`/api/admin/users/${pendingVerifyUserId}/verify-id`, 'POST', { id_type: idType, id_number: idNumber })
+        adminAjax(`${userUrl(pendingVerifyUserKey)}/verify-id`, 'POST', { id_type: idType, id_number: idNumber })
             .then(data => {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-check"></i> Confirm Verification';
@@ -661,10 +642,10 @@
             });
     }
 
-    function revokeVerification(userId, userName) {
+    function revokeVerification(userKey, userName) {
         if (!confirm(`Revoke identity verification for ${userName}? They won't be assignable to new bookings until re-verified.`)) return;
 
-        fetch(`/api/admin/users/${userId}/verify-id`, { method: 'DELETE' })
+        fetch(`${userUrl(userKey)}/verify-id`, { method: 'DELETE' })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -676,15 +657,15 @@
             });
     }
 
-    function toggleUserStatus(userId) {
-        if (userId === currentAdminId) {
+    function toggleUserStatus(userKey) {
+        if (userKey === currentAdminKey) {
             showAdminToast("You can't deactivate your own account while logged in.", 'error');
             return;
         }
-        adminAjax(`/api/admin/users/${userId}/status`, 'POST', {})
+        adminAjax(`${userUrl(userKey)}/status`, 'POST', {})
             .then(data => {
                 if (data.success) {
-                    const u = allUsers.find(x => x.id === userId);
+                    const u = findUser(userKey);
                     if (u) u.is_active = data.is_active;
                     renderStats();
                     filterUsers();
@@ -699,12 +680,12 @@
     // VIEW DETAILS (eye icon)
     // ============================================
 
-    function viewUserDetails(userId) {
+    function viewUserDetails(userKey) {
         openAdminModal('userDetailModal');
         const body = document.getElementById('userDetailBody');
         body.innerHTML = `<div style="text-align:center; padding:2rem; opacity:0.6;"><i class="fas fa-spinner fa-spin"></i> Loading...</div>`;
 
-        fetch(`/api/admin/users/${userId}`)
+        fetch(userUrl(userKey))
             .then(response => response.json())
             .then(data => {
                 const u = data.user;
@@ -802,13 +783,13 @@
         openAdminModal('userFormModal');
     }
 
-    function openEditUserModal(userId) {
-        const u = allUsers.find(x => x.id === userId);
+    function openEditUserModal(userKey) {
+        const u = findUser(userKey);
         if (!u) return;
 
         resetUserForm();
         document.getElementById('userFormTitle').innerHTML = '<i class="fas fa-user-edit"></i> Edit User';
-        document.getElementById('userFormId').value = u.id;
+        document.getElementById('userFormId').value = u.key;
         document.getElementById('userFormFullName').value = u.full_name || '';
         document.getElementById('userFormEmail').value = u.email || '';
         document.getElementById('userFormPhone').value = u.phone || '';
@@ -818,13 +799,14 @@
         document.getElementById('userFormAddressGroup').style.display = 'block';
         document.getElementById('userFormCityRowGroup').style.display = 'flex';
 
+        // Customers, technicians and admins live in separate tables, so the
+        // account type is fixed once created.
         const roleSelect = document.getElementById('userFormRole');
-        const isSelf = userId === currentAdminId;
-        roleSelect.disabled = isSelf;
-        roleSelect.title = isSelf ? "You can't change your own role while logged in." : '';
+        roleSelect.disabled = true;
+        roleSelect.title = "An account's type can't be changed. Create a new account of the other type instead.";
 
         // Full detail (address etc.) isn't in the row summary - fetch it.
-        fetch(`/api/admin/users/${userId}`)
+        fetch(userUrl(userKey))
             .then(response => response.json())
             .then(data => {
                 const detail = data.user;
@@ -864,10 +846,10 @@
                 province: document.getElementById('userFormProvince').value.trim(),
                 postal_code: document.getElementById('userFormPostal').value.trim()
             };
-            adminAjax(`/api/admin/users/${id}`, 'PUT', payload)
+            adminAjax(userUrl(id), 'PUT', payload)
                 .then(data => {
                     if (data.success) {
-                        const idx = allUsers.findIndex(x => x.id === Number(id));
+                        const idx = allUsers.findIndex(x => x.key === id);
                         if (idx !== -1) allUsers[idx] = data.user;
                         renderStats();
                         filterUsers();
@@ -907,23 +889,49 @@
     // DELETE USER
     // ============================================
 
-    function deleteUser(userId) {
-        const u = allUsers.find(x => x.id === userId);
+    function resetUserPassword(userKey) {
+        const u = findUser(userKey);
         if (!u) return;
-        if (userId === currentAdminId) {
+        if (userKey === currentAdminKey) {
+            showAdminToast('Change your own password from your profile.', 'error');
+            return;
+        }
+        if (!confirm(`Reset the password for ${u.full_name}? Their current password will stop working.`)) return;
+        fetch(`${userUrl(userKey)}/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                showAdminToast(data.message || 'Could not reset the password', 'error');
+                return;
+            }
+            // prompt() gives the admin a selectable field to copy from; shown once only.
+            prompt(`Temporary password for ${u.full_name} (copy it now; it will not be shown again):`,
+                   data.temporary_password);
+            showAdminToast(data.message, 'success');
+        })
+        .catch(() => showAdminToast('An error occurred while resetting the password', 'error'));
+    }
+
+    function deleteUser(userKey) {
+        const u = findUser(userKey);
+        if (!u) return;
+        if (userKey === currentAdminKey) {
             showAdminToast("You can't delete your own account while logged in.", 'error');
             return;
         }
         if (!confirm(`Delete ${u.full_name}? This cannot be undone.`)) return;
 
-        fetch(`/api/admin/users/${userId}`, {
+        fetch(userUrl(userKey), {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
         })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                allUsers = allUsers.filter(x => x.id !== userId);
+                allUsers = allUsers.filter(x => x.key !== userKey);
                 renderStats();
                 filterUsers();
                 showAdminToast(data.message || 'User deleted', 'success');

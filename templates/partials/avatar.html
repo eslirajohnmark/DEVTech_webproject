@@ -1,0 +1,18 @@
+{# Account avatar: photo, chosen icon, or initials on the chosen colour.
+   Usage: {% from 'partials/avatar.html' import avatar %} {{ avatar(account, 'md') }} #}
+{% macro avatar(acct, size='md', extra='') -%}
+{%- if acct -%}
+<span class="pf-avatar pf-avatar--{{ size }} pf-c-{{ acct.avatar_color_key }} pf-frame--{{ acct.avatar_frame_key }} {{ extra }}"
+      role="img" aria-label="{{ acct.shown_name }}">
+    {%- if acct.avatar_file -%}
+        <img src="{{ acct.avatar_url }}" alt="" loading="lazy">
+    {%- elif acct.avatar_mode == 'icon' -%}
+        <i class="fas fa-{{ acct.avatar_icon }}" aria-hidden="true"></i>
+    {%- else -%}
+        <span class="pf-avatar-initials">{{ acct.initials }}</span>
+    {%- endif -%}
+</span>
+{%- else -%}
+<span class="pf-avatar pf-avatar--{{ size }} pf-c-midnight {{ extra }}" aria-hidden="true"><i class="fas fa-user"></i></span>
+{%- endif -%}
+{%- endmacro %}

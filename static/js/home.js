@@ -103,22 +103,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // ============================================
-    // KEYBOARD SHORTCUT: Ctrl + Shift + L
-    // Admin Login - Hidden
-    // ============================================
-    document.addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-            e.preventDefault();
-            
-            const currentPath = window.location.pathname;
-            if (currentPath === '/admin/login' || currentPath === '/admin/login/') {
-                return;
-            }
-            
-            window.location.href = '/admin/login';
-        }
-    });
 
     // ============================================
     // NAVBAR SCROLL EFFECT
@@ -158,9 +142,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            // Show success message
-            alert('Thank you for your message! We\'ll get back to you soon.');
-            contactForm.reset();
+            const submitBtn = contactForm.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
+            fetch('/contact', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.getElementById('contactCsrf')?.value || ''
+                },
+                body: JSON.stringify({ name, email, subject, message })
+            })
+                .then(res => res.json().catch(() => ({
+                    success: false,
+                    message: res.status === 429
+                        ? 'Too many messages. Please try again later.'
+                        : 'Something went wrong. Please try again.'
+                })))
+                .then(data => {
+                    alert(data.message || (data.success ? 'Message sent.' : 'Could not send your message.'));
+                    if (data.success) contactForm.reset();
+                })
+                .catch(() => alert('Could not reach the server. Please try again.'))
+                .finally(() => { if (submitBtn) submitBtn.disabled = false; });
         });
     }
 
@@ -206,5 +209,84 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // ============================================
+    // HERO ANIMATION - a repair moving through the booking stages
+    // ============================================
+    initRepairScene();
+
     console.log('✅ DEVTech Home page loaded');
 });
+
+function initRepairScene() {
+    const scene = document.getElementById('repairScene');
+    if (!scene) return;
+
+    // Same stages (and icons) customers see on their Monitor Device page.
+    const STAGES = [
+        { label: 'Requested', icon: 'fa-inbox' },
+        { label: 'Technician assigned', icon: 'fa-user-check' },
+        { label: 'Diagnosis', icon: 'fa-stethoscope' },
+        { label: 'On repair', icon: 'fa-screwdriver-wrench' },
+        { label: 'Ready for collection', icon: 'fa-box-open' },
+        { label: 'Released', icon: 'fa-hand-holding-heart' }
+    ];
+    const label = document.getElementById('sceneStageLabel');
+    const icon = document.getElementById('sceneStageIcon');
+    const bar = document.getElementById('sceneProgress');
+    const dots = scene.querySelectorAll('.hp-ticket-dots li');
+
+    function show(index) {
+        const stage = STAGES[index];
+        scene.dataset.stage = String(index);
+        label.style.opacity = '0';
+        setTimeout(function () {
+            label.textContent = stage.label;
+            icon.className = 'fas ' + stage.icon;
+            label.style.opacity = '1';
+        }, 180);
+        bar.style.width = (index / (STAGES.length - 1) * 100) + '%';
+        dots.forEach(function (dot, i) {
+            dot.classList.toggle('is-done', i < index);
+            dot.classList.toggle('is-current', i === index);
+        });
+    }
+
+    // Respect "reduce motion": show the finished repair, no cycling.
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        show(4);
+        return;
+    }
+
+    let index = 0;
+    let timer = null;
+    let visible = true;
+    // Linger a little longer on the outcome stages.
+    const delayFor = function (i) { return i >= 4 ? 2600 : 1900; };
+
+    function step() {
+        index = (index + 1) % STAGES.length;
+        show(index);
+        schedule();
+    }
+    function schedule() {
+        clearTimeout(timer);
+        if (visible && !document.hidden) timer = setTimeout(step, delayFor(index));
+    }
+    function setPaused(paused) {
+        scene.classList.toggle('is-paused', paused);
+        if (paused) clearTimeout(timer); else schedule();
+    }
+
+    if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) {
+            visible = entries[0].isIntersecting;
+            setPaused(!visible);
+        }, { threshold: 0.15 }).observe(scene);
+    }
+    document.addEventListener('visibilitychange', function () {
+        setPaused(document.hidden || !visible);
+    });
+
+    show(0);
+    schedule();
+}

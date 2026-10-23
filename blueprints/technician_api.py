@@ -8,9 +8,10 @@ from functools import wraps
 import json
 from models.technician_models import (
     IntakeRecord, ServiceReport, IncidentReport, JobLog,
-    UploadedFile,
+    UploadedFile, ApprovalRequest,
 )
-from app import db, User, Booking, create_notification
+from app import (db, Technician, Booking, create_notification, notify_admins, limiter,
+                 current_account, login_account)
 from services.job_status import NEXT_STATUS, STATUS_LABELS, FINISHED_STATUSES
 from models.technician_models import technician_rating
 
@@ -23,8 +24,8 @@ def technician_required(fn):
     def wrapper(*args, **kwargs):
         if 'user_id' not in session:
             return jsonify({'ok': False, 'reason': 'Not signed in.'}), 401
-        user = User.query.get(session['user_id'])
-        if not user or user.role != 'technician' or not user.is_active:
+        user = current_account() if session.get('role') == 'technician' else None
+        if not user or not user.is_active:
             return jsonify({'ok': False, 'reason': 'Not a technician.'}), 401
         return fn(*args, **kwargs)
     return wrapper
@@ -32,6 +33,11 @@ def technician_required(fn):
 
 def _now():
     return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+
+# Statuses in which a technician may save a report draft. Submitting the
+# final report additionally requires 'in_progress' (see job_report).
+REPORTABLE_STATUSES = ('confirmed', 'diagnosis_pending', 'in_progress')
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +99,7 @@ def _maybe_advance(b, actor_name, reason_override=None):
     create_notification(
         b.user_id, 'Repair Status Updated',
         f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.',
-        'info'
+        'info', role='customer'
     )
     return nxt
 
@@ -149,7 +155,7 @@ def _intake_dict(r):
 @technician_api_bp.route('/me')
 @technician_required
 def me():
-    u = User.query.get(session['user_id'])
+    u = current_account()
     rating, _rating_count = technician_rating(u.id)
     completed_jobs = Booking.query.filter(
         Booking.technician_id == u.id,
@@ -171,17 +177,19 @@ def me():
 
 
 @technician_api_bp.route('/login', methods=['POST'])
+@limiter.limit('5 per minute')
 def login():
     body = request.get_json(silent=True) or {}
     tech_id  = (body.get('technician_id') or '').strip().upper()
     password = body.get('password') or ''
-    user = User.query.filter_by(username=tech_id, role='technician').first()
+    user = Technician.query.filter(db.func.upper(Technician.username) == tech_id).first()
     if not user or not user.check_password(password):
         return jsonify({'ok': False,
                         'reason': 'Incorrect Tech ID or password.'}), 401
-    session['user_id']  = user.id
-    session['username'] = user.username
-    session['role']     = 'technician'
+    if not user.is_active:
+        return jsonify({'ok': False,
+                        'reason': 'This technician account has been deactivated.'}), 403
+    login_account(user)
     return jsonify({'ok': True, 'technician': {
         'id': user.id, 'name': user.full_name,
         'avatarInitials': ''.join(
@@ -274,7 +282,7 @@ def list_jobs():
     scope = request.args.get('scope', 'all')
     q = Booking.query.filter_by(technician_id=session['user_id'])
     if scope == 'active':
-        q = q.filter(Booking.status.notin_(['completed', 'cancelled']))
+        q = q.filter(Booking.status.notin_(['completed', 'released', 'cancelled']))
     jobs = q.order_by(Booking.assigned_at.desc()).all()
     return jsonify({'ok': True, 'jobs': [_job_to_dict(b) for b in jobs]})
 
@@ -287,12 +295,12 @@ def job_stats():
     return jsonify({'ok': True, 'stats': {
         'total':       len(all_jobs),
         'active':      sum(1 for b in all_jobs
-                           if b.status not in ('completed', 'cancelled')),
+                           if b.status not in ('completed', 'released', 'cancelled')),
         'accepted':    sum(1 for b in all_jobs
                            if b.status in ('pending', 'confirmed')),
         'on_repair':   sum(1 for b in all_jobs if b.status == 'in_progress'),
         'ready':       sum(1 for b in all_jobs if b.status == 'completed'),
-        'released':    sum(1 for b in all_jobs if b.status == 'completed'),
+        'released':    sum(1 for b in all_jobs if b.status == 'released'),
         'on_hold':     0,
         'homeService': sum(1 for b in all_jobs if not b.is_in_shop),
         'inShop':      sum(1 for b in all_jobs if b.is_in_shop),
@@ -351,7 +359,8 @@ def advance_job(job_id):
     db.session.commit()
 
     create_notification(b.user_id, 'Repair Status Updated',
-                        f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.', 'info')
+                        f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.', 'info',
+                        role='customer')
     if not request.is_json:
         return redirect(url_for('technician.job_detail', job_id=b.id))
     return jsonify({'ok': True, 'job': _job_to_dict(b)})
@@ -365,12 +374,15 @@ def save_notes(job_id):
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
 
     body = request.get_json(silent=True) or {}
-    if body.get('diagnosis'):
-        b.description = body['diagnosis']
+    # Notes go in the job log. booking.description is the customer's own
+    # problem report and must never be overwritten by the technician.
+    note = (body.get('note') or body.get('diagnosis') or '').strip()
+    if not note:
+        return jsonify({'ok': False, 'reason': 'Note text is required.'}), 400
     db.session.add(JobLog(
         booking_id=b.id, at=_now(),
         by_name=session.get('username', 'Technician'),
-        action='note', text='Repair notes updated.',
+        action='note', text=note[:2000],
     ))
     db.session.commit()
     return jsonify({'ok': True})
@@ -514,7 +526,25 @@ def job_report(job_id):
         body = request.form if is_form else (request.get_json(silent=True) or {})
         action = body.get('action', 'submit')
 
-        r = ServiceReport.query.filter_by(booking_id=job_id).first()
+        r = ServiceReport.query.filter_by(booking_id=job_id)\
+            .order_by(ServiceReport.id.desc()).first()
+
+        def fail(msg):
+            if is_form:
+                flash(msg, 'danger')
+                return redirect(url_for('technician.report_form', job_id=job_id))
+            return jsonify({'ok': False, 'reason': msg}), 400
+
+        if b.status not in REPORTABLE_STATUSES:
+            return fail('A service report can only be written while the job is in progress.')
+        if action == 'submit' and b.status != 'in_progress':
+            return fail('Start the repair before submitting the final report.')
+        try:
+            hours = float(body.get('hoursSpent') or 0)
+        except (TypeError, ValueError):
+            return fail('Hours spent must be a number.')
+        if not 0 <= hours <= 1000:
+            return fail('Hours spent must be between 0 and 1000.')
 
         # Submitted reports are permanently read-only.
         if r and r.status == 'submitted':
@@ -533,10 +563,13 @@ def job_report(job_id):
         r.updated_at = _now()
         if r.status == 'submitted' and not r.submitted_at:
             r.submitted_at = _now()
-        r.diagnosis = body.get('diagnosis', '')
+        # Only overwrite the diagnosis when the form actually sent one, so a
+        # report form without that field can't wipe the saved diagnosis.
+        if 'diagnosis' in body:
+            r.diagnosis = body.get('diagnosis', '')
         r.tests = body.get('tests', '')
         r.work_performed = body.get('workPerformed', '')
-        r.hours_spent = float(body.get('hoursSpent') or 0)
+        r.hours_spent = hours
         r.outcome = body.get('outcome', 'fixed')
         r.outcome_notes = body.get('outcomeNotes', '')
         r.recommendations = body.get('recommendations', '')
@@ -559,13 +592,9 @@ def job_report(job_id):
         db.session.commit()
 
         if r.status == 'submitted':
-            for a in User.query.filter_by(role='admin', is_active=True).all():
-                create_notification(
-                    a.id,
-                    'Service Report Submitted',
-                    f'{b.booking_number}: report submitted by {session.get("username")}.',
-                    'info'
-                )
+            notify_admins('Service Report Submitted',
+                          f'{b.booking_number}: report submitted by {session.get("username")}.',
+                          'info')
 
         if is_form:
             if new_status:
@@ -576,7 +605,8 @@ def job_report(job_id):
         return jsonify({'ok': True, 'report': {'id': r.id, 'status': r.status},
                         'auto_advanced': bool(new_status), 'new_status': new_status})
 
-    r = ServiceReport.query.filter_by(booking_id=job_id).first()
+    r = ServiceReport.query.filter_by(booking_id=job_id)\
+        .order_by(ServiceReport.id.desc()).first()
     if not r:
         return jsonify({'ok': True, 'report': None})
     return jsonify({'ok': True, 'report': {
@@ -588,6 +618,116 @@ def job_report(job_id):
         'recommendations': r.recommendations,
         'photosNote': r.photos_note, 'adminNote': r.admin_note,
     }})
+
+
+# ---------------------------------------------------------------------------
+# CUSTOMER APPROVAL (extra work / cost found during the repair)
+# ---------------------------------------------------------------------------
+# While a request is pending the job sits at 'on_hold'. The customer answers
+# from their Monitor Device page (app.api_booking_approval_respond); either
+# answer, or the technician withdrawing it, resumes the job.
+
+APPROVAL_FROM_STATUSES = ('diagnosis_pending', 'in_progress')
+
+
+def resume_status(b):
+    """Where a job goes when it leaves 'on_hold'."""
+    return 'in_progress' if _diagnosis_saved(b) else 'diagnosis_pending'
+
+
+def approval_dict(a):
+    if not a:
+        return None
+    return {
+        'id': a.id, 'jobId': a.booking_id, 'status': a.status,
+        'requestedAt': a.requested_at, 'respondedAt': a.responded_at,
+        'findings': a.findings, 'proposedWork': a.proposed_work,
+        'additionalCost': float(a.additional_cost or 0),
+        'extraDays': a.extra_days or 0,
+        'customerResponse': a.customer_response,
+    }
+
+
+@technician_api_bp.route('/jobs/<int:job_id>/approval', methods=['GET', 'POST'])
+@technician_required
+def job_approval(job_id):
+    b = Booking.query.get_or_404(job_id)
+    if b.technician_id != session['user_id']:
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    pending = ApprovalRequest.query.filter_by(booking_id=b.id, status='pending').first()
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'approval': approval_dict(pending)})
+
+    is_form = not request.is_json
+    body = request.form if is_form else (request.get_json(silent=True) or {})
+
+    def fail(msg):
+        if is_form:
+            flash(msg, 'danger')
+            return redirect(url_for('technician.job_detail', job_id=b.id))
+        return jsonify({'ok': False, 'reason': msg}), 400
+
+    if b.status not in APPROVAL_FROM_STATUSES:
+        return fail('Customer approval can only be requested during diagnosis or repair.')
+    if pending:
+        return fail('An approval request is already waiting for the customer.')
+    findings = (body.get('findings') or '').strip()
+    proposed = (body.get('proposedWork') or body.get('proposed_work') or '').strip()
+    if len(findings) < 10 or len(proposed) < 10:
+        return fail('Describe what you found and the work you propose (at least 10 characters each).')
+    try:
+        cost = round(float(body.get('additionalCost') or body.get('additional_cost') or 0), 2)
+        days = int(body.get('extraDays') or body.get('extra_days') or 0)
+    except (TypeError, ValueError):
+        return fail('Extra cost and extra days must be numbers.')
+    if not 0 <= cost <= 1_000_000 or not 0 <= days <= 60:
+        return fail('Extra cost must be 0 to 1,000,000 and extra days 0 to 60.')
+
+    a = ApprovalRequest(booking_id=b.id, technician_id=session['user_id'], requested_at=_now(),
+                        findings=findings[:4000], proposed_work=proposed[:4000],
+                        additional_cost=cost, extra_days=days, status='pending')
+    db.session.add(a)
+    b.status = 'on_hold'
+    b.updated_at = datetime.utcnow()
+    db.session.add(JobLog(booking_id=b.id, at=_now(), by_name=session.get('username', 'Technician'),
+                          action='approval',
+                          text=f'Customer approval requested: {proposed[:150]} '
+                               f'(extra ₱{cost:,.2f}, +{days} day(s)). Job on hold.'))
+    db.session.commit()
+    create_notification(
+        b.user_id, 'Your Approval Is Needed',
+        f'Your technician found something on {b.booking_number} and needs your OK before continuing: '
+        f'{proposed[:200]} Extra cost: ₱{cost:,.2f}. Open Monitor Device to approve or decline.',
+        'warning', role='customer')
+    if is_form:
+        flash('Approval request sent. The job is on hold until the customer answers.', 'success')
+        return redirect(url_for('technician.job_detail', job_id=b.id))
+    return jsonify({'ok': True, 'approval': approval_dict(a), 'new_status': b.status})
+
+
+@technician_api_bp.route('/approvals/<int:approval_id>/withdraw', methods=['POST'])
+@technician_required
+def withdraw_approval(approval_id):
+    a = ApprovalRequest.query.get_or_404(approval_id)
+    b = db.session.get(Booking, a.booking_id)
+    if not b or b.technician_id != session['user_id']:
+        abort(404)
+    if a.status != 'pending':
+        flash('That request was already answered.', 'danger')
+        return redirect(url_for('technician.job_detail', job_id=b.id))
+    a.status = 'withdrawn'
+    a.responded_at = _now()
+    if b.status == 'on_hold':
+        b.status = resume_status(b)
+        b.updated_at = datetime.utcnow()
+    db.session.add(JobLog(booking_id=b.id, at=_now(), by_name=session.get('username', 'Technician'),
+                          action='approval', text='Approval request withdrawn. Work resumed.'))
+    db.session.commit()
+    create_notification(b.user_id, 'Approval No Longer Needed',
+                        f'The approval request on {b.booking_number} was withdrawn. No action needed.', 'info',
+                        role='customer')
+    flash('Request withdrawn. The job has resumed.', 'success')
+    return redirect(url_for('technician.job_detail', job_id=b.id))
 
 
 # ---------------------------------------------------------------------------
@@ -635,13 +775,9 @@ def incidents():
         db.session.add(r)
         db.session.commit()
 
-        for a in User.query.filter_by(role='admin', is_active=True).all():
-            create_notification(
-                a.id,
-                'Incident Reported',
-                f'Incident #{r.id} was reported by {session.get("username", "Technician")}.',
-                'warning'
-            )
+        notify_admins('Incident Reported',
+                      f'Incident #{r.id} was reported by {session.get("username", "Technician")}.',
+                      'warning')
 
         if is_form:
             flash(f'Incident {r.id} submitted to management.', 'success')
@@ -700,7 +836,7 @@ def serve_upload(upload_id):
 @technician_required
 def notifications():
     from app import Notification
-    rows = Notification.query.filter_by(user_id=session['user_id']) \
+    rows = Notification.query.filter_by(user_role='technician', user_id=session['user_id']) \
         .order_by(Notification.created_at.desc()).limit(20).all()
     return jsonify({'ok': True, 'notifications': [{
         'id': n.id, 'title': n.title, 'message': n.message,
@@ -714,7 +850,7 @@ def notifications():
 def notifications_read():
     from app import Notification
     Notification.query.filter_by(
-        user_id=session['user_id'], is_read=False
+        user_role='technician', user_id=session['user_id'], is_read=False
     ).update({'is_read': True})
     db.session.commit()
     return jsonify({'ok': True})

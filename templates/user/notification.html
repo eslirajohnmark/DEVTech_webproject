@@ -213,6 +213,12 @@
     // NOTIFICATION DETAILS
     // ============================================
 
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     function viewNotificationDetails(notificationId) {
         const modal = document.getElementById('notificationDetailsModal');
         const content = document.getElementById('notificationDetailsContent');
@@ -237,7 +243,11 @@
         const title = card.querySelector('.user-notification-card-title')?.textContent || 'Notification';
         const message = card.querySelector('.user-notification-card-message')?.textContent || '';
         const time = card.querySelector('.user-notification-card-time')?.textContent || '';
-        const type = card.dataset.type || 'info';
+        const type = ['info', 'success', 'warning', 'error'].includes(card.dataset.type) ? card.dataset.type : 'info';
+        // textContent is decoded text; escape it again before it goes into innerHTML.
+        const safeTitle = escapeHtml(title);
+        const safeMessage = escapeHtml(message);
+        const safeTime = escapeHtml(time);
         const isRejection = type === 'error' || title.includes('Rejected') || title.includes('Rejection');
         
         // Build HTML
@@ -248,8 +258,8 @@
                         <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}"></i>
                     </div>
                     <div>
-                        <h4 style="margin:0;">${title}</h4>
-                        <small style="color:var(--user-text-muted);"><i class="fas fa-clock"></i> ${time}</small>
+                        <h4 style="margin:0;">${safeTitle}</h4>
+                        <small style="color:var(--user-text-muted);"><i class="fas fa-clock"></i> ${safeTime}</small>
                     </div>
                 </div>
         `;
@@ -264,7 +274,7 @@
                     <h4 style="color:var(--danger); margin-bottom:0.5rem;">
                         <i class="fas fa-exclamation-triangle"></i> Request Rejected
                     </h4>
-                    <p style="color:var(--user-text-secondary); white-space:pre-wrap; line-height:1.6;">${message}</p>
+                    <p style="color:var(--user-text-secondary); white-space:pre-wrap; line-height:1.6;">${safeMessage}</p>
                     ${bookingNumber ? `
                         <div style="margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid var(--user-border);">
                             <small style="color:var(--user-text-muted);">
@@ -289,7 +299,7 @@
         } else {
             html += `
                 <div style="padding:0.5rem 0;">
-                    <p style="color:var(--user-text-secondary); white-space:pre-wrap; line-height:1.6;">${message}</p>
+                    <p style="color:var(--user-text-secondary); white-space:pre-wrap; line-height:1.6;">${safeMessage}</p>
                 </div>
             `;
             actionBtn.style.display = 'none';
@@ -446,7 +456,7 @@
         toast.className = `user-toast ${type}`;
         toast.innerHTML = `
             <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
-            ${message}
+            ${escapeHtml(message)}
         `;
         document.body.appendChild(toast);
         setTimeout(() => {

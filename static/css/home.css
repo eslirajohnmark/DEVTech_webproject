@@ -2,6 +2,37 @@
    HOME PAGE STYLES
    ========================================== */
 
+/* ===== BASE (the home page loads only this stylesheet) ===== */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #0b1a2f;
+    background: #ffffff;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+}
+
+img, svg { max-width: 100%; }
+
+a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 3px solid rgba(37, 99, 235, 0.45);
+    outline-offset: 2px;
+}
+
+.hp-sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+}
+
 .hp-wrapper {
     max-width: 1280px;
     margin: 0 auto;
@@ -9,6 +40,274 @@
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+}
+
+/* ==========================================
+   HERO ANIMATION — "repair journey"
+   data-stage (0-5) on the scene is advanced by home.js and mirrors the
+   booking stages: Requested, Assigned, Diagnosis, On Repair,
+   Ready for Collection, Released.
+   ========================================== */
+.hp-repair-scene {
+    position: relative;
+    width: 100%;
+    min-height: 380px;
+    border-radius: 40px;
+    background:
+        radial-gradient(circle at 20% 15%, rgba(124, 58, 237, 0.16), transparent 45%),
+        radial-gradient(circle at 85% 90%, rgba(37, 99, 235, 0.18), transparent 50%),
+        linear-gradient(145deg, #eef2ff, #e0e7ff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 28px 120px;
+    overflow: hidden;
+}
+
+/* --- laptop --- */
+.hp-scene-laptop {
+    position: relative;
+    width: min(300px, 78%);
+    animation: hp-float 6s ease-in-out infinite;
+}
+.hp-scene-screen {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    border-radius: 14px 14px 4px 4px;
+    background: #0b1a2f;
+    border: 8px solid #1e293b;
+    overflow: hidden;
+    box-shadow: 0 24px 50px -18px rgba(15, 23, 42, 0.55);
+}
+.hp-scene-base {
+    height: 14px;
+    margin: 0 -9%;
+    border-radius: 0 0 16px 16px;
+    background: linear-gradient(#cbd5e1, #94a3b8);
+    box-shadow: 0 14px 24px -10px rgba(15, 23, 42, 0.4);
+}
+.hp-screen-lines {
+    position: absolute;
+    inset: 14% 12% auto;
+    display: grid;
+    gap: 9px;
+    opacity: 0.25;
+    transition: opacity 0.6s;
+}
+.hp-screen-lines span {
+    height: 7px;
+    border-radius: 6px;
+    background: #60a5fa;
+}
+.hp-screen-lines span:nth-child(2) { width: 70%; }
+.hp-screen-lines span:nth-child(3) { width: 85%; }
+.hp-screen-lines span:nth-child(4) { width: 50%; }
+
+.hp-screen-glitch,
+.hp-screen-ok {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 2.6rem;
+    transition: opacity 0.5s, transform 0.5s;
+}
+.hp-screen-glitch {
+    color: #f87171;
+    background: repeating-linear-gradient(0deg, rgba(248, 113, 113, 0.10) 0 3px, transparent 3px 7px);
+    animation: hp-glitch 1.2s steps(2) infinite;
+}
+.hp-screen-ok {
+    color: #fff;
+    opacity: 0;
+    transform: scale(0.6);
+}
+.hp-screen-ok i {
+    width: 72px;
+    height: 72px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    box-shadow: 0 0 0 10px rgba(34, 197, 94, 0.18);
+    font-size: 2rem;
+}
+.hp-screen-scan {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 30%;
+    top: -30%;
+    opacity: 0;
+    background: linear-gradient(transparent, rgba(96, 165, 250, 0.55), transparent);
+}
+
+/* --- the technician's tool + sparks --- */
+.hp-scene-tool {
+    position: absolute;
+    right: -14%;
+    bottom: 12%;
+    width: 54px;
+    height: 54px;
+    border-radius: 16px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-size: 1.35rem;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    box-shadow: 0 12px 26px -8px rgba(37, 99, 235, 0.6);
+    opacity: 0;
+    transform: translateY(14px) rotate(-12deg);
+    transition: opacity 0.4s, transform 0.4s;
+}
+.hp-scene-sparks span {
+    position: absolute;
+    right: 4%;
+    bottom: 30%;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fbbf24;
+    opacity: 0;
+}
+
+/* --- booking ticket card --- */
+.hp-scene-ticket {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    width: min(320px, calc(100% - 36px));
+    padding: 14px 16px 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 16px 40px -14px rgba(15, 23, 42, 0.35);
+    font-size: 0.85rem;
+}
+.hp-ticket-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #475569;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+.hp-ticket-live { color: #16a34a; }
+.hp-ticket-live i { font-size: 0.5rem; vertical-align: middle; animation: hp-pulse 1.6s ease-in-out infinite; }
+.hp-ticket-stage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 9px;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #0b1a2f;
+}
+.hp-ticket-stage i {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    color: #2563eb;
+    background: #eff6ff;
+    font-size: 0.85rem;
+}
+#sceneStageLabel { transition: opacity 0.25s; }
+.hp-ticket-bar {
+    height: 6px;
+    border-radius: 6px;
+    background: #e2e8f0;
+    overflow: hidden;
+}
+.hp-ticket-bar span {
+    display: block;
+    height: 100%;
+    width: 0%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #2563eb, #7c3aed);
+    transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hp-ticket-dots {
+    display: flex;
+    justify-content: space-between;
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+}
+.hp-ticket-dots li {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #cbd5e1;
+    transition: background 0.4s, transform 0.4s;
+}
+.hp-ticket-dots li.is-done { background: #2563eb; }
+.hp-ticket-dots li.is-current { background: #7c3aed; transform: scale(1.5); }
+
+/* --- stage-driven states --- */
+/* 2: diagnosis - a scan sweeps the screen */
+.hp-repair-scene[data-stage="2"] .hp-screen-scan { animation: hp-scan 1.3s linear infinite; }
+.hp-repair-scene[data-stage="2"] .hp-screen-glitch { opacity: 0.35; }
+/* 3: on repair - the tool works, sparks fly */
+.hp-repair-scene[data-stage="3"] .hp-screen-glitch { opacity: 0; }
+.hp-repair-scene[data-stage="3"] .hp-screen-lines { opacity: 0.6; }
+.hp-repair-scene[data-stage="3"] .hp-scene-tool {
+    opacity: 1;
+    transform: none;
+    animation: hp-wrench 0.9s ease-in-out infinite;
+}
+.hp-repair-scene[data-stage="3"] .hp-scene-sparks span { animation: hp-spark 0.9s ease-out infinite; }
+.hp-repair-scene[data-stage="3"] .hp-scene-sparks span:nth-child(2) { animation-delay: 0.3s; }
+.hp-repair-scene[data-stage="3"] .hp-scene-sparks span:nth-child(3) { animation-delay: 0.6s; }
+/* 4-5: fixed */
+.hp-repair-scene[data-stage="4"] .hp-screen-glitch,
+.hp-repair-scene[data-stage="5"] .hp-screen-glitch { opacity: 0; animation: none; }
+.hp-repair-scene[data-stage="4"] .hp-screen-lines,
+.hp-repair-scene[data-stage="5"] .hp-screen-lines { opacity: 0; }
+.hp-repair-scene[data-stage="4"] .hp-screen-ok,
+.hp-repair-scene[data-stage="5"] .hp-screen-ok { opacity: 1; transform: scale(1); }
+
+/* paused while off-screen or in a background tab */
+.hp-repair-scene.is-paused,
+.hp-repair-scene.is-paused * { animation-play-state: paused !important; }
+
+@keyframes hp-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+@keyframes hp-glitch {
+    0% { transform: translateX(0); }
+    50% { transform: translateX(-2px); }
+    100% { transform: translateX(2px); }
+}
+@keyframes hp-scan {
+    0% { top: -30%; opacity: 1; }
+    100% { top: 100%; opacity: 1; }
+}
+@keyframes hp-wrench {
+    0%, 100% { transform: rotate(-14deg); }
+    50% { transform: rotate(18deg); }
+}
+@keyframes hp-spark {
+    0% { opacity: 1; transform: translate(0, 0) scale(1); }
+    100% { opacity: 0; transform: translate(-26px, -22px) scale(0.3); }
+}
+@keyframes hp-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
+
+@media (max-width: 768px) {
+    .hp-repair-scene { min-height: 330px; padding: 36px 18px 112px; border-radius: 28px; }
+    .hp-scene-tool { right: -6%; }
+}
+
+/* A calm, finished state for people who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+    .hp-repair-scene,
+    .hp-repair-scene * { animation: none !important; transition: none !important; }
 }
 
 /* ===== NAVIGATION ===== */

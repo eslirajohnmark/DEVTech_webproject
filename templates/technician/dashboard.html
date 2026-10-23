@@ -12,7 +12,7 @@
             Good to see you, {{ technician.full_name }}.
         </h2>
         <p style="font-size:0.81rem; color:var(--t-text-muted); margin-top:0.15rem;">
-            {{ active_count }} active job{{ '' if active_count == 1 else 's' }} today.
+            {{ active_count }} active job{{ '' if active_count == 1 else 's' }}{% if todays_jobs %}, {{ todays_jobs|length }} scheduled today{% endif %}.
         </p>
     </div>
 
@@ -42,7 +42,7 @@
             <div class="tech-stat-icon"><i class="fas fa-circle-check"></i></div>
             <div class="tech-stat-body">
                 <span class="tech-stat-num">{{ released }}</span>
-                <span class="tech-stat-label">Completed</span>
+                <span class="tech-stat-label">Released</span>
             </div>
         </div>
     </div>
@@ -61,7 +61,7 @@
                         <div class="tech-job-customer">{{ job.user.full_name }}</div>
                         <div class="tech-job-service">{{ job.service.name }}</div>
                     </div>
-                    <span class="tech-pill tech-pill--info">{{ job.status }}</span>
+                    <span class="tech-pill tech-pill--{{ {'on_hold': 'danger', 'completed': 'ok', 'released': 'ok', 'diagnosis_pending': 'warn', 'in_progress': 'warn'}.get(job.status, 'info') }}">{{ status_labels.get(job.status, job.status|replace('_', ' ')|title) }}</span>
                 </div>
                 <div class="tech-job-meta">
                     <span class="tech-chip">
@@ -96,7 +96,7 @@
                         <span class="tech-job-id">{{ job.booking_number }}</span>
                         <div class="tech-job-customer">{{ job.user.full_name }}</div>
                     </div>
-                    <span class="tech-pill tech-pill--info">{{ job.status }}</span>
+                    <span class="tech-pill tech-pill--{{ {'on_hold': 'danger', 'completed': 'ok', 'released': 'ok', 'diagnosis_pending': 'warn', 'in_progress': 'warn'}.get(job.status, 'info') }}">{{ status_labels.get(job.status, job.status|replace('_', ' ')|title) }}</span>
                 </div>
                 <p class="tech-job-desc">{{ job.description }}</p>
                 <div class="tech-job-meta">

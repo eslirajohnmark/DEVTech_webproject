@@ -9,6 +9,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
 </head>
 <body class="tech-login-page tech-login-page--split">
 
@@ -95,8 +97,8 @@
                     <input type="checkbox" name="remember_me" />
                     <span>Keep me signed in</span>
                 </label>
-                <a href="{{ url_for('home') }}" class="tech-auth-link">
-                    Back to DEVTech
+                <a href="{{ url_for('forgot_password') }}" class="tech-auth-link">
+                    Forgot password?
                 </a>
             </div>
 
@@ -115,13 +117,14 @@
             <i class="fas fa-user-plus"></i> Create an account
         </a>
 
-        <p class="tech-login-note">
-            Demo accounts — <code>TECH-0001</code> / <code>1234</code>
+        <p style="text-align:center; margin-top:1rem;">
+            <a href="{{ url_for('home') }}" class="tech-auth-link">Back to DEVTech</a>
         </p>
+
     </div>
 </section>
 
-<script>
+<script nonce="{{ tech_nonce }}">
     // Show / hide password
     document.querySelectorAll('.tech-password-toggle').forEach(function (btn) {
         btn.addEventListener('click', function () {

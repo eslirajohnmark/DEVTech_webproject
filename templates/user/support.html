@@ -15,7 +15,7 @@
         </a>
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
             <i class="fas fa-bell"></i>
-            <span class="user-badge">{{ notifications|length if notifications else 0 }}</span>
+            <span class="user-badge" data-live-count="notifications">{{ notifications|length if notifications else 0 }}</span>
         </a>
     </div>
 </div>
@@ -41,8 +41,8 @@
         <!-- Contact Form -->
         <div class="user-support-form">
             <h2><i class="fas fa-paper-plane"></i> Send a Support Request</h2>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <form method="POST" action="{{ url_for('support') }}" id="supportForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="user-form-group">
                     <label for="category">Category <span class="user-required-star">*</span></label>
                     <select id="category" name="category" class="user-form-input" required>
@@ -141,10 +141,11 @@
             
             <div class="user-support-contact">
                 <h4><i class="fas fa-phone"></i> Contact Information</h4>
-                <p><strong>Phone:</strong> 0917 123 4567</p>
-                <p><strong>Email:</strong> support@devtech.com</p>
-                <p><strong>Store Hours:</strong> Mon-Sat, 9:00 AM - 6:00 PM</p>
-                <p><strong>Location:</strong> Tacloban City, Leyte</p>
+                {% if site().phone %}<p><strong>Phone:</strong> <a href="tel:{{ site().phone|replace(' ', '') }}">{{ site().phone }}</a></p>{% endif %}
+                {% if site().email %}<p><strong>Email:</strong> <a href="mailto:{{ site().email }}">{{ site().email }}</a></p>{% endif %}
+                {% if site().hours %}<p><strong>Store Hours:</strong> {{ site().hours }}</p>{% endif %}
+                <p><strong>Location:</strong> {{ site().address or 'Tacloban City, Leyte' }}</p>
+                <p><strong>Messages:</strong> <a href="{{ url_for('messages') }}">Message our team</a> any time.</p>
             </div>
         </div>
     </div>
@@ -355,15 +356,6 @@
         });
     }, 5000);
 
-    // ============================================
-    // KEYBOARD SHORTCUT: Ctrl + Shift + L
-    // ============================================
-    document.addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-            e.preventDefault();
-            window.location.href = '/admin/login';
-        }
-    });
 
     console.log('✅ Support page initialized');
 
@@ -410,7 +402,11 @@
         },
         {
             keywords: ['contact', 'phone', 'number', 'email', 'address', 'location', 'hours', 'open'],
-            answer: 'You can reach us at 0917 123 4567 or support@devtech.com. We\'re open Mon-Sat, 9:00 AM - 6:00 PM, located in Tacloban City, Leyte.'
+            answer: {{ ('You can message our team from the Messages page'
+                        ~ ((', call ' ~ site().phone) if site().phone else '')
+                        ~ ((', or email ' ~ site().email) if site().email else '')
+                        ~ '. We are in ' ~ (site().address or 'Tacloban City, Leyte')
+                        ~ ((', open ' ~ site().hours) if site().hours else '') ~ '.')|tojson }}
         },
         {
             keywords: ['ticket', 'human', 'agent', 'representative', 'real person', 'talk to someone'],
@@ -517,11 +513,16 @@
         }
     }
 
-    document.getElementById('chatbotInput').addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            chatbotSend();
-        }
+    // The chatbot markup comes after this script, so wait for the page.
+    document.addEventListener('DOMContentLoaded', function () {
+        const chatInput = document.getElementById('chatbotInput');
+        if (!chatInput) return;
+        chatInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                chatbotSend();
+            }
+        });
     });
 </script>
 

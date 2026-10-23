@@ -10,10 +10,7 @@
         <p>Manage system configuration and preferences</p>
     </div>
     <div class="admin-top-actions">
-        <button class="admin-icon-btn" onclick="showAdminToast('Notifications')">
-            <i class="fas fa-bell"></i>
-            <span class="admin-badge">3</span>
-        </button>
+        {% include 'admin/_notification_bell.html' %}
         <button class="admin-btn admin-btn-primary" onclick="saveAllSettings()">
             <i class="fas fa-save"></i> Save All
         </button>
@@ -36,7 +33,7 @@
                     <span class="admin-setting-desc">The name displayed throughout the system</span>
                 </div>
                 <div class="admin-setting-control">
-                    <input type="text" value="DEVTech Computer Services" class="admin-setting-input" id="system_name" />
+                    <input type="text" value="{{ settings.get('system_name', 'DEVTech Computer Services') }}" class="admin-setting-input" id="system_name" maxlength="100" />
                 </div>
             </div>
             <div class="admin-setting-item">
@@ -45,7 +42,7 @@
                     <span class="admin-setting-desc">Primary email for system notifications</span>
                 </div>
                 <div class="admin-setting-control">
-                    <input type="email" value="admin@devtech.com" class="admin-setting-input" id="system_email" />
+                    <input type="email" value="{{ settings.get('system_email', '') }}" class="admin-setting-input" id="system_email" maxlength="120" />
                 </div>
             </div>
             <div class="admin-setting-item">
@@ -55,9 +52,10 @@
                 </div>
                 <div class="admin-setting-control">
                     <select class="admin-setting-select" id="default_currency">
-                        <option value="PHP" selected>🇵🇭 PHP (₱)</option>
-                        <option value="USD">🇺🇸 USD ($)</option>
-                        <option value="EUR">🇪🇺 EUR (€)</option>
+                        {% set cur = settings.get('default_currency', 'PHP') %}
+                        <option value="PHP" {% if cur == 'PHP' %}selected{% endif %}>🇵🇭 PHP (₱)</option>
+                        <option value="USD" {% if cur == 'USD' %}selected{% endif %}>🇺🇸 USD ($)</option>
+                        <option value="EUR" {% if cur == 'EUR' %}selected{% endif %}>🇪🇺 EUR (€)</option>
                     </select>
                 </div>
             </div>
@@ -68,10 +66,47 @@
                 </div>
                 <div class="admin-setting-control">
                     <select class="admin-setting-select" id="timezone">
-                        <option value="Asia/Manila" selected>Asia/Manila (GMT+8)</option>
-                        <option value="Asia/Singapore">Asia/Singapore (GMT+8)</option>
-                        <option value="America/New_York">America/New_York (GMT-4)</option>
+                        {% set tz = settings.get('timezone', 'Asia/Manila') %}
+                        <option value="Asia/Manila" {% if tz == 'Asia/Manila' %}selected{% endif %}>Asia/Manila (GMT+8)</option>
+                        <option value="Asia/Singapore" {% if tz == 'Asia/Singapore' %}selected{% endif %}>Asia/Singapore (GMT+8)</option>
+                        <option value="America/New_York" {% if tz == 'America/New_York' %}selected{% endif %}>America/New_York (GMT-4)</option>
                     </select>
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Contact Phone</span>
+                    <span class="admin-setting-desc">Shown to customers. Leave blank to hide.</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('contact_phone', '') }}" class="admin-setting-input" id="contact_phone" maxlength="40" placeholder="e.g. 0917 000 0000" />
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Contact Email</span>
+                    <span class="admin-setting-desc">Public support email. Blank uses the System Email.</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="email" value="{{ settings.get('contact_email', '') }}" class="admin-setting-input" id="contact_email" maxlength="120" placeholder="support@yourshop.com" />
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Shop Address</span>
+                    <span class="admin-setting-desc">Shown on the home and support pages.</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('contact_address', '') }}" class="admin-setting-input" id="contact_address" maxlength="200" placeholder="Street, Tacloban City, Leyte" />
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Business Hours</span>
+                    <span class="admin-setting-desc">e.g. Mon-Sat, 8:00 AM - 6:00 PM</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('business_hours', '') }}" class="admin-setting-input" id="business_hours" maxlength="100" placeholder="Mon-Sat, 8:00 AM - 6:00 PM" />
                 </div>
             </div>
         </div>
@@ -194,7 +229,7 @@
                 </div>
                 <div class="admin-setting-control">
                     <label class="admin-toggle">
-                        <input type="checkbox" checked />
+                        <input type="checkbox" id="enable_gcash" data-setting {% if settings.get('enable_gcash', 'true') == 'true' %}checked{% endif %} />
                         <span class="admin-toggle-slider"></span>
                     </label>
                 </div>
@@ -205,7 +240,16 @@
                     <span class="admin-setting-desc">Registered GCash account number</span>
                 </div>
                 <div class="admin-setting-control">
-                    <input type="text" value="0917 123 4567" class="admin-setting-input" id="gcash_account" />
+                    <input type="text" value="{{ settings.get('gcash_account', '') }}" class="admin-setting-input" id="gcash_account" maxlength="30" />
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">GCash Account Name</span>
+                    <span class="admin-setting-desc">Name customers should see when paying.</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('gcash_name', '') }}" class="admin-setting-input" id="gcash_name" maxlength="100" placeholder="Account holder name" />
                 </div>
             </div>
             <div class="admin-setting-item">
@@ -215,7 +259,7 @@
                 </div>
                 <div class="admin-setting-control">
                     <label class="admin-toggle">
-                        <input type="checkbox" checked />
+                        <input type="checkbox" id="enable_cod" data-setting {% if settings.get('enable_cod', 'true') == 'true' %}checked{% endif %} />
                         <span class="admin-toggle-slider"></span>
                     </label>
                 </div>
@@ -226,7 +270,7 @@
                     <span class="admin-setting-desc">Additional service fee percentage</span>
                 </div>
                 <div class="admin-setting-control">
-                    <input type="text" value="5%" class="admin-setting-input" style="width:100px;" id="service_fee" />
+                    <input type="text" value="{{ settings.get('service_fee', '5') }}" class="admin-setting-input" style="width:100px;" id="service_fee" inputmode="decimal" title="Percentage, 0-100" />
                 </div>
             </div>
         </div>
@@ -250,15 +294,6 @@
             </div>
             <div class="admin-setting-item">
                 <div class="admin-setting-label">
-                    <span class="admin-setting-name">Version</span>
-                    <span class="admin-setting-desc">Current system version</span>
-                </div>
-                <div class="admin-setting-control">
-                    <span class="admin-version">v2.4.1</span>
-                </div>
-            </div>
-            <div class="admin-setting-item">
-                <div class="admin-setting-label">
                     <span class="admin-setting-name">Maintenance Mode</span>
                     <span class="admin-setting-desc">Put system into maintenance</span>
                 </div>
@@ -275,7 +310,7 @@
                     <span class="admin-setting-desc">Create a system backup</span>
                 </div>
                 <div class="admin-setting-control">
-                    <button class="admin-btn admin-btn-primary" onclick="showAdminToast('Backup initiated...')">
+                    <button class="admin-btn admin-btn-primary" onclick="notAvailable()">
                         <i class="fas fa-download"></i> Backup Now
                     </button>
                 </div>
@@ -305,11 +340,37 @@
 </div>
 
 <script>
-    function saveAllSettings() {
-        showAdminToast('💾 Saving all settings...');
-        setTimeout(() => {
-            showAdminToast('✅ All settings saved successfully!');
-        }, 1000);
+    const SETTING_FIELDS = ['system_name', 'system_email', 'default_currency', 'timezone',
+                            'contact_phone', 'contact_email', 'contact_address', 'business_hours',
+                            'gcash_account', 'gcash_name', 'service_fee', 'enable_gcash', 'enable_cod'];
+
+    async function saveAllSettings() {
+        const payload = {};
+        SETTING_FIELDS.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            payload[id] = el.type === 'checkbox' ? String(el.checked) : el.value.trim();
+        });
+        try {
+            const res = await fetch('{{ url_for("admin_settings_update") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            showAdminToast(data.success ? '✅ Settings saved' : ('⚠️ ' + (data.message || 'Could not save settings.')));
+        } catch (e) {
+            showAdminToast('⚠️ Could not reach the server. Please try again.');
+        }
+    }
+
+    // The controls below have no backend yet; say so instead of pretending
+    // the action happened.
+    function notAvailable() {
+        showAdminToast('This option is not available yet.');
     }
 
     function selectTheme(theme) {
@@ -329,40 +390,20 @@
         showAdminToast(`🎨 Primary color updated`);
     }
 
-    function confirmReset() {
-        if (confirm('⚠️ Are you sure you want to reset all settings to default? This action cannot be undone.')) {
-            showAdminToast('🔄 Resetting all settings...');
-            setTimeout(() => {
-                showAdminToast('✅ Settings reset to default');
-            }, 1500);
-        }
-    }
+    function confirmReset() { notAvailable(); }
+    function confirmClearData() { notAvailable(); }
+    function confirmDeactivate() { notAvailable(); }
 
-    function confirmClearData() {
-        if (confirm('⚠️ Are you sure you want to clear all system data? This action is irreversible!')) {
-            if (confirm('⚠️⚠️ FINAL WARNING: This will permanently delete all data. Are you absolutely sure?')) {
-                showAdminToast('🗑️ Clearing all data...');
-                setTimeout(() => {
-                    showAdminToast('⚠️ All data has been cleared');
-                }, 1500);
-            }
-        }
-    }
-
-    function confirmDeactivate() {
-        if (confirm('⚠️ Are you sure you want to deactivate the system? This will make it inaccessible.')) {
-            showAdminToast('🔒 Deactivating system...');
-            setTimeout(() => {
-                showAdminToast('⚠️ System has been deactivated');
-            }, 1500);
-        }
-    }
-
+    // Only toggles backed by a real setting can be changed; the rest are disabled.
     document.querySelectorAll('.admin-toggle input').forEach(toggle => {
+        if (!toggle.hasAttribute('data-setting')) {
+            toggle.disabled = true;
+            toggle.closest('.admin-toggle').title = 'Not available yet';
+            return;
+        }
         toggle.addEventListener('change', function() {
             const label = this.closest('.admin-setting-item').querySelector('.admin-setting-name');
-            const state = this.checked ? 'enabled' : 'disabled';
-            showAdminToast(`${label.textContent} ${state}`);
+            showAdminToast(`${label.textContent} ${this.checked ? 'enabled' : 'disabled'} - click Save All to apply`);
         });
     });
 </script>

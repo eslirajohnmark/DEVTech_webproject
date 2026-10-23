@@ -1,0 +1,848 @@
+/* ==========================================================================
+   DEVTech — profile look (shared by the customer, technician and admin portals)
+   Avatars, banners, the "Profile look" editor, the sidebar profile card and
+   the customer sidebar promo. Loaded after each portal's own stylesheet.
+   ========================================================================== */
+
+/* ---- Theme bridge: map each portal's tokens onto --pf-* ---------------- */
+.user-dashboard-wrapper, .pf-scope-user {
+    --pf-surface: var(--user-card, #fff);
+    --pf-surface-2: var(--user-bg, #f8fafc);
+    --pf-text: var(--user-text-primary, #0f172a);
+    --pf-muted: var(--user-text-muted, #94a3b8);
+    --pf-soft: var(--user-text-secondary, #475569);
+    --pf-border: var(--user-border, #e2e8f0);
+    --pf-accent: var(--user-primary, #2563eb);
+    --pf-accent-soft: rgba(37, 99, 235, 0.12);
+    --pf-on-accent: #fff;
+    --pf-radius: 16px;
+}
+.admin-dashboard-wrapper, .pf-scope-admin {
+    --pf-surface: var(--dark-card, #111);
+    --pf-surface-2: var(--dark-input, #1a1a1a);
+    --pf-text: var(--text-primary, #e5e5e5);
+    --pf-muted: var(--text-muted, #666);
+    --pf-soft: var(--text-secondary, #888);
+    --pf-border: var(--dark-border-light, #2a2a2a);
+    --pf-accent: var(--primary, #00ff88);
+    --pf-accent-soft: rgba(0, 255, 136, 0.1);
+    --pf-on-accent: #03140b;
+    --pf-radius: 16px;
+}
+.tech-layout, .pf-scope-tech {
+    --pf-surface: var(--t-glass-strong, rgba(20, 28, 52, 0.62));
+    --pf-surface-2: var(--t-glass, rgba(20, 28, 52, 0.42));
+    --pf-text: var(--t-text, #eef2ff);
+    --pf-muted: var(--t-text-muted, #94a3b8);
+    --pf-soft: var(--t-text-soft, #cbd5e1);
+    --pf-border: var(--t-border, rgba(255, 255, 255, 0.12));
+    --pf-accent: var(--t-blue, #3b82f6);
+    --pf-accent-soft: var(--t-blue-soft, rgba(59, 130, 246, 0.14));
+    --pf-on-accent: #fff;
+    --pf-radius: 18px;
+}
+
+/* ---- Avatar ------------------------------------------------------------ */
+.pf-avatar {
+    --pf-size: 44px;
+    --pf-a: #2563eb;
+    --pf-b: #06b6d4;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: var(--pf-size);
+    height: var(--pf-size);
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--pf-a), var(--pf-b));
+    color: #fff;
+    font-weight: 800;
+    font-size: calc(var(--pf-size) * 0.38);
+    letter-spacing: -0.02em;
+    line-height: 1;
+    user-select: none;
+    isolation: isolate;
+}
+.pf-avatar img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+}
+.pf-avatar > i {
+    font-size: calc(var(--pf-size) * 0.42);
+    line-height: 1;
+}
+.pf-avatar--xs { --pf-size: 28px; }
+.pf-avatar--sm { --pf-size: 36px; }
+.pf-avatar--md { --pf-size: 44px; }
+.pf-avatar--lg { --pf-size: 76px; }
+.pf-avatar--xl { --pf-size: 112px; }
+
+.pf-c-ocean    { --pf-a: #2563eb; --pf-b: #06b6d4; }
+.pf-c-sunset   { --pf-a: #f97316; --pf-b: #ec4899; }
+.pf-c-forest   { --pf-a: #15803d; --pf-b: #84cc16; }
+.pf-c-grape    { --pf-a: #7c3aed; --pf-b: #c026d3; }
+.pf-c-ember    { --pf-a: #dc2626; --pf-b: #f59e0b; }
+.pf-c-mint     { --pf-a: #059669; --pf-b: #22d3ee; }
+.pf-c-gold     { --pf-a: #b45309; --pf-b: #facc15; }
+.pf-c-midnight { --pf-a: #1e293b; --pf-b: #64748b; }
+
+/* Frames: the gap colour matches whatever the avatar sits on. */
+.pf-avatar.pf-frame--ring  { box-shadow: 0 0 0 2px var(--pf-gap, var(--pf-surface, #fff)), 0 0 0 4px var(--pf-a); }
+.pf-avatar.pf-frame--glow  { box-shadow: 0 0 0 2px var(--pf-gap, var(--pf-surface, #fff)), 0 0 16px 3px var(--pf-a); }
+.pf-avatar.pf-frame--pulse { box-shadow: 0 0 0 2px var(--pf-gap, var(--pf-surface, #fff)), 0 0 0 4px var(--pf-b); }
+.pf-avatar.pf-frame--pulse::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid var(--pf-b);
+    animation: pf-pulse 2.2s ease-out infinite;
+    z-index: -1;
+}
+@keyframes pf-pulse {
+    0%   { transform: scale(1);    opacity: 0.8; }
+    100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* ---- Banners ----------------------------------------------------------- */
+.pf-banner { position: relative; background-color: #1e293b; overflow: hidden; }
+.pf-banner--aurora {
+    background:
+        radial-gradient(120% 140% at 10% 0%, rgba(45, 212, 191, 0.85), transparent 55%),
+        radial-gradient(90% 120% at 90% 20%, rgba(139, 92, 246, 0.9), transparent 60%),
+        radial-gradient(120% 120% at 50% 120%, rgba(37, 99, 235, 0.95), transparent 60%),
+        #0f172a;
+}
+.pf-banner--circuit {
+    background:
+        radial-gradient(circle at 20px 20px, rgba(250, 204, 21, 0.9) 2px, transparent 3px) 0 0 / 60px 60px,
+        linear-gradient(90deg, transparent 19px, rgba(250, 204, 21, 0.35) 19px 21px, transparent 21px) 0 0 / 60px 60px,
+        linear-gradient(0deg, transparent 39px, rgba(56, 189, 248, 0.3) 39px 41px, transparent 41px) 0 0 / 60px 60px,
+        linear-gradient(135deg, #0b1d3a, #12305e);
+}
+.pf-banner--sunset { background: linear-gradient(120deg, #f97316 0%, #ec4899 50%, #7c3aed 100%); }
+.pf-banner--ocean {
+    background:
+        radial-gradient(140% 90% at 50% 130%, rgba(34, 211, 238, 0.7), transparent 60%),
+        radial-gradient(80% 60% at 15% 10%, rgba(59, 130, 246, 0.6), transparent 70%),
+        linear-gradient(180deg, #0c4a6e, #082f49);
+}
+.pf-banner--nebula {
+    background:
+        radial-gradient(1px 1px at 20% 30%, #fff 50%, transparent 51%) 0 0 / 70px 70px,
+        radial-gradient(1px 1px at 60% 70%, rgba(255, 255, 255, 0.8) 50%, transparent 51%) 0 0 / 90px 90px,
+        radial-gradient(60% 90% at 25% 40%, rgba(236, 72, 153, 0.7), transparent 65%),
+        radial-gradient(60% 90% at 80% 60%, rgba(99, 102, 241, 0.75), transparent 65%),
+        #120a2a;
+}
+.pf-banner--blueprint {
+    background:
+        linear-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px) 0 0 / 22px 22px,
+        linear-gradient(90deg, rgba(255, 255, 255, 0.14) 1px, transparent 1px) 0 0 / 22px 22px,
+        linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px) 0 0 / 5.5px 5.5px,
+        linear-gradient(135deg, #1d4ed8, #1e3a8a);
+}
+.pf-banner--matrix {
+    background:
+        repeating-linear-gradient(90deg, transparent 0 14px, rgba(0, 255, 136, 0.16) 14px 16px),
+        repeating-linear-gradient(0deg, transparent 0 9px, rgba(0, 255, 136, 0.08) 9px 10px),
+        radial-gradient(100% 140% at 50% 0%, rgba(0, 255, 136, 0.35), transparent 60%),
+        #020a05;
+}
+.pf-banner--carbon {
+    background:
+        linear-gradient(27deg, #151515 5px, transparent 5px) 0 5px / 20px 20px,
+        linear-gradient(207deg, #151515 5px, transparent 5px) 10px 0 / 20px 20px,
+        linear-gradient(27deg, #222 5px, transparent 5px) 0 10px / 20px 20px,
+        linear-gradient(207deg, #222 5px, transparent 5px) 10px 5px / 20px 20px,
+        linear-gradient(90deg, #1b1b1b 10px, transparent 10px) 0 0 / 20px 20px,
+        linear-gradient(#1d1d1d 25%, #1a1a1a 25%, #1a1a1a 50%, transparent 50%,
+                        transparent 75%, #242424 75%, #242424) 0 0 / 20px 20px,
+        #131313;
+}
+
+/* ---- Profile hero (banner + avatar + name) used on every profile page --- */
+.pf-hero {
+    position: relative;
+    border-radius: var(--pf-radius);
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface);
+    overflow: hidden;
+    margin-bottom: 1.4rem;
+}
+.pf-hero-banner { height: 132px; }
+.pf-hero-body {
+    --pf-gap: var(--pf-surface);
+    display: flex;
+    align-items: flex-end;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+    padding: 0.9rem 1.5rem 1.3rem;
+    position: relative;
+}
+/* Only the avatar hangs over the banner; the name stays on the card surface. */
+.pf-hero-body > .pf-avatar {
+    border: 4px solid var(--pf-surface);
+    box-sizing: content-box;
+    margin-top: calc(var(--pf-size) * -0.55 - 0.9rem);
+    align-self: flex-start;
+}
+.pf-hero-text { flex: 1; min-width: 200px; padding-bottom: 0.2rem; }
+.pf-hero-text h2 {
+    margin: 0;
+    font-size: 1.45rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--pf-text);
+    line-height: 1.2;
+}
+.pf-hero-text .pf-hero-sub {
+    margin: 0.2rem 0 0;
+    color: var(--pf-soft);
+    font-size: 0.9rem;
+}
+.pf-hero-headline {
+    margin: 0.45rem 0 0;
+    color: var(--pf-text);
+    font-size: 0.92rem;
+    font-style: italic;
+    opacity: 0.9;
+}
+.pf-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.7rem; }
+.pf-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.28rem 0.7rem;
+    border-radius: 999px;
+    background: var(--pf-surface-2);
+    border: 1px solid var(--pf-border);
+    color: var(--pf-soft);
+    font-size: 0.76rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.pf-chip i { color: var(--pf-accent); font-size: 0.78rem; }
+.pf-hero-actions { display: flex; gap: 0.6rem; padding-bottom: 0.3rem; }
+
+/* ---- Buttons used inside the profile pieces ---------------------------- */
+.pf-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.62rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface-2);
+    color: var(--pf-text);
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 650;
+    line-height: 1.2;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.pf-btn i { font-size: 0.9em; line-height: 1; }
+.pf-btn:hover { border-color: var(--pf-accent); transform: translateY(-1px); }
+.pf-btn:focus-visible { outline: 2px solid var(--pf-accent); outline-offset: 2px; }
+.pf-btn--primary { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-on-accent); }
+.pf-btn--primary:hover { box-shadow: 0 6px 20px var(--pf-accent-soft); }
+.pf-btn--ghost { background: transparent; }
+
+/* ---- "Profile look" editor -------------------------------------------- */
+.pf-studio {
+    border-radius: var(--pf-radius);
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface);
+    color: var(--pf-text);
+    padding: 1.4rem;
+    margin-bottom: 1.4rem;
+    scroll-margin-top: 1rem;
+}
+.pf-studio-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.2rem;
+}
+.pf-studio-head h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--pf-text);
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+.pf-studio-head h3 i { color: var(--pf-accent); }
+.pf-studio-head p { margin: 0.25rem 0 0; font-size: 0.84rem; color: var(--pf-muted); }
+.pf-studio-grid {
+    display: grid;
+    grid-template-columns: minmax(240px, 300px) 1fr;
+    gap: 1.6rem;
+    align-items: start;
+}
+
+/* live preview card */
+.pf-preview {
+    position: sticky;
+    top: 1rem;
+    border-radius: 16px;
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface-2);
+    overflow: hidden;
+    text-align: center;
+}
+.pf-preview .pf-banner { height: 92px; transition: background 0.3s ease; }
+.pf-preview-body { --pf-gap: var(--pf-surface-2); padding: 0 1rem 1.1rem; margin-top: -44px; }
+.pf-preview-body .pf-avatar { border: 4px solid var(--pf-surface-2); box-sizing: content-box; }
+.pf-preview-name {
+    margin: 0.6rem 0 0;
+    font-weight: 800;
+    font-size: 1.05rem;
+    color: var(--pf-text);
+    word-break: break-word;
+}
+.pf-preview-headline {
+    margin: 0.25rem 0 0;
+    font-size: 0.8rem;
+    color: var(--pf-soft);
+    min-height: 1.1em;
+    word-break: break-word;
+}
+.pf-preview-role {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.6rem;
+    padding: 0.22rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    background: var(--pf-accent-soft);
+    color: var(--pf-accent);
+}
+.pf-preview-note { margin: 0.8rem 0 0; font-size: 0.72rem; color: var(--pf-muted); }
+
+/* form side */
+.pf-fields { display: grid; gap: 1.15rem; min-width: 0; }
+.pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+.pf-field { display: grid; gap: 0.4rem; min-width: 0; }
+.pf-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--pf-soft);
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+.pf-count { font-weight: 600; color: var(--pf-muted); text-transform: none; letter-spacing: 0; }
+.pf-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.65rem 0.8rem;
+    border-radius: 10px;
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface-2);
+    color: var(--pf-text);
+    font: inherit;
+    font-size: 0.9rem;
+}
+.pf-input:focus { outline: none; border-color: var(--pf-accent); box-shadow: 0 0 0 3px var(--pf-accent-soft); }
+
+/* radio "tiles" — the input stays focusable for keyboards, just visually hidden */
+.pf-choice { position: relative; }
+.pf-choice input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+}
+.pf-choice input:focus-visible + * { outline: 2px solid var(--pf-accent); outline-offset: 2px; }
+
+.pf-segment {
+    display: inline-flex;
+    padding: 4px;
+    gap: 4px;
+    border-radius: 12px;
+    background: var(--pf-surface-2);
+    border: 1px solid var(--pf-border);
+    flex-wrap: wrap;
+}
+.pf-segment .pf-choice span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.5rem 0.95rem;
+    border-radius: 9px;
+    font-size: 0.84rem;
+    font-weight: 650;
+    color: var(--pf-soft);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+.pf-segment .pf-choice input:checked + span { background: var(--pf-accent); color: var(--pf-on-accent); }
+
+.pf-panel { display: none; }
+.pf-panel.is-open { display: block; animation: pf-fade 0.25s ease; }
+@keyframes pf-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.pf-drop {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    border-radius: 12px;
+    border: 2px dashed var(--pf-border);
+    background: var(--pf-surface-2);
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+.pf-drop:hover, .pf-drop.is-over { border-color: var(--pf-accent); background: var(--pf-accent-soft); }
+.pf-drop-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: var(--pf-accent-soft);
+    color: var(--pf-accent);
+    font-size: 1.15rem;
+    flex-shrink: 0;
+}
+.pf-drop strong { display: block; color: var(--pf-text); font-size: 0.9rem; }
+.pf-drop small { color: var(--pf-muted); font-size: 0.76rem; }
+.pf-drop input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+
+.pf-icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 0.5rem; }
+.pf-icon-grid .pf-choice span {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    border-radius: 12px;
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface-2);
+    color: var(--pf-soft);
+    font-size: 1.05rem;
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.pf-icon-grid .pf-choice span:hover { transform: translateY(-2px); color: var(--pf-text); }
+.pf-icon-grid .pf-choice input:checked + span {
+    border-color: var(--pf-accent);
+    color: var(--pf-accent);
+    background: var(--pf-accent-soft);
+}
+
+.pf-swatches { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.pf-swatches .pf-choice span {
+    display: block;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--pf-a), var(--pf-b));
+    cursor: pointer;
+    box-shadow: 0 0 0 2px var(--pf-surface), 0 0 0 3px var(--pf-border);
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.pf-swatches .pf-choice span:hover { transform: scale(1.08); }
+.pf-swatches .pf-choice input:checked + span { box-shadow: 0 0 0 3px var(--pf-surface), 0 0 0 5px var(--pf-a); }
+
+.pf-frames { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.pf-frames .pf-choice > span {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.45rem 0.8rem 0.45rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface-2);
+    color: var(--pf-soft);
+    font-size: 0.82rem;
+    font-weight: 650;
+    cursor: pointer;
+    --pf-gap: var(--pf-surface-2);
+}
+.pf-frames .pf-choice input:checked + span { border-color: var(--pf-accent); color: var(--pf-text); }
+
+.pf-banners { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 0.6rem; }
+.pf-banners .pf-choice > span {
+    display: flex;
+    align-items: flex-end;
+    height: 58px;
+    padding: 0.4rem 0.55rem;
+    border-radius: 12px;
+    border: 2px solid transparent;
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.2s ease;
+}
+.pf-banners .pf-choice > span:hover { transform: translateY(-2px); }
+.pf-banners .pf-choice input:checked + span { border-color: var(--pf-accent); box-shadow: 0 0 0 3px var(--pf-accent-soft); }
+
+.pf-studio-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--pf-border);
+}
+.pf-studio-actions .pf-btn--dice { margin-right: auto; }
+
+/* ---- Simple details/password cards on the admin profile --------------- */
+.pf-card {
+    border-radius: var(--pf-radius);
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface);
+    color: var(--pf-text);
+    padding: 1.3rem 1.4rem;
+}
+.pf-card h3 {
+    margin: 0 0 1rem;
+    font-size: 1rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--pf-text);
+}
+.pf-card h3 i { color: var(--pf-accent); }
+.pf-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; align-items: start; }
+.pf-hint { margin: 0; font-size: 0.78rem; color: var(--pf-muted); }
+.pf-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; margin-bottom: 1.4rem; }
+.pf-stat {
+    border-radius: 14px;
+    border: 1px solid var(--pf-border);
+    background: var(--pf-surface);
+    padding: 1rem 1.1rem;
+}
+.pf-stat strong { display: block; font-size: 1.5rem; font-weight: 800; color: var(--pf-text); }
+.pf-stat span { font-size: 0.78rem; color: var(--pf-muted); }
+.pf-activity { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.pf-activity li { display: flex; gap: 0.7rem; align-items: flex-start; font-size: 0.84rem; color: var(--pf-soft); }
+.pf-activity li i { color: var(--pf-accent); margin-top: 0.15rem; }
+.pf-activity time { display: block; font-size: 0.72rem; color: var(--pf-muted); }
+.pf-flash {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    border: 1px solid;
+}
+.pf-flash--success { background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.4); color: #16a34a; }
+.pf-flash--danger, .pf-flash--error { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.4); color: #ef4444; }
+.pf-flash--info, .pf-flash--warning { background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.4); color: #3b82f6; }
+
+/* ---- Sidebar "who am I" card (customer + admin) ------------------------ */
+.pf-mini {
+    --pf-gap: var(--pf-surface-2);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+    padding: 0.2rem;
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.2s ease;
+}
+.pf-mini:hover { background: var(--pf-accent-soft); }
+.pf-mini-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pf-mini-text strong {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--pf-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pf-mini-text small {
+    font-size: 0.74rem;
+    color: var(--pf-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pf-mini-edit {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    font-size: 0.72rem;
+    color: var(--pf-muted);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    flex-shrink: 0;
+}
+.pf-mini:hover .pf-mini-edit, .pf-mini:focus-visible .pf-mini-edit { opacity: 1; }
+
+/* Admin sidebar: the existing .admin-user-mini box hosts the card. */
+.admin-user-mini.pf-host { padding: 0.55rem; display: block; }
+.admin-user-mini.pf-host .pf-mini { --pf-gap: var(--dark-card, #111); }
+
+/* Technician sidebar: avatar inside .tech-whoami */
+.tech-whoami .pf-avatar { --pf-gap: var(--t-bg, #070b18); }
+.tech-whoami-avatar.pf-host { background: none; box-shadow: none; padding: 0; width: auto; height: auto; }
+
+/* ---- Customer sidebar: profile card + "Your Device. Our Priority." ----- */
+.user-sidebar .user-profile-mini.pf-host {
+    gap: 0.75rem;
+    padding: 0.7rem;
+    background: var(--user-bg);
+}
+
+.pf-promo {
+    position: relative;
+    overflow: hidden;
+    border-radius: 14px;
+    padding: 0.95rem 0.95rem 0.85rem;
+    color: #fff;
+    background:
+        radial-gradient(120% 90% at 100% 0%, rgba(56, 189, 248, 0.55), transparent 55%),
+        radial-gradient(90% 90% at 0% 100%, rgba(139, 92, 246, 0.55), transparent 60%),
+        linear-gradient(140deg, #1d4ed8, #1e3a8a);
+    box-shadow: 0 10px 26px rgba(29, 78, 216, 0.28);
+    isolation: isolate;
+}
+.pf-promo::before {            /* faint circuit grid */
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px) 0 0 / 16px 16px,
+        linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px) 0 0 / 16px 16px;
+    mask-image: linear-gradient(180deg, #000, transparent 85%);
+    -webkit-mask-image: linear-gradient(180deg, #000, transparent 85%);
+    z-index: -1;
+}
+.pf-promo::after {             /* sheen that sweeps across now and then */
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -60%;
+    width: 40%;
+    height: 200%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+    transform: rotate(18deg);
+    animation: pf-sheen 6s ease-in-out infinite;
+    z-index: -1;
+}
+@keyframes pf-sheen {
+    0%, 70% { left: -60%; }
+    100%    { left: 130%; }
+}
+.pf-promo-top { display: flex; align-items: center; gap: 0.7rem; }
+.pf-promo-device { width: 58px; height: 46px; flex-shrink: 0; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25)); }
+.pf-promo-device .pf-screen { fill: rgba(15, 23, 42, 0.55); stroke: rgba(255, 255, 255, 0.85); stroke-width: 2; }
+.pf-promo-device .pf-base   { fill: rgba(255, 255, 255, 0.85); }
+.pf-promo-device .pf-beat {
+    fill: none;
+    stroke: #4ade80;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 60;
+    stroke-dashoffset: 60;
+    animation: pf-beat 2.4s ease-in-out infinite;
+}
+@keyframes pf-beat {
+    0%   { stroke-dashoffset: 60; opacity: 1; }
+    55%  { stroke-dashoffset: 0;  opacity: 1; }
+    85%  { stroke-dashoffset: 0;  opacity: 0; }
+    100% { stroke-dashoffset: 60; opacity: 0; }
+}
+.pf-promo h5 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 800;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    color: #fff;
+}
+.pf-promo h5 span { color: #93c5fd; }
+.pf-promo-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.65rem;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #bbf7d0;
+}
+.pf-promo-status::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4ade80;
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7);
+    animation: pf-live 1.8s ease-out infinite;
+}
+@keyframes pf-live {
+    0%   { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+    100% { box-shadow: 0 0 0 7px rgba(74, 222, 128, 0); }
+}
+.pf-promo-pills {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.35rem;
+    margin-top: 0.8rem;
+}
+.pf-promo-pills span {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.4rem 0.2rem;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #e0e7ff;
+    backdrop-filter: blur(4px);
+}
+.pf-promo-pills i { font-size: 0.8rem; color: #fde68a; line-height: 1; }
+.pf-promo-cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin-top: 0.7rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 9px;
+    background: #fff;
+    color: #1d4ed8;
+    font-size: 0.76rem;
+    font-weight: 800;
+    text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.pf-promo-cta i { font-size: 0.72rem; line-height: 1; }
+.pf-promo-cta:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25); }
+[data-theme="dark"] .pf-promo { box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
+
+/* ---- Fix: empty-state icons only style the big decorative icon --------- */
+.user-empty-state .user-btn-primary,
+.user-empty-state .user-btn-secondary,
+.user-empty-state a[class*="btn"],
+.user-empty-state button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: auto;
+    text-decoration: none;
+}
+.user-empty-state .user-btn-primary i,
+.user-empty-state .user-btn-secondary i,
+.user-empty-state a[class*="btn"] i,
+.user-empty-state button i {
+    font-size: 0.95em;
+    display: inline-block;
+    margin: 0;
+    opacity: 1;
+    color: inherit;
+    line-height: 1;
+}
+
+/* ---- Responsive ------------------------------------------------------- */
+@media (max-width: 900px) {
+    .pf-studio-grid { grid-template-columns: 1fr; }
+    .pf-preview { position: static; max-width: 340px; margin: 0 auto; width: 100%; }
+    .pf-grid-2 { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+    .pf-row { grid-template-columns: 1fr; }
+    .pf-stats { grid-template-columns: 1fr; }
+    .pf-hero-body { padding: 0 1rem 1.1rem; }
+    .pf-hero-actions { width: 100%; }
+    .pf-hero-actions .pf-btn { flex: 1; }
+    .pf-studio { padding: 1rem; }
+    .pf-studio-actions .pf-btn { flex: 1; }
+    .pf-studio-actions .pf-btn--dice { margin-right: 0; flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pf-avatar.pf-frame--pulse::after, .pf-promo::after, .pf-promo-device .pf-beat,
+    .pf-promo-status::before, .pf-panel.is-open { animation: none; }
+    .pf-promo-device .pf-beat { stroke-dashoffset: 0; }
+}
+
+/* ---- Fix: link-styled buttons in the customer portal were underlined ---- */
+.user-dashboard-wrapper a[class*="btn"],
+.user-dashboard-wrapper a[class*="-btn"],
+.user-dashboard-wrapper a.usr-btn,
+.user-dashboard-wrapper a[class*="btn"]:hover,
+.user-dashboard-wrapper a.usr-btn:hover {
+    text-decoration: none;
+}
+
+/* ---- Fix: brand name and "Computer Services" ran together on one line ---- */
+.user-sidebar-brand .user-brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.user-sidebar-brand .user-brand-sub { white-space: nowrap; margin-top: 0.15rem; }
+
+/* ---- Phones: keep the sticky top bar compact; the profile card and promo
+        show inside the menu when it is opened. ------------------------------ */
+@media (max-width: 768px) {
+    .user-sidebar .user-profile-mini.pf-host { display: none; }
+    .user-sidebar:has(.user-nav-menu.open) .user-profile-mini.pf-host {
+        display: flex;
+        width: 100%;
+        order: 3;
+        margin: 0.75rem 0 0;
+    }
+    .user-sidebar .pf-promo { display: none; }
+}
+
+/* The card link must fit its box so long names ellipsize instead of
+   pushing the avatar past the card edge. */
+.pf-host > .pf-mini { align-self: stretch; width: 100%; max-width: 100%; box-sizing: border-box; }
+
+/* ---- Phones: the sticky top bar sat 20px below the top edge (the page
+        wrapper's padding), so scrolled content peeked out above it, and the
+        brand's divider left an empty band under the logo. ------------------ */
+@media (max-width: 768px) {
+    .user-dashboard-wrapper { padding: 0 !important; gap: 0; }
+    .user-sidebar {
+        top: 0 !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }
+    .user-sidebar .user-sidebar-brand {
+        flex: 1;
+        min-width: 0;
+        margin: 0 !important;
+        padding: 0 !important;
+        border-bottom: 0 !important;
+    }
+    .user-sidebar .user-menu-toggle { margin-left: auto; }
+}
+@media (max-width: 768px) {
+    body:has(> .user-dashboard-wrapper) { padding: 0 !important; }
+}

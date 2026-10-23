@@ -1685,3 +1685,5 @@ body {
 [data-theme="dark"] .user-notification-rejection-badge {
     background: rgba(239, 68, 68, 0.2);
 }
+/* Form controls use the page font (browsers default them to Arial). */
+input, button, select, textarea { font-family: inherit; }

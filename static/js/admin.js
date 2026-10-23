@@ -112,36 +112,7 @@ function startPresenceHeartbeat() {
 }
 
 
-// ============================================
-// KEYBOARD SHORTCUTS
-//   Ctrl+Shift+L → Admin login
-//   Ctrl+Shift+T → Technician login
-//   Ctrl+Shift+R → Technician registration
-// Each is a no-op if you're already on that page, and never fires
-// while a text field has focus.
-// ============================================
-(function () {
-    document.addEventListener('keydown', function (e) {
-        if (!(e.ctrlKey && e.shiftKey)) return;
-
-        var t = e.target;
-        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
-                  || t.isContentEditable)) return;
-
-        var k = (e.key || '').toLowerCase();
-
-        if (k === 'l') {
-            e.preventDefault();
-            if (location.pathname !== '/admin/login') location.href = '/admin/login';
-        } else if (k === 't') {
-            e.preventDefault();
-            if (location.pathname !== '/technician/login') location.href = '/technician/login';
-        } else if (k === 'r') {
-            e.preventDefault();
-            if (location.pathname !== '/technician/register') location.href = '/technician/register';
-        }
-    });
-})();
+// Portal shortcuts (Ctrl+Shift+L / Y / U) live in portal-shortcuts.js.
 
 
 // ============================================

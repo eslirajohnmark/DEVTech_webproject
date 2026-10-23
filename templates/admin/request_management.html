@@ -10,12 +10,7 @@
         <p>Manage and review all service requests</p>
     </div>
     <div class="admin-top-actions">
-        <button class="admin-icon-btn" onclick="showAdminToast('Notifications')">
-            <i class="fas fa-bell"></i>
-            {% if unread_notifications_count is defined and unread_notifications_count %}
-            <span class="admin-badge">{{ unread_notifications_count }}</span>
-            {% endif %}
-        </button>
+        {% include 'admin/_notification_bell.html' %}
         <button class="admin-icon-btn" onclick="window.location.reload()">
             <i class="fas fa-sync-alt"></i>
         </button>
@@ -104,7 +99,7 @@
                 <p class="admin-request-card-desc">{{ booking.description[:80] if booking.description else 'No description' }}{% if booking.description and booking.description|length > 80 %}...{% endif %}</p>
                 <div class="admin-request-card-meta">
                     <span class="admin-request-card-service">{{ booking.service.name if booking.service else 'N/A' }}</span>
-                    <span class="admin-request-card-status {{ booking.status }}">{{ booking.status|capitalize }}</span>
+                    <span class="admin-request-card-status {{ booking.status }}">{{ status_labels.get(booking.status, booking.status|replace('_', ' ')|title) }}</span>
                 </div>
             </div>
             <div class="admin-request-card-actions">
@@ -112,10 +107,10 @@
                     <i class="fas fa-eye"></i> View Details
                 </button>
                 {% if booking.status == 'pending' %}
-                    <button class="admin-btn admin-btn-sm admin-btn-approve" onclick="openAssignTechnicianModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
+                    <button class="admin-btn admin-btn-sm admin-btn-approve" onclick='openAssignTechnicianModal({{ booking.id|string|tojson }}, {{ booking.user.full_name|tojson }})'>
                         <i class="fas fa-user-check"></i> Approve &amp; Assign
                     </button>
-                    <button class="admin-btn admin-btn-sm admin-btn-reject" onclick="openRejectModal('{{ booking.id }}', '{{ booking.user.full_name }}')">
+                    <button class="admin-btn admin-btn-sm admin-btn-reject" onclick='openRejectModal({{ booking.id|string|tojson }}, {{ booking.user.full_name|tojson }})'>
                         <i class="fas fa-times"></i> Reject
                     </button>
                 {% elif booking.technician %}

@@ -734,3 +734,7 @@
     .tech-track { overflow-x: auto; padding-bottom: 0.4rem; }
     .tech-stage { min-width: 88px; }
 }
+/* Message attachments (image thumbnail or file link inside a chat bubble) */
+.msg-attachment { display: block; margin-top: 0.4rem; text-decoration: none; }
+.msg-attachment img { display: block; max-width: 220px; max-height: 220px; border-radius: 8px; object-fit: cover; }
+.msg-attachment-file { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border-radius: 6px; background: rgba(127, 127, 127, 0.15); color: inherit; font-size: 0.85rem; word-break: break-all; }

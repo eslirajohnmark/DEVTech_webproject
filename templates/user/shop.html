@@ -14,7 +14,7 @@
         <!-- Notification Bell - Links to notifications page -->
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications" id="notifBtn">
             <i class="fas fa-bell"></i>
-            <span class="user-badge" id="notifBadge">0</span>
+            <span class="user-badge" id="notifBadge" data-live-count="notifications">0</span>
         </a>
         <button class="user-icon-btn" onclick="toggleCart()" title="View cart" id="cartToggleBtn">
             <i class="fas fa-shopping-cart"></i>
@@ -75,8 +75,7 @@
          data-price="{{ product.price }}" 
          data-name="{{ product.name }}" 
          data-id="{{ product.id }}" 
-         data-stock="{{ product.stock_quantity }}"
-         data-product='{{ product|tojson|safe }}'>
+         data-stock="{{ product.stock_quantity }}">
         {% if product.stock_quantity > 0 and product.stock_quantity <= 3 %}
         <div class="user-product-badge sale">Low Stock</div>
         {% elif product.stock_quantity <= 0 %}
@@ -86,7 +85,7 @@
             <i class="fas fa-{% if product.category == 'memory' %}memory{% elif product.category == 'storage' %}hdd{% elif product.category == 'battery' %}battery-three-quarters{% elif product.category == 'accessory' %}plug{% elif product.category == 'cpu' %}microchip{% elif product.category == 'gpu' %}gamepad{% else %}box{% endif %}"></i>
         </div>
         <h3 class="user-product-name">{{ product.name }}</h3>
-        <p class="user-product-desc">{{ product.description[:80] }}{% if product.description|length > 80 %}...{% endif %}</p>
+        <p class="user-product-desc">{{ (product.description or '')|truncate(80, True, '...') }}</p>
         <div class="user-product-meta">
             <span class="user-product-price">₱{{ "%.2f"|format(product.price) }}</span>
             <span class="user-product-compat">{{ product.compatibility or 'Universal' }}</span>
@@ -374,13 +373,13 @@ const productData = {
     {% for product in products %}
     "{{ product.id }}": {
         id: {{ product.id }},
-        name: "{{ product.name|escape }}",
+        name: {{ (product.name)|js_html }},
         price: {{ product.price }},
         priceDisplay: "₱{{ "%.2f"|format(product.price) }}",
-        description: "{{ product.description|escape }}",
-        compatibility: "{{ product.compatibility or 'Universal' }}",
+        description: {{ (product.description)|js_html }},
+        compatibility: {{ (product.compatibility or 'Universal')|js_html }},
         stock: {{ product.stock_quantity }},
-        category: "{{ product.category }}"
+        category: {{ (product.category)|js_html }}
     }{% if not loop.last %},{% endif %}
     {% endfor %}
 };
@@ -1464,12 +1463,6 @@ setTimeout(() => {
     });
 }, 5000);
 
-document.addEventListener('keydown', function(e) {
-    if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-        e.preventDefault();
-        window.location.href = '/admin/login';
-    }
-});
 
 console.log('✅ Shop system initialized');
 console.log('📬 Unread notifications:', unreadNotifications);

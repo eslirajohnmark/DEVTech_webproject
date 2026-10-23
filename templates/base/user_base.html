@@ -38,6 +38,13 @@
             localStorage.setItem('devtech_theme', theme);
         })();
     </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/profile.css') }}" />
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive-fixes.css') }}" />
+    <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
+    <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
 </head>
 <body>
     <div class="user-dashboard-wrapper">
@@ -58,19 +65,36 @@
                 <i class="fas fa-bars"></i>
             </button>
 
-            <div class="user-profile-mini">
-                <div class="user-avatar-mini">
-                    <i class="fas fa-user-circle"></i>
-                </div>
-                <div class="user-sidebar-promo">
-                    <i class="fas fa-desktop user-sidebar-promo-mark"></i>
-                    <h5>Your Device.<br>Our Priority.</h5>
-                    <p>Fast · Reliable · Professional</p>
-                </div>
+            {% from 'partials/avatar.html' import avatar %}
+            {% set _me = signed_in() %}
+            <div class="user-profile-mini pf-host">
+                <a class="pf-mini" href="{{ url_for('user_profile') }}#look" title="Edit your profile look">
+                    {{ avatar(_me, 'md') }}
+                    <span class="pf-mini-text">
+                        <strong>{{ _me.shown_name if _me else session.get('username', 'User') }}</strong>
+                        <small>{{ (_me.headline if _me and _me.headline) or 'Customer' }}</small>
+                    </span>
+                    <span class="pf-mini-edit" aria-hidden="true"><i class="fas fa-pen"></i></span>
+                </a>
 
-                <div class="user-profile-info">
-                    <span class="user-profile-name">{{ session.get('username', 'User') }}</span>
-                    <span class="user-profile-role">Customer</span>
+                <div class="pf-promo" role="note" aria-label="Your device, our priority">
+                    <div class="pf-promo-top">
+                        <svg class="pf-promo-device" viewBox="0 0 58 46" aria-hidden="true" focusable="false">
+                            <rect class="pf-screen" x="7" y="3" width="44" height="30" rx="4"/>
+                            <polyline class="pf-beat" points="12,19 20,19 24,11 29,27 33,15 36,19 46,19"/>
+                            <path class="pf-base" d="M2 37h54l-3 6H5z"/>
+                        </svg>
+                        <h5>Your Device.<br><span>Our Priority.</span></h5>
+                    </div>
+                    <span class="pf-promo-status">Live repair tracking</span>
+                    <div class="pf-promo-pills">
+                        <span><i class="fas fa-bolt"></i> Fast</span>
+                        <span><i class="fas fa-shield-halved"></i> Reliable</span>
+                        <span><i class="fas fa-award"></i> Pro</span>
+                    </div>
+                    <a class="pf-promo-cta" href="{{ url_for('service_catalog') }}">
+                        <i class="fas fa-screwdriver-wrench"></i> Book a repair
+                    </a>
                 </div>
             </div>
 
@@ -92,6 +116,15 @@
                 </a>
                 <a href="{{ url_for('user_orders') }}" class="user-nav-item {% if request.endpoint == 'user_orders' %}active{% endif %}">
                     <i class="fas fa-box"></i> My Orders
+                </a>
+                {% set _nc = nav_counts() %}
+                <a href="{{ url_for('messages') }}" class="user-nav-item {% if request.endpoint == 'messages' %}active{% endif %}">
+                    <i class="fas fa-comments"></i> Messages
+                    <span class="user-nav-badge" data-live-count="messages" {% if not _nc.get('messages') %}hidden{% endif %}>{{ _nc.get('messages') or 0 }}</span>
+                </a>
+                <a href="{{ url_for('notifications') }}" class="user-nav-item {% if request.endpoint == 'notifications' %}active{% endif %}">
+                    <i class="fas fa-bell"></i> Notifications
+                    <span class="user-nav-badge" data-live-count="notifications" {% if not _nc.get('notifications') %}hidden{% endif %}>{{ _nc.get('notifications') or 0 }}</span>
                 </a>
                 <a href="{{ url_for('user_profile') }}" class="user-nav-item {% if request.endpoint == 'user_profile' %}active{% endif %}">
                     <i class="fas fa-user"></i> Profile
@@ -139,21 +172,28 @@
             return localStorage.getItem('devtech_theme') || 'light';
         }
         
+        // 'system' follows the device's dark/light setting.
+        function resolveTheme(theme) {
+            if (theme !== 'system') return theme;
+            return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }
+
         function setTheme(theme) {
             const html = document.documentElement;
-            
-            if (theme === 'dark') {
+            const applied = resolveTheme(theme);
+
+            if (applied === 'dark') {
                 html.setAttribute('data-theme', 'dark');
             } else {
                 html.removeAttribute('data-theme');
             }
-            
+
             localStorage.setItem('devtech_theme', theme);
-            
+
             // Update toggle switch
             const toggle = document.getElementById('themeToggleSidebar');
             if (toggle) {
-                toggle.checked = (theme === 'dark');
+                toggle.checked = (applied === 'dark');
             }
             
             // Update profile page theme selector if it exists
@@ -164,7 +204,7 @@
         }
         
         function toggleTheme() {
-            const current = getCurrentTheme();
+            const current = resolveTheme(getCurrentTheme());
             const newTheme = (current === 'dark') ? 'light' : 'dark';
             setTheme(newTheme);
             
@@ -203,6 +243,12 @@
             });
         }
         
+        // Profile page theme selector (light / dark / system).
+        function handleThemeChange(theme) {
+            applyThemeFromPreference(theme);
+            showToast('Theme set to ' + theme.charAt(0).toUpperCase() + theme.slice(1), 'success');
+        }
+
         // Listen for system theme changes
         if (window.matchMedia) {
             window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
@@ -372,31 +418,12 @@
             }, duration);
         }
 
-        // ============================================
-        // ADMIN SHORTCUT: Ctrl + Shift + L
-        // ============================================
-        document.addEventListener('keydown', function(e) {
-            if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-                e.preventDefault();
-                const currentPath = window.location.pathname;
-                if (currentPath === '/admin/login' || currentPath === '/admin/login/') return;
-                window.location.href = '/admin/login';
-            }
-        });
 
-        // ============================================
-        // TECHNICIAN SHORTCUT: Ctrl + Shift + Y
-        // ============================================
-        document.addEventListener('keydown', function(e) {
-            if (e.ctrlKey && e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
-                e.preventDefault();
-                window.location.href = '/technician/login';
-            }
-        });
     </script>
     
 
     <script src="{{ url_for('static', filename='js/user.js') }}"></script>
     {% block extra_js %}{% endblock %}
+    <script type="application/json" id="devtechLiveBoot">{{ live_boot()|tojson }}</script>
 </body>
 </html>

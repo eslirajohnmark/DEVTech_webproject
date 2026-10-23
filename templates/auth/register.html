@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DEVTech - Register</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 
+    <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
 </head>
 <body>
     <div class="card">
@@ -29,7 +32,7 @@
         <form method="POST" action="{{ url_for('register') }}" id="registrationForm">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="input-group">
-                <label for="fullName">Fullname</label>
+                <label for="fullName">Full name</label>
                 <input type="text" id="fullName" name="fullName" placeholder="Full name" required>
             </div>
 
@@ -44,19 +47,19 @@
             </div>
 
             <div class="input-group">
-                <label for="rePassword">Re-Password</label>
+                <label for="rePassword">Confirm password</label>
                 <input type="password" id="rePassword" name="rePassword" placeholder="Confirm your password" required>
             </div>
 
             <div class="input-group">
-                <label for="phone">Phonenumber</label>
+                <label for="phone">Phone number</label>
                 <input type="tel" id="phone" name="phone" placeholder="+63 912 345 6789" required>
             </div>
 
             <div class="terms-row">
                 <label class="checkbox-label">
                     <input type="checkbox" id="saveDetails" checked>
-                    <span class="terms-text">Save your details and start creating your account. You can also create an account using your existing Facebook or Instagram account.</span>
+                    <span class="terms-text">Save your details and create your account. You can also sign in with Google or Facebook from the login page.</span>
                 </label>
             </div>
 
