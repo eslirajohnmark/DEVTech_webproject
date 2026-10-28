@@ -164,9 +164,20 @@ def test_admin_confirm_updates_order_and_blocks_self_cancel(client, customer, ad
     client.post(f'/admin/payments/{txn.id}/confirm')
     assert db.session.get(Order, order.id).payment_status == 'confirmed'
 
+    # Once the paid order is being prepared, the customer can't cancel it themselves...
+    db.session.get(Order, order.id).status = 'processing'
+    db.session.commit()
     login_as(client, customer)
     r = client.post(f'/api/order/{order.id}/cancel')
-    assert r.status_code == 400
+    assert r.status_code == 400 and db.session.get(Order, order.id).status == 'processing'
+    # ...but while it is still pending they can, and the payment goes to Refunds.
+    db.session.get(Order, order.id).status = 'pending'
+    db.session.commit()
+    r = client.post(f'/api/order/{order.id}/cancel').get_json()
+    assert r['success'] and r['refund_opened']
+    from app import Refund
+    assert Refund.query.filter_by(transaction_id=txn.id, status='pending').count() == 1
+    assert db.session.get(Product, p.id).stock_quantity == 3
 
 
 def test_admin_can_progress_and_cancel_orders(client, customer, admin):

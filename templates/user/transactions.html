@@ -130,10 +130,23 @@
                         {% else %}
                             <h4>Manual Payment</h4>
                         {% endif %}
-                        <p><i class="fas fa-credit-card"></i> {{ transaction.payment_method }}</p>
+                        <p><i class="fas fa-credit-card"></i> {{ payment_method_label(transaction.payment_method) }}</p>
                         {% if transaction.gcash_reference %}
                             <p><i class="fas fa-mobile-alt"></i> GCash Ref: {{ transaction.gcash_reference }}</p>
                         {% endif %}
+                        {% for r in transaction.refunds %}
+                            <p class="user-transaction-refund refund-{{ r.status }}">
+                                <i class="fas fa-rotate-left"></i>
+                                {% if r.status == 'pending' %}
+                                    <strong>Refund in progress:</strong> ₱{{ "%.2f"|format(r.amount) }}, opened {{ r.created_at.strftime('%b %d, %Y') if r.created_at else '' }}.
+                                {% elif r.status == 'refunded' %}
+                                    <strong>Refunded:</strong> ₱{{ "%.2f"|format(r.amount) }} via {{ r.method }}{% if r.reference %} (ref {{ r.reference }}){% endif %}
+                                    on {{ r.processed_at.strftime('%b %d, %Y') if r.processed_at else '' }}.
+                                {% else %}
+                                    <strong>No refund issued:</strong> {{ r.note }}
+                                {% endif %}
+                            </p>
+                        {% endfor %}
                         {% if transaction.rejection_reason %}
                             <p class="user-transaction-rejection">
                                 <i class="fas fa-exclamation-circle"></i> 
@@ -143,7 +156,7 @@
                     </div>
                     <div class="user-transaction-amount">
                         <span class="user-transaction-price">₱{{ "%.2f"|format(transaction.amount) }}</span>
-                        <span class="user-transaction-method">{{ transaction.payment_method }}</span>
+                        <span class="user-transaction-method">{{ payment_method_label(transaction.payment_method) }}</span>
                     </div>
                 </div>
 
@@ -165,6 +178,10 @@
                                 <i class="fas fa-image"></i> View Receipt
                             </button>
                         {% endif %}
+                    {% elif transaction.payment_status in ('cancelled', 'refunded') %}
+                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
+                            <i class="fas fa-eye"></i> View Details
+                        </button>
                     {% elif transaction.payment_status == 'rejected' %}
                         <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
                             <i class="fas fa-eye"></i> View Details

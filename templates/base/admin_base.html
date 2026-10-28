@@ -85,6 +85,10 @@
                 <a href="{{ url_for('admin_payments') }}" class="admin-nav-item {% if request.endpoint == 'admin_payments' %}admin-active{% endif %}">
                     <i class="fas fa-credit-card"></i> Payment Confirmation
                 </a>
+                <a href="{{ url_for('admin_refunds') }}" class="admin-nav-item {% if request.endpoint == 'admin_refunds' %}admin-active{% endif %}">
+                    <i class="fas fa-rotate-left"></i> Refunds
+                    {% if _nc.get('refunds') %}<span class="admin-nav-badge">{{ _nc.refunds }}</span>{% endif %}
+                </a>
                 <a href="{{ url_for('admin_products') }}" class="admin-nav-item {% if request.endpoint == 'admin_products' %}admin-active{% endif %}">
                     <i class="fas fa-boxes-stacked"></i> Products
                 </a>

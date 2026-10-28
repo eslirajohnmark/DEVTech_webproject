@@ -406,8 +406,14 @@ flask create-admin
 
 ```bash
 source .venv/bin/activate
-gunicorn --workers 4 --bind 127.0.0.1:8000 wsgi:app
+gunicorn --workers 2 --worker-class gthread --threads 48 --bind 127.0.0.1:8000 wsgi:app
 ```
+
+Use threaded workers (`gthread`). Every open page keeps one request waiting on
+`/api/live` so updates show up at once (see "Live updates" in README.md); plain
+sync workers would each be tied up by a single waiting page. Each process lets at
+most `LIVE_MAX_WAITERS` (default 32) requests wait; keep `--threads` well above
+that so ordinary page loads always have a free thread.
 
 Visit `http://your-server-ip:8000` from your browser. You should see the site.
 
@@ -435,7 +441,9 @@ Group=www-data
 WorkingDirectory=/home/devtech/devtech
 Environment="PATH=/home/devtech/devtech/.venv/bin"
 ExecStart=/home/devtech/devtech/.venv/bin/gunicorn \
-    --workers 4 \
+    --workers 2 \
+    --worker-class gthread \
+    --threads 48 \
     --bind 127.0.0.1:8000 \
     --access-logfile /home/devtech/devtech/logs/access.log \
     --error-logfile /home/devtech/devtech/logs/error.log \

@@ -6,7 +6,7 @@
 
 <h3 class="admin-panel-title" style="margin:1rem 0;"><i class="fas fa-shield-halved"></i> Incident Reports</h3>
 <div class="admin-table-container"><table class="admin-table">
-<thead><tr><th>ID</th><th>Technician</th><th>Job</th><th>Type</th><th>Severity</th><th>Description</th><th>Status</th><th></th></tr></thead>
+<thead><tr><th>ID</th><th>Technician</th><th>Job</th><th>Type</th><th>Severity</th><th>Description</th><th>Evidence</th><th>Status</th><th></th></tr></thead>
 <tbody>
 {% for i in incidents %}
 <tr>
@@ -15,6 +15,14 @@
   <td>{{ bookings[i.booking_id].booking_number if i.booking_id in bookings else '—' }}</td>
   <td>{{ i.type }}</td><td>{{ i.severity|title }}</td>
   <td style="max-width:320px;">{{ i.description }}</td>
+  <td>
+    {% for f in incident_files.get(i.id, []) %}
+    <a class="evidence-item" href="{{ url_for('admin_upload_file', upload_id=f.id) }}" target="_blank" rel="noopener" title="{{ f.original_name }}">
+      {% if f.mime_type.startswith('image/') %}<img src="{{ url_for('admin_upload_file', upload_id=f.id) }}" alt="{{ f.original_name }}" loading="lazy">
+      {% else %}<span class="evidence-file"><i class="fas fa-file-pdf"></i> PDF</span>{% endif %}
+    </a>
+    {% else %}<span class="admin-muted">—</span>{% endfor %}
+  </td>
   <td>{{ i.status|title }}</td>
   <td>
     {% for s, label in (('reviewing','Reviewing'),('resolved','Resolve')) %}
@@ -27,7 +35,7 @@
     {% endif %}{% endfor %}
   </td>
 </tr>
-{% else %}<tr><td colspan="8" style="text-align:center;padding:1.5rem;">No incidents filed.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="9" style="text-align:center;padding:1.5rem;">No incidents filed.</td></tr>{% endfor %}
 </tbody></table></div>
 
 <h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-handshake"></i> Customer Approval Requests</h3>

@@ -153,7 +153,7 @@ def register_commands(app):
         import app as app_module
         db.create_all()
         for patch in ('update_payment_method_column', 'add_receipt_image_column',
-                      'add_service_category_columns', 'add_profile_columns'):
+                      'add_service_category_columns', 'add_profile_columns', 'add_workflow_columns'):
             getattr(app_module, patch)()
         app_module.move_legacy_receipts()
         released = app_module.release_reserved_cart_stock()

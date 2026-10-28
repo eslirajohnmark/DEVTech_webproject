@@ -25,7 +25,7 @@
             <i class="fas fa-credit-card"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ transactions|length }}</span>
+            <span class="admin-stat-number">{{ stats.total }}</span>
             <span class="admin-stat-label">Total Payments</span>
         </div>
     </div>
@@ -34,7 +34,7 @@
             <i class="fas fa-clock"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'pending')|list|length }}</span>
+            <span class="admin-stat-number">{{ stats.pending }}</span>
             <span class="admin-stat-label">Pending Confirmation</span>
         </div>
     </div>
@@ -43,7 +43,7 @@
             <i class="fas fa-check-circle"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length }}</span>
+            <span class="admin-stat-number">{{ stats.confirmed }}</span>
             <span class="admin-stat-label">Confirmed</span>
         </div>
     </div>
@@ -52,30 +52,31 @@
             <i class="fas fa-times-circle"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length }}</span>
+            <span class="admin-stat-number">{{ stats.rejected }}</span>
             <span class="admin-stat-label">Rejected</span>
         </div>
     </div>
 </div>
 
 <!-- Filters -->
-<div class="admin-payment-filters">
+<form class="admin-payment-filters" method="GET" action="{{ url_for('admin_payments') }}">
     <div class="admin-search-wrapper">
         <i class="fas fa-search"></i>
-        <input type="text" placeholder="Search by user, ID, or reference..." id="paymentSearch" oninput="filterPayments()" />
+        <input type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search by customer, transaction or reference... (Enter)" id="paymentSearch" />
     </div>
     <div class="admin-filter-group">
-        <select id="paymentStatusFilter" onchange="filterPayments()" class="admin-filter-select">
+        <select id="paymentStatusFilter" name="status" onchange="this.form.submit()" class="admin-filter-select">
             <option value="all">All Status</option>
-            <option value="pending">Pending</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="rejected">Rejected</option>
+            {% for key, label in [('pending', 'Pending'), ('confirmed', 'Confirmed'), ('rejected', 'Rejected'), ('cancelled', 'Cancelled')] %}
+            <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
         </select>
-        <button class="admin-btn admin-btn-secondary" onclick="resetPaymentFilters()">
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-search"></i> Search</button>
+        <a class="admin-btn admin-btn-secondary" href="{{ url_for('admin_payments') }}">
             <i class="fas fa-undo"></i> Reset
-        </button>
+        </a>
     </div>
-</div>
+</form>
 
 <!-- Payment List -->
 <div class="admin-payment-list" id="paymentList">
@@ -91,7 +92,7 @@
             "userEmail": transaction.user.email if transaction.user.email else "",
             "userPhone": transaction.user.phone if transaction.user.phone else "",
             "amount": "%.2f"|format(transaction.amount),
-            "method": (transaction.payment_method if transaction.payment_method in ['GCash', 'COD'] else 'Not yet chosen'),
+            "method": payment_method_label(transaction.payment_method),
             "reference": transaction.gcash_reference or transaction.reference_number or "N/A",
             "booking": transaction.booking.booking_number if transaction.booking else (("Order " ~ transaction.order.order_number) if transaction.order else (("Extra work " ~ extra_work_booking(transaction)) if extra_work_booking(transaction) else "N/A")),
             "date": transaction.transaction_date.strftime("%b %d, %Y %I:%M %p"),
@@ -115,10 +116,9 @@
             <div class="admin-payment-card-info">
                 <span class="admin-payment-card-amount">₱{{ "%.2f"|format(transaction.amount) }}</span>
                 <span class="admin-payment-card-method">
-                    {% if transaction.payment_method == 'GCash' %}<i class="fas fa-mobile-alt"></i> GCASH
-                    {% elif transaction.payment_method == 'COD' %}<i class="fas fa-money-bill-wave"></i> COD
-                    {% else %}<i class="fas fa-hourglass-half"></i> Not yet chosen
-                    {% endif %}
+                    {% set m = (transaction.payment_method or '')|lower %}
+                    <i class="fas fa-{{ 'mobile-alt' if m == 'gcash' else ('money-bill-wave' if m in ('cod', 'c.a.r') else 'hourglass-half') }}"></i>
+                    {{ payment_method_label(transaction.payment_method) }}
                 </span>
                 <span class="admin-payment-card-ref">Ref: {{ transaction.gcash_reference or transaction.reference_number or 'N/A' }}</span>
             </div>
@@ -126,6 +126,13 @@
                 <span>{% if transaction.booking %}Booking: {{ transaction.booking.booking_number }}{% elif transaction.order %}Order: {{ transaction.order.order_number }}{% elif extra_work_booking(transaction) %}Extra work: {{ extra_work_booking(transaction) }}{% else %}Booking: N/A{% endif %}</span>
                 <span>{{ transaction.transaction_date.strftime('%b %d, %Y %H:%M') }}</span>
             </div>
+            {% for r in transaction.refunds %}
+            <div class="admin-payment-card-proof refund-{{ r.status }}">
+                <i class="fas fa-rotate-left"></i>
+                Refund {{ r.status }} · ₱{{ "%.2f"|format(r.amount) }}{% if r.method %} via {{ r.method }}{% endif %}
+                · <a href="{{ url_for('admin_refunds', q=transaction.transaction_number) }}">open in Refunds</a>
+            </div>
+            {% endfor %}
             {% if transaction.rejection_reason %}
             <div class="admin-payment-card-proof missing" style="border-color:var(--danger); color:var(--danger);">
                 <i class="fas fa-exclamation-circle"></i> Rejected: {{ transaction.rejection_reason }}
@@ -154,16 +161,44 @@
                 <button class="admin-btn admin-btn-sm admin-btn-reject" onclick='rejectPayment({{ transaction.id|string|tojson }}, {{ transaction.user.full_name|tojson }})'>
                     <i class="fas fa-times"></i> Reject
                 </button>
+            {% elif transaction.payment_status == 'confirmed' and not transaction.refunds|selectattr('status', 'in', ['pending', 'refunded'])|list %}
+                <details class="refund-open">
+                    <summary class="admin-btn admin-btn-sm admin-btn-secondary"><i class="fas fa-rotate-left"></i> Issue refund</summary>
+                    <form method="POST" action="{{ url_for('admin_payment_refund', transaction_id=transaction.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="text" name="reason" required minlength="5" maxlength="255"
+                               placeholder="Reason, e.g. part out of stock">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-reject">Open refund</button>
+                    </form>
+                </details>
             {% endif %}
         </div>
     </div>
     {% else %}
     <div class="admin-empty-state">
         <i class="fas fa-receipt"></i>
+        {% if q or status != 'all' %}
+        <p>No payments match</p>
+        <p>Try a different search or status.</p>
+        {% else %}
         <p>No payments to review yet</p>
         <p>GCash payments submitted by customers will show up here for confirmation.</p>
+        {% endif %}
     </div>
     {% endfor %}
+</div>
+
+<!-- Pagination (server-side) -->
+<div class="admin-pagination">
+    {% if pager.page > 1 %}
+    <a class="admin-page-btn" href="{{ url_for(request.endpoint, page=pager.page - 1, status=status, q=q or None) }}" aria-label="Previous page"><i class="fas fa-chevron-left"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-left"></i></span>{% endif %}
+    <span class="admin-page-info">
+        {% if pager.total %}{{ pager.first }}–{{ pager.last }} of {{ pager.total }} · {% endif %}Page {{ pager.page }} of {{ pager.pages }}
+    </span>
+    {% if pager.page < pager.pages %}
+    <a class="admin-page-btn" href="{{ url_for(request.endpoint, page=pager.page + 1, status=status, q=q or None) }}" aria-label="Next page"><i class="fas fa-chevron-right"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-right"></i></span>{% endif %}
 </div>
 
 <!-- Payment Details Modal -->
@@ -183,25 +218,7 @@
 </div>
 
 <script>
-    function filterPayments() {
-        const search = document.getElementById('paymentSearch').value.toLowerCase();
-        const status = document.getElementById('paymentStatusFilter').value;
-        const cards = document.querySelectorAll('.admin-payment-card');
-
-        cards.forEach(card => {
-            const searchText = card.dataset.search.toLowerCase();
-            const cardStatus = card.dataset.status;
-            const matchesSearch = searchText.includes(search);
-            const matchesStatus = status === 'all' || cardStatus === status;
-            card.style.display = (matchesSearch && matchesStatus) ? '' : 'none';
-        });
-    }
-
-    function resetPaymentFilters() {
-        document.getElementById('paymentSearch').value = '';
-        document.getElementById('paymentStatusFilter').value = 'all';
-        filterPayments();
-    }
+    // Search, status filter and paging are done by the server (?q=&status=&page=).
 
     function rejectPayment(transactionId, userName) {
         if (confirm(`Reject payment from ${userName}?`)) {

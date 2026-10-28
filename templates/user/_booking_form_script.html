@@ -330,7 +330,7 @@
         const paymentSummary = document.getElementById('summaryPayment');
         
         if (gcashRadio.checked) {
-            paymentInfoText.textContent = 'You will receive a GCash payment link via email after booking. Please complete the payment within 24 hours.';
+            paymentInfoText.textContent = 'After booking, pay with GCash from Transactions and enter your reference number or upload the receipt. An admin then confirms it.';
             paymentSummary.textContent = 'GCash';
         } else {
             paymentInfoText.textContent = 'C.A.R (Cash After Repair) - You pay after the repair is completed and you are satisfied with the service.';
@@ -847,9 +847,29 @@
             return;
         }
         
-        // Submit form
+        const terms = document.getElementById('acceptTerms');
+        if (terms && !terms.checked) {
+            showUserToast('Please read and accept the Terms of Service.', 'error');
+            terms.closest('.user-form-step').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            terms.focus();
+            return;
+        }
+
+        // Submit once: a double click must not create two bookings.
+        ['submitBtn', 'summarySubmitBtn'].forEach(id => {
+            const b = document.getElementById(id);
+            if (b) b.disabled = true;
+        });
         form.submit();
     }
+
+    // The form's own Submit button skips submitBooking(); guard it the same way.
+    document.getElementById('bookingForm')?.addEventListener('submit', function () {
+        ['submitBtn', 'summarySubmitBtn'].forEach(id => {
+            const b = document.getElementById(id);
+            if (b) setTimeout(() => { b.disabled = true; }, 0);
+        });
+    });
 
     // ============================================
     // FLASH MESSAGE CLOSE

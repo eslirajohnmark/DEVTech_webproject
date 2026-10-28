@@ -1,6 +1,7 @@
 /* DEVTech — live updates without refreshing (customer, technician and admin portals).
 
-   Polls /api/live every few seconds (slower while the tab is hidden) and:
+   Keeps one request waiting on /api/live while the tab is visible; the server
+   answers the moment something changes (hidden tabs check every 30 s) and:
      • updates unread badges ([data-live-count="messages|notifications"]) and the tab title;
      • pops up new notifications and messages;
      • when the data on this page changed:
@@ -153,6 +154,8 @@
             'textarea, select, [contenteditable=""], [contenteditable="true"], ' +
             'input:not([type=button]):not([type=submit]):not([type=reset]):not([type=checkbox]):not([type=radio])')) return true;
         if (dirty || openDialog()) return true;
+        // An expanded panel (e.g. "Issue refund", "Mark as refunded") means the user is mid-task.
+        if (document.querySelector('main details[open]:not([data-live-ignore])')) return true;
         var sel = window.getSelection && String(window.getSelection());
         return !!(sel && sel.trim());
     }
@@ -226,19 +229,46 @@
         if (stopped) return;
         timer = setTimeout(poll, delay != null ? delay : (document.visibilityState === 'visible' ? FAST : SLOW));
     }
+    // While the tab is visible the request waits on the server until something
+    // changes (answered at once), then is re-armed right away. Hidden tabs just
+    // check every SLOW ms so they don't hold connections open.
+    var failures = 0;
     function poll() {
         if (stopped || inflight) return;
         inflight = true;
-        fetch('/api/live?n=' + state.n + '&m=' + state.m, {
-            credentials: 'same-origin', cache: 'no-store', headers: { 'Accept': 'application/json' }
+        var wait = document.visibilityState === 'visible';
+        var url = '/api/live?n=' + state.n + '&m=' + state.m;
+        if (wait) {
+            url += '&wait=1&nu=' + state.nu + '&mu=' + state.mu + '&s=' + encodeURIComponent(state.s);
+        }
+        var ctl = window.AbortController ? new AbortController() : null;
+        var giveUp = ctl ? setTimeout(function () { ctl.abort(); }, 40000) : null;
+        var waited = false;
+        fetch(url, {
+            credentials: 'same-origin', cache: 'no-store', headers: { 'Accept': 'application/json' },
+            signal: ctl ? ctl.signal : undefined
         })
             .then(function (r) {
                 if (r.status === 401 || r.redirected) { stopped = true; return null; }
                 return r.ok ? r.json() : null;
             })
-            .then(function (next) { if (next && next.ok) handle(next); })
-            .catch(function () { /* offline for a moment: keep polling */ })
-            .then(function () { inflight = false; schedule(); });
+            .then(function (next) {
+                if (next && next.ok) {
+                    failures = 0;
+                    waited = !!next.waited;
+                    handle(next);
+                } else if (!stopped) {
+                    failures++;
+                }
+            })
+            .catch(function () { failures++; /* offline for a moment: keep trying */ })
+            .then(function () {
+                clearTimeout(giveUp);
+                inflight = false;
+                if (!wait) schedule();
+                else if (failures) schedule(Math.min(FAST * failures, SLOW));
+                else schedule(waited ? 50 : FAST);       // no free waiting slot: normal pace
+            });
     }
 
     function start() {
@@ -263,7 +293,7 @@
         });
         window.addEventListener('focus', function () { schedule(0); });
         window.DevtechLive = { poll: function () { schedule(0); } };
-        schedule();
+        schedule(document.visibilityState === 'visible' ? 0 : SLOW);   // arm the waiting request right away
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

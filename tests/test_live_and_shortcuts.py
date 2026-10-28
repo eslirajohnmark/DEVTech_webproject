@@ -88,3 +88,64 @@ def test_shortcut_script_on_every_kind_of_page(client, customer):
         assert 'portal-shortcuts.js' in client.get(url).get_data(as_text=True), url
     login_as(client, customer)
     assert 'portal-shortcuts.js' in client.get('/user/dashboard').get_data(as_text=True)
+
+
+# ---------------------------------------------------------------- waiting ("instant") updates
+
+def _cfg(monkeypatch, app, **values):
+    for k, v in values.items():
+        monkeypatch.setitem(app.config, k, v)        # undone after the test
+
+
+def _wait_url(state):
+    return (f"/api/live?wait=1&n={state['n']}&m={state['m']}&nu={state['nu']}&mu={state['mu']}"
+            f"&s={state['s']}")
+
+
+def test_wait_returns_at_once_when_the_page_is_out_of_date(client, customer):
+    import time as _t
+    login_as(client, customer)
+    stale = dict(client.get('/api/live').get_json(), nu=99)
+    started = _t.monotonic()
+    r = client.get(_wait_url(stale)).get_json()
+    assert r['ok'] and r['nu'] == 0 and _t.monotonic() - started < 1
+
+
+def test_wait_holds_until_timeout_when_nothing_changes(app, client, customer, monkeypatch):
+    import time as _t
+    _cfg(monkeypatch, app, LIVE_WAIT_SECONDS=0.6, LIVE_RECHECK_SECONDS=0.2)
+    login_as(client, customer)
+    state = client.get('/api/live').get_json()
+    started = _t.monotonic()
+    r = client.get(_wait_url(state)).get_json()
+    assert r['waited'] is True and 0.5 < _t.monotonic() - started < 3
+
+
+def test_wait_slots_are_capped(app, client, customer, monkeypatch):
+    _cfg(monkeypatch, app, LIVE_MAX_WAITERS=0, LIVE_WAIT_SECONDS=5)
+    login_as(client, customer)
+    state = client.get('/api/live').get_json()
+    assert client.get(_wait_url(state)).get_json()['waited'] is False
+
+
+def test_a_commit_wakes_a_waiting_page_immediately(app, client, customer, monkeypatch):
+    import threading
+    import time as _t
+    _cfg(monkeypatch, app, LIVE_WAIT_SECONDS=10, LIVE_RECHECK_SECONDS=5, LIVE_MAX_WAITERS=4)    # recheck slower than the wake-up
+    login_as(client, customer)
+    state = client.get('/api/live').get_json()
+    result = {}
+
+    def waiter():
+        started = _t.monotonic()
+        result['body'] = client.get(_wait_url(state)).get_json()
+        result['seconds'] = _t.monotonic() - started
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    _t.sleep(0.4)
+    create_notification(customer.id, 'Repair done', 'Ready for pickup', 'success', email=False, role='customer')
+    t.join(timeout=8)
+    assert result['body']['nu'] == 1, (result, state)
+    assert result['body']['new_notifications'][0]['title'] == 'Repair done'
+    assert result['seconds'] < 2.5                       # woken by the commit, not the 5 s recheck

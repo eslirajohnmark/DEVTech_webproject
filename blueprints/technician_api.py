@@ -3,7 +3,7 @@ from flask import (
     Blueprint, jsonify, request, session, abort, send_file,
     redirect, url_for, flash,
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 import json
 from models.technician_models import (
@@ -33,6 +33,16 @@ def technician_required(fn):
 
 def _now():
     return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+
+# Allowed values - must match the choices in the technician templates.
+INTAKE_STATUSES = ('confirmed', 'diagnosis_pending', 'in_progress', 'on_hold')
+INTAKE_CONDITIONS = ('good', 'fair', 'poor', 'damaged')
+INTAKE_LIMITS = (('deviceType', 'Device type', 40), ('deviceModel', 'Device model', 120),
+                 ('serialNumber', 'Serial number', 80), ('passwordNote', 'Password note', 255))
+INCIDENT_TYPES = ('safety', 'electrical', 'animal', 'access', 'customer', 'other')
+INCIDENT_SEVERITIES = ('low', 'medium', 'high', 'critical')
+INCIDENT_MAX_FILES = 5
 
 
 # Statuses in which a technician may save a report draft. Submitting the
@@ -465,16 +475,34 @@ def job_intake(job_id):
         is_form = not request.is_json
         body = request.form if is_form else (request.get_json(silent=True) or {})
 
+        def fail(msg):
+            if is_form:
+                flash(msg, 'danger')
+                return redirect(url_for('technician.intake_form', job_id=job_id))
+            return jsonify({'ok': False, 'reason': msg}), 400
+
+        if b.status not in INTAKE_STATUSES:
+            return fail('Intake can only be recorded for an active job.')
+        device_type = (body.get('deviceType') or '').strip()
+        condition = body.get('condition') or 'good'
+        if not device_type:
+            return fail('Enter the device type.')
+        if condition not in INTAKE_CONDITIONS:
+            return fail('Choose the device condition.')
+        too_long = [label for key, label, limit in INTAKE_LIMITS if len((body.get(key) or '').strip()) > limit]
+        if too_long:
+            return fail(f'{too_long[0]} is too long.')
+
         r = IntakeRecord.query.filter_by(booking_id=job_id).first()
         if not r:
             r = IntakeRecord(booking_id=job_id)
             db.session.add(r)
 
         r.recorded_at         = _now()
-        r.device_type         = body.get('deviceType', '')
-        r.device_model        = body.get('deviceModel', '')
-        r.serial_number       = body.get('serialNumber', '')
-        r.condition           = body.get('condition', 'good')
+        r.device_type         = device_type
+        r.device_model        = (body.get('deviceModel') or '').strip()
+        r.serial_number       = (body.get('serialNumber') or '').strip()
+        r.condition           = condition
         r.condition_notes     = body.get('conditionNotes', '')
         r.accessories         = json.dumps(
             body.getlist('accessories') if is_form
@@ -482,7 +510,7 @@ def job_intake(job_id):
         )
         r.powers_on           = bool(body.get('powersOn'))
         r.has_password        = bool(body.get('hasPassword'))
-        r.password_note       = body.get('passwordNote', '')
+        r.password_note       = (body.get('passwordNote') or '').strip()
         r.data_backup_consent = bool(body.get('dataBackupConsent'))
         r.customer_present    = bool(body.get('customerPresent'))
         r.photos_note         = body.get('photosNote', '')
@@ -752,37 +780,79 @@ def incidents():
                 'reason': 'Describe what happened (at least 20 characters).'
             }), 400
 
+        def bad(msg):
+            if is_form:
+                flash(msg, 'danger')
+                return redirect(url_for('technician.incidents'))
+            return jsonify({'ok': False, 'reason': msg}), 400
+
         job_id = body.get('jobId') or None
         if job_id in ('', 'None', 'null'):
             job_id = None
-        else:
-            try:
-                job_id = int(job_id)
-            except (TypeError, ValueError):
-                job_id = None
+        if job_id is not None:
+            # Only the technician's own jobs; anything else is refused, not silently dropped.
+            job = Booking.query.filter_by(id=int(job_id), technician_id=tid).first() \
+                if str(job_id).isdigit() else None
+            if not job:
+                return bad('Choose one of your own jobs, or "Not related to a specific job".')
+            job_id = job.id
+        incident_type = body.get('type') or 'other'
+        severity = body.get('severity') or 'low'
+        location = (body.get('location') or '').strip()
+        if incident_type not in INCIDENT_TYPES:
+            return bad('Choose the type of incident.')
+        if severity not in INCIDENT_SEVERITIES:
+            return bad('Choose how severe it was.')
+        if len(location) > 255:
+            return bad('Location is too long (255 characters at most).')
+
+        # Evidence photos / PDFs: check every file before saving anything, so a
+        # bad file never leaves a half-saved report behind.
+        from services.upload_service import check_file, save_upload
+        evidence = [f for f in request.files.getlist('photos') if f and f.filename]
+        if len(evidence) > INCIDENT_MAX_FILES:
+            return bad(f'Attach at most {INCIDENT_MAX_FILES} files.')
+        for f in evidence:
+            ok, why = check_file(f)
+            if not ok:
+                return bad(f'{f.filename}: {why}')
+            f.stream.seek(0)
+
+        # A double click or a resend shouldn't file the same incident twice.
+        recent = IncidentReport.query.filter_by(technician_id=tid, description=desc)\
+            .order_by(IncidentReport.id.desc()).first()
+        if recent and recent.reported_at and \
+                datetime.utcnow() - datetime.strptime(recent.reported_at, '%Y-%m-%d %H:%M:%S') < timedelta(minutes=2):
+            if is_form:
+                flash(f'Incident {recent.id} was already submitted.', 'info')
+                return redirect(url_for('technician.incidents'))
+            return jsonify({'ok': True, 'incident': {'id': recent.id}, 'duplicate': True})
 
         r = IncidentReport(
             technician_id=tid,
             booking_id=job_id,
             reported_at=_now(),
-            type=body.get('type', 'other'),
-            severity=body.get('severity', 'low'),
-            location=body.get('location', ''),
+            type=incident_type,
+            severity=severity,
+            location=location,
             description=desc,
             action_taken=body.get('actionTaken', ''),
             authorities_notified=bool(body.get('authoritiesNotified')),
         )
         db.session.add(r)
         db.session.commit()
+        saved = sum(1 for f in evidence if save_upload(f, 'incident', r.id, job_id, tid)[0])
 
         notify_admins('Incident Reported',
-                      f'Incident #{r.id} was reported by {session.get("username", "Technician")}.',
+                      f'Incident #{r.id} was reported by {session.get("username", "Technician")}'
+                      + (f' with {saved} attachment{"" if saved == 1 else "s"}.' if saved else '.'),
                       'warning')
 
         if is_form:
-            flash(f'Incident {r.id} submitted to management.', 'success')
+            flash(f'Incident {r.id} submitted to management'
+                  + (f' with {saved} attachment{"" if saved == 1 else "s"}.' if saved else '.'), 'success')
             return redirect(url_for('technician.incidents'))
-        return jsonify({'ok': True, 'incident': {'id': r.id}})
+        return jsonify({'ok': True, 'incident': {'id': r.id, 'attachments': saved}})
 
     rows = IncidentReport.query.filter_by(technician_id=tid) \
         .order_by(IncidentReport.reported_at.desc()).all()

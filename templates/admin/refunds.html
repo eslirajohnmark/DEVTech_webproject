@@ -1,0 +1,165 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Refunds{% endblock %}
+
+{% block content %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Refunds</h1>
+        <p>Money owed back to customers for cancelled or refunded payments</p>
+    </div>
+    <div class="admin-top-actions">
+        {% include 'admin/_notification_bell.html' %}
+    </div>
+</div>
+
+<div class="admin-stats-grid">
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);"><i class="fas fa-hand-holding-dollar"></i></div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">₱{{ "{:,.2f}".format(stats.owed) }}</span>
+            <span class="admin-stat-label">Still owed</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);"><i class="fas fa-clock"></i></div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ stats.pending }}</span>
+            <span class="admin-stat-label">To process</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);"><i class="fas fa-circle-check"></i></div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ stats.refunded }}</span>
+            <span class="admin-stat-label">Refunded</span>
+        </div>
+    </div>
+    <div class="admin-stat-card">
+        <div class="admin-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);"><i class="fas fa-ban"></i></div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ stats.declined }}</span>
+            <span class="admin-stat-label">Declined</span>
+        </div>
+    </div>
+</div>
+
+<form class="admin-payment-filters" method="GET" action="{{ url_for('admin_refunds') }}">
+    <div class="admin-search-wrapper">
+        <i class="fas fa-search"></i>
+        <input type="search" name="q" value="{{ q }}" maxlength="100"
+               placeholder="Search by customer, transaction, reference or reason... (Enter)">
+    </div>
+    <div class="admin-filter-group">
+        <select name="status" onchange="this.form.submit()" class="admin-filter-select">
+            <option value="all">All refunds</option>
+            {% for key, label in [('pending', 'To process'), ('refunded', 'Refunded'), ('declined', 'Declined')] %}
+            <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-search"></i> Search</button>
+        <a class="admin-btn admin-btn-secondary" href="{{ url_for('admin_refunds') }}"><i class="fas fa-undo"></i> Reset</a>
+    </div>
+</form>
+
+<div class="refund-list">
+    {% for r in refunds %}
+    {% set t = r.transaction %}
+    <article class="refund-card refund-card--{{ r.status }}">
+        <header class="refund-card-head">
+            <div>
+                <strong>{{ r.customer.full_name if r.customer else 'Customer' }}</strong>
+                <span class="admin-muted">· {{ t.transaction_number }}
+                    {% if t.booking %}· Booking {{ t.booking.booking_number }}{% elif t.order %}· Order {{ t.order.order_number }}{% endif %}
+                </span>
+            </div>
+            <span class="refund-status refund-status--{{ r.status }}">
+                {{ {'pending': 'To process', 'refunded': 'Refunded', 'declined': 'Declined'}.get(r.status, r.status) }}
+            </span>
+        </header>
+
+        <div class="refund-card-body">
+            <div class="refund-amount">₱{{ "{:,.2f}".format(r.amount) }}
+                {% if r.status == 'refunded' and r.amount != t.amount %}<small>of ₱{{ "{:,.2f}".format(t.amount) }} paid</small>{% endif %}
+            </div>
+            <p class="refund-reason">{{ r.reason }}</p>
+            <p class="admin-muted refund-meta">
+                Paid by {{ payment_method_label(t.payment_method) }}{% if t.gcash_reference or t.reference_number %}, ref {{ t.gcash_reference or t.reference_number }}{% endif %}
+                · opened {{ r.created_at.strftime('%b %d, %Y %I:%M %p') if r.created_at else '' }} by {{ r.created_by }}
+            </p>
+            {% if r.status != 'pending' %}
+            <p class="refund-outcome">
+                {% if r.status == 'refunded' %}
+                    <i class="fas fa-circle-check"></i> Sent via {{ r.method }}{% if r.reference %} · ref {{ r.reference }}{% endif %}
+                {% else %}
+                    <i class="fas fa-ban"></i> Declined
+                {% endif %}
+                · {{ r.processed_at.strftime('%b %d, %Y %I:%M %p') if r.processed_at else '' }} by {{ r.processed_by }}
+                {% if r.note %}<br><span class="admin-muted">Note: {{ r.note }}</span>{% endif %}
+            </p>
+            {% endif %}
+        </div>
+
+        {% if r.status == 'pending' %}
+        <div class="refund-actions">
+            <details>
+                <summary class="admin-btn admin-btn-sm admin-btn-confirm"><i class="fas fa-paper-plane"></i> Mark as refunded</summary>
+                <form method="POST" action="{{ url_for('admin_refund_complete', refund_id=r.id) }}" class="refund-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label>Sent via
+                        <select name="method" required>
+                            {% for m in methods %}<option value="{{ m }}" {% if (t.payment_method or '')|lower == m|lower %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                        </select>
+                    </label>
+                    <label>Reference (not needed for cash)
+                        <input type="text" name="reference" maxlength="80" placeholder="e.g. GCash ref number">
+                    </label>
+                    <label>Amount returned (₱)
+                        <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f'|format(t.amount) }}" value="{{ '%.2f'|format(r.amount) }}" required>
+                    </label>
+                    <label class="refund-form-wide">Note (optional)
+                        <input type="text" name="note" maxlength="1000">
+                    </label>
+                    <button type="submit" class="admin-btn admin-btn-sm admin-btn-confirm">Confirm refund sent</button>
+                </form>
+            </details>
+            <details>
+                <summary class="admin-btn admin-btn-sm admin-btn-reject"><i class="fas fa-ban"></i> Decline</summary>
+                <form method="POST" action="{{ url_for('admin_refund_decline', refund_id=r.id) }}" class="refund-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label class="refund-form-wide">Why no refund is due (the customer sees this)
+                        <input type="text" name="note" required minlength="5" maxlength="1000"
+                               placeholder="e.g. No GCash payment with that reference was received">
+                    </label>
+                    <button type="submit" class="admin-btn admin-btn-sm admin-btn-reject">Decline refund</button>
+                </form>
+            </details>
+        </div>
+        {% endif %}
+    </article>
+    {% else %}
+    <div class="admin-empty-state">
+        <i class="fas fa-rotate-left"></i>
+        {% if q or status != 'all' %}
+        <p>No refunds match</p>
+        <p>Try a different search or status.</p>
+        {% else %}
+        <p>No refunds yet</p>
+        <p>Refunds appear here when a paid booking or order is cancelled, or when you issue one from Payment Confirmation.</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="admin-pagination">
+    {% if pager.page > 1 %}
+    <a class="admin-page-btn" href="{{ url_for('admin_refunds', page=pager.page - 1, status=status, q=q or None) }}" aria-label="Previous page"><i class="fas fa-chevron-left"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-left"></i></span>{% endif %}
+    <span class="admin-page-info">
+        {% if pager.total %}{{ pager.first }}–{{ pager.last }} of {{ pager.total }} · {% endif %}Page {{ pager.page }} of {{ pager.pages }}
+    </span>
+    {% if pager.page < pager.pages %}
+    <a class="admin-page-btn" href="{{ url_for('admin_refunds', page=pager.page + 1, status=status, q=q or None) }}" aria-label="Next page"><i class="fas fa-chevron-right"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-right"></i></span>{% endif %}
+</div>
+{% endblock %}

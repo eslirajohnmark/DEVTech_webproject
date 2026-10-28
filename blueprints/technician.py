@@ -239,8 +239,20 @@ def incidents():
     jobs = Booking.query.filter_by(technician_id=tid)\
         .order_by(Booking.created_at.desc()).all()
     return render_template('technician/incident_report.html',
-                           reports=reports, jobs=jobs,
+                           reports=reports, jobs=jobs, files=incident_files([r.id for r in reports]),
                            prefill_job=request.args.get('job'))
+
+
+def incident_files(incident_ids):
+    """{incident id: [UploadedFile, ...]} for the given incident reports."""
+    from models.technician_models import UploadedFile
+    out = {}
+    if incident_ids:
+        for f in UploadedFile.query.filter(UploadedFile.owner_type == 'incident',
+                                           UploadedFile.owner_id.in_(incident_ids))\
+                .order_by(UploadedFile.id).all():
+            out.setdefault(f.owner_id, []).append(f)
+    return out
 
 
 # ---------------------------------------------------------------------------

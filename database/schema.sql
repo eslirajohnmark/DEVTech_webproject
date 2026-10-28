@@ -307,6 +307,7 @@ CREATE TABLE IF NOT EXISTS bookings (
 	is_in_shop BOOL, 
 	technician_id INTEGER, 
 	assigned_at DATETIME, 
+	terms_accepted_at DATETIME, 
 	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id), 
@@ -490,6 +491,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 	gcash_reference VARCHAR(50), 
 	receipt_image VARCHAR(255), 
 	rejection_reason TEXT, 
+	reviewed_by VARCHAR(120), 
+	reviewed_at DATETIME, 
 	transaction_date DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id), 
@@ -497,4 +500,28 @@ CREATE TABLE IF NOT EXISTS transactions (
 	FOREIGN KEY(booking_id) REFERENCES bookings (id), 
 	FOREIGN KEY(order_id) REFERENCES orders (id), 
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
+);
+
+-- refunds
+CREATE TABLE IF NOT EXISTS refunds (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	transaction_id INTEGER NOT NULL, 
+	customer_id INTEGER NOT NULL, 
+	booking_id INTEGER, 
+	order_id INTEGER, 
+	amount NUMERIC(10, 2) NOT NULL, 
+	reason VARCHAR(255) NOT NULL, 
+	status VARCHAR(20) NOT NULL, 
+	method VARCHAR(30), 
+	reference VARCHAR(80), 
+	note TEXT, 
+	created_by VARCHAR(120) NOT NULL, 
+	created_at DATETIME, 
+	processed_by VARCHAR(120), 
+	processed_at DATETIME, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(transaction_id) REFERENCES transactions (id), 
+	FOREIGN KEY(customer_id) REFERENCES customers (id), 
+	FOREIGN KEY(booking_id) REFERENCES bookings (id), 
+	FOREIGN KEY(order_id) REFERENCES orders (id)
 );

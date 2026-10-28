@@ -98,7 +98,7 @@ All three are handled in one place, `static/js/portal-shortcuts.js`, through the
 
 ## Live updates
 
-Pages update on their own; nobody needs to press refresh. Every open page asks `/api/live` every 4 seconds (every 30 seconds while the tab is in the background) for unread counts and a fingerprint of the data that account can see.
+Pages update on their own; nobody needs to press refresh. Every visible page keeps one request waiting on `/api/live?wait=1`; the server answers it the moment that account's unread counts or data change. A database commit in the same server process wakes it immediately, and changes made by another worker process are noticed within `LIVE_RECHECK_SECONDS` (1.5 s). The request is re-armed straight away. Background tabs instead check every 30 seconds, and if a server process already has `LIVE_MAX_WAITERS` (32) requests waiting, extra pages fall back to checking every 4 seconds. Production needs threaded gunicorn workers for this (see DEPLOY.md).
 
 - Unread message and notification badges, the bell and the tab title (`(3) DEVTech · …`) update immediately, and new messages and notifications pop up in the corner.
 - Message inboxes (customer, technician, admin) swap the conversation list and the open chat in place, so a half-written reply is never lost.

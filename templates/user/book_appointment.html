@@ -277,9 +277,31 @@
                 <div id="paymentInfo" style="margin-top:0.8rem;padding:0.8rem 1rem;background:var(--user-bg);border-radius:var(--user-radius-sm);border:1px solid var(--user-border);">
                     <p id="paymentDetails" style="font-size:0.85rem;color:var(--user-text-secondary);">
                         <i class="fas fa-info-circle"></i>
-                        <span id="paymentInfoText">You will receive a GCash payment link via email after booking.</span>
+                        <span id="paymentInfoText">After booking, pay with GCash from Transactions and enter your reference number or upload the receipt. An admin then confirms it.</span>
                     </p>
                 </div>
+            </div>
+
+            <div class="user-form-step">
+                <div class="user-step-header">
+                    <span class="user-step-number">07</span>
+                    <h4 class="user-step-title">Terms of Service <span class="user-required-star">*</span></h4>
+                </div>
+                <details class="booking-terms">
+                    <summary><i class="fas fa-file-contract"></i> Read the Terms of Service</summary>
+                    <ol>
+                        <li><strong>Confirmation.</strong> This is a repair request. It is confirmed once DEVTech approves it and assigns a technician; you will be notified.</li>
+                        <li><strong>Price and extra work.</strong> The listed price is the base price of the service. If the technician finds that more work or parts are needed, the job is put on hold and you are asked to approve or decline the extra cost first. Nothing extra is charged without your approval.</li>
+                        <li><strong>Payment.</strong> GCash payments are confirmed by DEVTech against your reference number or receipt. With C.A.R (Cash After Repair) you pay once the repair is done.</li>
+                        <li><strong>Cancelling.</strong> You can cancel from My Bookings while the request is pending or confirmed. After work has started, contact us through Messages.</li>
+                        <li><strong>Your data.</strong> Please back up your files before handing over your device. The technician records at intake whether you agreed to a data backup.</li>
+                        <li><strong>Home service.</strong> Give an accurate address inside Tacloban City. Your technician's identity is verified by DEVTech; you can check this on Monitor Device.</li>
+                    </ol>
+                </details>
+                <label class="booking-terms-accept" for="acceptTerms">
+                    <input type="checkbox" name="accept_terms" id="acceptTerms" required>
+                    <span>I have read and accept the Terms of Service.</span>
+                </label>
             </div>
 
             <div class="user-form-actions">

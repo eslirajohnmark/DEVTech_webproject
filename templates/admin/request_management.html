@@ -24,7 +24,7 @@
             <i class="fas fa-clipboard-list"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ bookings|length }}</span>
+            <span class="admin-stat-number">{{ stats.total }}</span>
             <span class="admin-stat-label">Total Requests</span>
         </div>
     </div>
@@ -33,7 +33,7 @@
             <i class="fas fa-clock"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ bookings|selectattr('status', 'equalto', 'pending')|list|length }}</span>
+            <span class="admin-stat-number">{{ stats.pending }}</span>
             <span class="admin-stat-label">Pending</span>
         </div>
     </div>
@@ -42,7 +42,7 @@
             <i class="fas fa-check-circle"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ bookings|selectattr('status', 'in', ['confirmed', 'completed'])|list|length }}</span>
+            <span class="admin-stat-number">{{ stats.approved }}</span>
             <span class="admin-stat-label">Approved</span>
         </div>
     </div>
@@ -51,34 +51,33 @@
             <i class="fas fa-times-circle"></i>
         </div>
         <div class="admin-stat-info">
-            <span class="admin-stat-number">{{ bookings|selectattr('status', 'equalto', 'cancelled')|list|length }}</span>
-            <span class="admin-stat-label">Rejected</span>
+            <span class="admin-stat-number">{{ stats.cancelled }}</span>
+            <span class="admin-stat-label">Rejected / Cancelled</span>
         </div>
     </div>
 </div>
 
 <!-- Filters -->
-<div class="admin-request-filters">
+<form class="admin-request-filters" method="GET" action="{{ url_for('admin_requests') }}">
     <div class="admin-search-wrapper">
         <i class="fas fa-search"></i>
-        <input type="text" placeholder="Search by name, ID, or service..." id="requestSearch" oninput="filterRequests()" />
+        <input type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search by name, booking number, or service... (Enter)" id="requestSearch" />
     </div>
     <div class="admin-filter-group">
-        <select id="statusFilter" onchange="filterRequests()" class="admin-filter-select">
+        <select id="statusFilter" name="status" onchange="this.form.submit()" class="admin-filter-select">
             <option value="all">All Status</option>
-            <option value="pending">Pending</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="diagnosis_pending">Diagnosis Pending</option>
-            <option value="in_progress">In Progress</option>
-            <option value="completed">Completed</option>
-            <option value="released">Released</option>
-            <option value="cancelled">Cancelled</option>
+            {% for key, label in [('pending', 'Pending'), ('confirmed', 'Assigned'), ('diagnosis_pending', 'Diagnosis'),
+                                  ('in_progress', 'On Repair'), ('on_hold', 'On Hold'), ('completed', 'Ready for Collection'),
+                                  ('released', 'Released'), ('cancelled', 'Cancelled')] %}
+            <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
         </select>
-        <button class="admin-btn admin-btn-secondary" onclick="resetFilters()">
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-search"></i> Search</button>
+        <a class="admin-btn admin-btn-secondary" href="{{ url_for('admin_requests') }}">
             <i class="fas fa-undo"></i> Reset
-        </button>
+        </a>
     </div>
-</div>
+</form>
 
 <!-- Request List -->
 <div class="admin-request-list" id="requestList">
@@ -117,6 +116,12 @@
                     <span class="admin-request-card-status {{ booking.status }}">
                         {{ status_labels.get(booking.status, booking.status) }} · {{ booking.technician.full_name }}
                     </span>
+                    {% if booking.status in ('confirmed', 'diagnosis_pending', 'in_progress', 'on_hold') %}
+                    <button class="admin-btn admin-btn-sm admin-btn-secondary" title="Move this job to another technician"
+                            onclick='openReassignModal({{ booking.id|string|tojson }}, {{ booking.booking_number|tojson }}, {{ booking.technician.full_name|tojson }})'>
+                        <i class="fas fa-people-arrows"></i> Reassign
+                    </button>
+                    {% endif %}
                 {% endif %}
             </div>
         </div>
@@ -125,16 +130,22 @@
         <div class="admin-empty-state">
             <i class="fas fa-inbox"></i>
             <p>No service requests found</p>
-            <p>All requests will appear here once submitted</p>
+            <p>{% if q or status != 'all' %}Try a different search or status.{% else %}All requests will appear here once submitted{% endif %}</p>
         </div>
     {% endif %}
 </div>
 
-<!-- Pagination -->
+<!-- Pagination (server-side) -->
 <div class="admin-pagination">
-    <button class="admin-page-btn" onclick="changePage('prev')"><i class="fas fa-chevron-left"></i></button>
-    <span class="admin-page-info">Page <span id="currentPage">1</span> of <span id="totalPages">1</span></span>
-    <button class="admin-page-btn" onclick="changePage('next')"><i class="fas fa-chevron-right"></i></button>
+    {% if pager.page > 1 %}
+    <a class="admin-page-btn" href="{{ url_for(request.endpoint, page=pager.page - 1, status=status, q=q or None) }}" aria-label="Previous page"><i class="fas fa-chevron-left"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-left"></i></span>{% endif %}
+    <span class="admin-page-info">
+        {% if pager.total %}{{ pager.first }}–{{ pager.last }} of {{ pager.total }} · {% endif %}Page {{ pager.page }} of {{ pager.pages }}
+    </span>
+    {% if pager.page < pager.pages %}
+    <a class="admin-page-btn" href="{{ url_for(request.endpoint, page=pager.page + 1, status=status, q=q or None) }}" aria-label="Next page"><i class="fas fa-chevron-right"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-right"></i></span>{% endif %}
 </div>
 
 <!-- Reject Modal -->
@@ -222,6 +233,45 @@
     </div>
 </div>
 
+<!-- Reassign Technician Modal -->
+<div class="admin-modal" id="reassignModal">
+    <div class="admin-modal-content">
+        <div class="admin-modal-header">
+            <h2><i class="fas fa-people-arrows"></i> Reassign Job</h2>
+            <button class="admin-modal-close" onclick="closeAdminModal('reassignModal')">&times;</button>
+        </div>
+        <div class="admin-modal-body">
+            <p style="color:var(--text-secondary); margin-bottom:1rem;">
+                Move <strong id="reassignBookingNumber">this job</strong>, currently with
+                <strong id="reassignCurrentTech">its technician</strong>, to another identity-verified technician.
+                The job keeps its progress; both technicians and the customer are notified.
+            </p>
+            <form id="reassignForm" method="POST" action="">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="admin-form-group">
+                    <label for="reassignTechnicianSelect">New technician</label>
+                    <select name="technician_id" id="reassignTechnicianSelect" required>
+                        <option value="" disabled selected>Select a technician...</option>
+                        {% for tech in technicians if tech.is_active %}
+                        <option value="{{ tech.id }}" {% if not tech.id_verified %}disabled{% endif %}>
+                            {{ tech.full_name }}{% if tech.id_verified %} - Verified ✓{% else %} - Not Verified (cannot assign){% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="admin-form-group">
+                    <label for="reassignReason">Reason (optional, shown in the job log)</label>
+                    <input type="text" name="reason" id="reassignReason" maxlength="300" placeholder="e.g. technician on leave">
+                </div>
+                <div class="admin-modal-actions" style="margin-top:1.5rem;">
+                    <button type="button" class="admin-btn admin-btn-secondary" onclick="closeAdminModal('reassignModal')">Cancel</button>
+                    <button type="submit" class="admin-btn admin-btn-approve"><i class="fas fa-check"></i> Reassign</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <!-- Booking Details Modal -->
 <div class="admin-modal" id="requestDetailsModal">
     <div class="admin-modal-content admin-modal-wide">
@@ -242,58 +292,7 @@
 </div>
 
 <script>
-    let currentPage = 1;
-    const rowsPerPage = 5;
-    let filteredCards = [];
-
-    function getVisibleCards() {
-        const cards = document.querySelectorAll('.admin-request-card');
-        const search = document.getElementById('requestSearch').value.toLowerCase();
-        const status = document.getElementById('statusFilter').value;
-
-        return Array.from(cards).filter(card => {
-            const searchText = card.dataset.search.toLowerCase();
-            const cardStatus = card.dataset.status;
-            const matchesSearch = searchText.includes(search);
-            const matchesStatus = status === 'all' || cardStatus === status;
-            return matchesSearch && matchesStatus;
-        });
-    }
-
-    function filterRequests() {
-        filteredCards = getVisibleCards();
-        currentPage = 1;
-        renderPage();
-    }
-
-    function renderPage() {
-        const start = (currentPage - 1) * rowsPerPage;
-        const end = start + rowsPerPage;
-        const pageCards = filteredCards.slice(start, end);
-
-        document.querySelectorAll('.admin-request-card').forEach(card => card.style.display = 'none');
-        pageCards.forEach(card => card.style.display = '');
-
-        const totalPages = Math.ceil(filteredCards.length / rowsPerPage) || 1;
-        document.getElementById('currentPage').textContent = currentPage;
-        document.getElementById('totalPages').textContent = totalPages;
-    }
-
-    function changePage(direction) {
-        const totalPages = Math.ceil(filteredCards.length / rowsPerPage) || 1;
-        if (direction === 'prev' && currentPage > 1) {
-            currentPage--;
-        } else if (direction === 'next' && currentPage < totalPages) {
-            currentPage++;
-        }
-        renderPage();
-    }
-
-    function resetFilters() {
-        document.getElementById('requestSearch').value = '';
-        document.getElementById('statusFilter').value = 'all';
-        filterRequests();
-    }
+    // Search, status filter and paging are done by the server (?q=&status=&page=).
 
     function openRejectModal(bookingId, userName) {
         document.getElementById('rejectUserName').textContent = userName;
@@ -307,6 +306,15 @@
         document.getElementById('assignTechnicianForm').action = "{{ url_for('admin_request_status', booking_id=0) }}".replace('0', bookingId);
         document.getElementById('assignTechnicianSelect').value = '';
         openAdminModal('assignTechnicianModal');
+    }
+
+    function openReassignModal(bookingId, bookingNumber, currentTech) {
+        document.getElementById('reassignBookingNumber').textContent = bookingNumber;
+        document.getElementById('reassignCurrentTech').textContent = currentTech;
+        document.getElementById('reassignForm').action = "{{ url_for('admin_request_reassign', booking_id=0) }}".replace('0', bookingId);
+        document.getElementById('reassignTechnicianSelect').value = '';
+        document.getElementById('reassignReason').value = '';
+        openAdminModal('reassignModal');
     }
 
     function viewRequestDetails(bookingId) {
@@ -476,9 +484,5 @@
             });
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
-        filteredCards = getVisibleCards();
-        renderPage();
-    });
 </script>
 {% endblock %}

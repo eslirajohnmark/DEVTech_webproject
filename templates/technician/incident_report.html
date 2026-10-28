@@ -57,6 +57,7 @@
 
             <form method="POST"
                   action="{{ url_for('technician_api.incidents') }}"
+                  enctype="multipart/form-data"
                   novalidate>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -119,6 +120,14 @@
                     <textarea class="tech-textarea" id="incidentAction"
                               name="actionTaken" rows="3"
                               placeholder="e.g. Left the location and informed the customer by phone."></textarea>
+                </div>
+
+                <div class="tech-field">
+                    <label class="tech-label" for="incidentPhotos">Photos or documents (optional)</label>
+                    <input class="tech-input" id="incidentPhotos" name="photos" type="file" multiple
+                           accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" />
+                    <p class="tech-hint">Up to 5 files: JPG, PNG, WEBP, GIF or PDF, 8 MB each.
+                        Only you and administrators can open them.</p>
                 </div>
 
                 <label class="tech-check" style="margin-bottom:1rem;">
@@ -190,6 +199,21 @@
                                   color:var(--t-text-soft); margin-bottom:0.5rem;">
                             {{ r.description }}
                         </p>
+
+                        {% if files.get(r.id) %}
+                        <div class="evidence-strip">
+                            {% for f in files[r.id] %}
+                            <a class="evidence-item" href="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}"
+                               target="_blank" rel="noopener" title="{{ f.original_name }}">
+                                {% if f.mime_type.startswith('image/') %}
+                                <img src="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" alt="{{ f.original_name }}" loading="lazy">
+                                {% else %}
+                                <span class="evidence-file"><i class="fas fa-file-pdf"></i> {{ f.original_name|truncate(22, True) }}</span>
+                                {% endif %}
+                            </a>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
 
                         <div class="tech-job-meta">
                             <span class="tech-chip">

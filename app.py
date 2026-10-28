@@ -21,6 +21,11 @@ import secrets
 import shutil
 from werkzeug.utils import secure_filename
 from sqlalchemy import text, or_, and_, func, case as sa_case
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import event as sa_event
+from sqlalchemy.orm import Session as SASession
+import threading
+import time
 from markupsafe import escape as escape_markupsafe
 from jinja2.utils import htmlsafe_json_dumps
 from dotenv import load_dotenv
@@ -149,6 +154,7 @@ def _inject_nav_counts():
         if session.get('role') == 'admin':
             counts['tickets'] = SupportTicket.query.filter(SupportTicket.status != 'resolved').count()
             counts['inquiries'] = ContactInquiry.query.filter_by(status='new').count()
+            counts['refunds'] = Refund.query.filter_by(status='pending').count()
         return counts
     return {'nav_counts': nav_counts}
 
@@ -569,6 +575,9 @@ class Service(db.Model):
 
 class Booking(db.Model):
     __tablename__ = 'bookings'
+    # Slot capacity checks count bookings per (date, time); the index also lets
+    # MySQL lock just that slot while a new booking is being placed.
+    __table_args__ = (db.Index('ix_bookings_slot', 'booking_date', 'booking_time'),)
 
     id = db.Column(db.Integer, primary_key=True)
     booking_number = db.Column(db.String(50), unique=True, nullable=False)
@@ -583,6 +592,7 @@ class Booking(db.Model):
     is_in_shop = db.Column(db.Boolean, default=False)
     technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id'), nullable=True, index=True)
     assigned_at = db.Column(db.DateTime, nullable=True)
+    terms_accepted_at = db.Column(db.DateTime, nullable=True)   # customer ticked the Terms box
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -608,6 +618,8 @@ class Transaction(db.Model):
     gcash_reference = db.Column(db.String(50))
     receipt_image = db.Column(db.String(255))
     rejection_reason = db.Column(db.Text)
+    reviewed_by = db.Column(db.String(120))         # admin who confirmed / rejected it
+    reviewed_at = db.Column(db.DateTime)
     transaction_date = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -615,6 +627,31 @@ class Transaction(db.Model):
     customer = db.relationship('Customer', back_populates='transactions')
     user_id = db.synonym('customer_id')
     user = db.synonym('customer')
+
+class Refund(db.Model):
+    """Money owed back to a customer for a payment (a cancelled paid booking or
+    order, or one an admin opens by hand). An admin marks it refunded (how and
+    with what reference) or declines it (e.g. the money never arrived)."""
+    __tablename__ = 'refunds'
+
+    id = db.Column(db.Integer, primary_key=True)
+    transaction_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey('bookings.id'), nullable=True)
+    order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)        # what is owed; set to what was paid back
+    reason = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)  # pending|refunded|declined
+    method = db.Column(db.String(30))                             # GCash | Cash | Bank transfer
+    reference = db.Column(db.String(80))
+    note = db.Column(db.Text)
+    created_by = db.Column(db.String(120), nullable=False, default='system')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    processed_by = db.Column(db.String(120))
+    processed_at = db.Column(db.DateTime)
+
+    transaction = db.relationship('Transaction', backref=db.backref('refunds', order_by='Refund.id'))
+    customer = db.relationship('Customer')
 
 class Product(db.Model):
     __tablename__ = 'products'
@@ -1067,6 +1104,15 @@ def add_profile_columns():
             for name, d in PROFILE_COLUMNS:
                 _try_sql(f"ALTER TABLE {table} ADD COLUMN {name} {d}")
 
+def add_workflow_columns():
+    """Columns and index added by the workflow audit (booking terms, payment
+    reviewer, slot index). Safe to run repeatedly."""
+    with app.app_context():
+        _try_sql("ALTER TABLE bookings ADD COLUMN terms_accepted_at DATETIME NULL")
+        _try_sql("ALTER TABLE transactions ADD COLUMN reviewed_by VARCHAR(120) NULL")
+        _try_sql("ALTER TABLE transactions ADD COLUMN reviewed_at DATETIME NULL")
+        _try_sql("CREATE INDEX ix_bookings_slot ON bookings (booking_date, booking_time)")
+
 def add_service_category_columns():
     """Same columns as database/migrate_service_categories.sql, for DBs created before it."""
     with app.app_context():
@@ -1458,6 +1504,7 @@ def _live_stamp(account):
             _count_where(ApprovalRequest.status == 'pending'), where=[ApprovalRequest.booking_id.in_(mine)])
         add(func.max(JobLog.id), where=[JobLog.booking_id.in_(mine)])
         add(func.count(ServiceReport.id), func.max(ServiceReport.updated_at), where=[ServiceReport.booking_id.in_(mine)])
+        add(func.count(Refund.id), func.max(Refund.processed_at), where=[Refund.customer_id == aid])
     elif role == 'technician':
         jobs = q(Booking.id).filter(Booking.technician_id == aid)
         add(func.count(Booking.id), func.max(Booking.updated_at), func.max(Booking.assigned_at),
@@ -1482,6 +1529,7 @@ def _live_stamp(account):
         add(func.count(ServiceReport.id), func.max(ServiceReport.updated_at), func.max(ServiceReport.reviewed_at))
         add(func.count(IncidentReport.id), func.max(IncidentReport.reviewed_at), _count_where(IncidentReport.status == 'open'))
         add(func.count(ServiceRating.id))
+        add(func.count(Refund.id), func.max(Refund.processed_at), _count_where(Refund.status == 'pending'))
         # accounts: not updated_at, which every presence ping touches
         for model in (Customer, Technician, Admin):
             add(func.count(model.id), func.max(model.id), _count_where(model.is_active.is_(True)))
@@ -1506,6 +1554,71 @@ def live_state(account):
         's': _live_stamp(account),
     }
 
+# ---- Waiting ("long polling") so updates arrive at once -------------------
+# With ?wait=1 the request is held open until this account's live state differs
+# from what the page already has (or LIVE_WAIT_SECONDS pass). Any database commit
+# in this process wakes waiters immediately; changes made by other worker
+# processes are caught by re-checking every LIVE_RECHECK_SECONDS. At most
+# LIVE_MAX_WAITERS requests wait per process - beyond that the request answers
+# straight away and the page simply polls again a few seconds later.
+app.config.setdefault('LIVE_WAIT_SECONDS', float(os.environ.get('LIVE_WAIT_SECONDS', 25)))
+app.config.setdefault('LIVE_RECHECK_SECONDS', float(os.environ.get('LIVE_RECHECK_SECONDS', 1.5)))
+app.config.setdefault('LIVE_MAX_WAITERS', int(os.environ.get('LIVE_MAX_WAITERS', 32)))
+_live_changed = threading.Condition()
+_live_generation = [0]
+_live_waiters = [0]
+
+def _live_bump(_session):
+    with _live_changed:
+        _live_generation[0] += 1
+        _live_changed.notify_all()
+
+sa_event.listen(SASession, 'after_commit', _live_bump)
+
+def _live_client_state():
+    """What the page says it already shows (None for a plain, non-waiting poll)."""
+    if request.args.get('wait') != '1':
+        return None
+    return {'n': request.args.get('n', type=int), 'm': request.args.get('m', type=int),
+            'nu': request.args.get('nu', type=int), 'mu': request.args.get('mu', type=int),
+            's': request.args.get('s', '')}
+
+def _live_differs(state, client):
+    return any(state[k] != client[k] for k in ('n', 'm', 'nu', 'mu', 's'))
+
+def _live_wait(account, state, client):
+    """Block until state differs from client's view or the wait ends. Returns
+    (state, waited) - waited is False when no waiting slot was free."""
+    with _live_changed:
+        if _live_waiters[0] >= app.config['LIVE_MAX_WAITERS']:
+            return state, False
+        _live_waiters[0] += 1
+    try:
+        deadline = time.monotonic() + app.config['LIVE_WAIT_SECONDS']
+        role, account_id = account.role, account.id
+        while not _live_differs(state, client):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # Never sleep inside a transaction: ending it returns the pooled DB
+            # connection (waiting pages must not starve normal requests), releases
+            # SQLite read locks that would block writers, and starts a fresh
+            # snapshot for the next check so new rows are visible.
+            with _live_changed:
+                seen = _live_generation[0]
+            db.session.rollback()
+            with _live_changed:
+                _live_changed.wait_for(lambda: _live_generation[0] != seen,
+                                       timeout=min(app.config['LIVE_RECHECK_SECONDS'], remaining))
+            fresh = get_account(role, account_id)
+            if not fresh or not fresh.is_active:
+                return None, True
+            state = live_state(fresh)
+        return state, True
+    finally:
+        with _live_changed:
+            _live_waiters[0] -= 1
+
 @app.route('/api/live')
 @limiter.exempt
 def api_live():
@@ -1513,6 +1626,13 @@ def api_live():
     if not account or not account.is_active:
         return jsonify({'ok': False}), 401
     state = live_state(account)
+    client = _live_client_state()
+    waited = False
+    if client is not None and not _live_differs(state, client):
+        state, waited = _live_wait(account, state, client)
+        if state is None:                          # account removed or deactivated meanwhile
+            session.clear()
+            return jsonify({'ok': False}), 401
     since_n = request.args.get('n', type=int)
     since_m = request.args.get('m', type=int)
     if since_n is not None and state['n'] > since_n:
@@ -1535,6 +1655,7 @@ def api_live():
             })
         state['new_messages'] = new_messages
     state['ok'] = True
+    state['waited'] = waited
     resp = jsonify(state)
     resp.headers['Cache-Control'] = 'no-store'
     return resp
@@ -1609,6 +1730,77 @@ def rejected_requests():
     bookings = Booking.query.filter_by(customer_id=uid, status='cancelled').order_by(Booking.created_at.desc()).all()
     return render_template('user/rejected_requests.html', bookings=bookings, notifications=_unread_notifs(uid))
 
+def _booking_transactions(booking):
+    """The booking's own transaction plus any extra-work charges billed separately
+    (those carry the booking number in their transaction number)."""
+    return Transaction.query.filter(or_(
+        Transaction.booking_id == booking.id,
+        Transaction.transaction_number.like(f'{EXTRA_TXN_PREFIX}{booking.booking_number}-%'))).all()
+
+def settle_cancelled_booking(booking):
+    """Bring a cancelled booking's payments and approval requests in line with it.
+    Unpaid charges are cancelled (so they can no longer be paid or confirmed) and
+    pending extra-work requests are withdrawn. Returns the transactions that were
+    already confirmed or had payment proof attached - those need a refund check.
+    Does not commit."""
+    from models.technician_models import ApprovalRequest
+    now = datetime.utcnow()
+    for a in ApprovalRequest.query.filter_by(booking_id=booking.id, status='pending').all():
+        a.status = 'withdrawn'
+        a.responded_at = now.strftime('%Y-%m-%d %H:%M:%S')
+    needs_refund_check = []
+    for txn in _booking_transactions(booking):
+        if txn.payment_status == 'confirmed':
+            needs_refund_check.append(txn)
+        elif txn.payment_status in ('pending', 'rejected'):
+            if txn.receipt_image or txn.gcash_reference or txn.reference_number:
+                needs_refund_check.append(txn)      # customer may already have paid
+            txn.payment_status = 'cancelled'
+            txn.updated_at = now
+    return needs_refund_check
+
+REFUND_METHODS = ('GCash', 'Cash', 'Bank transfer')
+
+def open_refund(txn, reason, created_by='system', booking=None, order=None):
+    """Open a refund for a payment unless one is already pending or done.
+    Returns (refund, created). Does not commit."""
+    existing = Refund.query.filter(Refund.transaction_id == txn.id,
+                                   Refund.status.in_(('pending', 'refunded'))).first()
+    if existing:
+        return existing, False
+    booking = booking or txn.booking
+    order = order or txn.order
+    refund = Refund(transaction_id=txn.id, customer_id=txn.customer_id,
+                    booking_id=booking.id if booking else None, order_id=order.id if order else None,
+                    amount=txn.amount, reason=reason[:255], created_by=created_by[:120])
+    db.session.add(refund)
+    return refund, True
+
+def notify_refund_check(booking, transactions):
+    """Open refunds for a cancelled booking's paid (or possibly paid) charges and
+    tell admins and the customer. Commits."""
+    if not transactions:
+        return
+    opened = []
+    for t in transactions:
+        why = (f'Booking {booking.booking_number} cancelled after the payment was confirmed.'
+               if t.payment_status == 'confirmed' else
+               f'Booking {booking.booking_number} cancelled after the customer sent payment proof. '
+               f'Check the money arrived before refunding.')
+        refund, created = open_refund(t, why, booking=booking)
+        if created:
+            opened.append(t)
+    db.session.commit()
+    if not opened:
+        return
+    numbers = ', '.join(t.transaction_number for t in opened)
+    notify_admins('Refund to process',
+                  f'{booking.booking_number} was cancelled with a paid or possibly paid charge ({numbers}). '
+                  f'See Refunds.', 'warning')
+    create_notification(booking.customer_id, 'Refund requested',
+                        f'Booking {booking.booking_number} was cancelled after a payment. A refund has been '
+                        f'opened; you can follow it on your Transactions page.', 'info', role='customer')
+
 @app.route('/booking/<int:booking_id>/cancel', methods=['POST'])
 @login_required
 def cancel_booking(booking_id):
@@ -1620,7 +1812,10 @@ def cancel_booking(booking_id):
         return jsonify({'success': False, 'message': 'This booking cannot be cancelled'}), 400
     booking.status = 'cancelled'
     booking.updated_at = datetime.utcnow()
+    refund_check = settle_cancelled_booking(booking)
     db.session.commit()
+    notify_admins('Booking Cancelled', f'{booking.booking_number} was cancelled by the customer.', 'warning')
+    notify_refund_check(booking, refund_check)
     if booking.technician_id:
         create_notification(booking.technician_id, 'Job Cancelled',
                             f'{booking.booking_number} was cancelled by the customer.', 'warning',
@@ -2019,6 +2214,11 @@ def api_services():
                     for s in Service.query.filter_by(is_active=True).all()])
  
 # ==================== SERVICE REQUEST / CATALOG / BOOKING ====================
+BOOKING_PAYMENT_METHODS = ('GCash', 'C.A.R')       # values of the booking form's radio buttons
+BOOKING_SLOT_HOURS = range(8, 18)                  # 08:00 ... 17:00, on the hour
+SLOT_CAPACITY = 5
+BOOKING_MAX_DAYS_AHEAD = 90
+
 @app.route('/user/service-request', methods=['GET', 'POST'])
 @login_required
 def request_service():
@@ -2031,7 +2231,14 @@ def request_service():
         booking_date = request.form.get('booking_date')
         booking_time = request.form.get('booking_time')
         is_in_shop = request.form.get('in_shop') == 'on'
-        payment_method = request.form.get('payment_method', 'unpaid')
+        payment_method = request.form.get('payment_method', '')
+
+        if request.form.get('accept_terms') != 'on':
+            flash('Please read and accept the Terms of Service to book a repair.', 'danger')
+            return redirect(url_for('request_service'))
+        if payment_method not in BOOKING_PAYMENT_METHODS:
+            flash('Please choose a payment method.', 'danger')
+            return redirect(url_for('request_service'))
  
         if service_id == 'other':
             custom_service = request.form.get('custom_service', '').strip()
@@ -2046,19 +2253,21 @@ def request_service():
                                           icon='fa-tools', is_active=True)
                     db.session.add(cat)
                     db.session.commit()
+                # Hidden from the catalogue: only reachable through "Other".
                 obj = Service(category_id=cat.id, name='Custom Service',
                               description='Custom service requested by user.', price=0.00,
-                              estimated_hours=1, is_active=True)
+                              estimated_hours=1, is_active=False)
                 db.session.add(obj)
                 db.session.commit()
             service_id_for_booking = obj.id
             description = f"{description}\n\n📝 Custom Service: {custom_service}" if description \
                 else f"📝 Custom Service: {custom_service}"
         else:
-            if not Service.query.get(service_id):
-                flash('Invalid service selected.', 'danger')
+            chosen = db.session.get(Service, int(service_id)) if str(service_id or '').isdigit() else None
+            if not chosen or not chosen.is_active:
+                flash('That service is not available. Please choose another one.', 'danger')
                 return redirect(url_for('request_service'))
-            service_id_for_booking = service_id
+            service_id_for_booking = chosen.id
  
         if device_type == 'Other':
             custom_device = request.form.get('custom_device', '').strip()
@@ -2066,8 +2275,12 @@ def request_service():
                 flash('Please specify your device type.', 'danger')
                 return redirect(url_for('request_service'))
             device_type = custom_device
-        if not device_type:
-            flash('Please select a device type.', 'danger')
+        device_type = (device_type or '').strip()
+        if not device_type or len(device_type) > 50:
+            flash('Please select a device type (up to 50 characters).', 'danger')
+            return redirect(url_for('request_service'))
+        if address and len(address) > 255:
+            flash('Please shorten the service address (up to 255 characters).', 'danger')
             return redirect(url_for('request_service'))
         if not booking_date or not booking_time:
             flash('Please select a booking date and time.', 'danger')
@@ -2094,14 +2307,29 @@ def request_service():
                 flash('Please pin your location on the map, inside Tacloban City.', 'danger')
                 return redirect(url_for('request_service'))
  
+        if (booking_time_obj.minute or booking_time_obj.second
+                or booking_time_obj.hour not in BOOKING_SLOT_HOURS):
+            flash('Please choose one of the listed time slots (8:00 AM to 5:00 PM).', 'danger')
+            return redirect(url_for('request_service'))
         if datetime.combine(booking_date_obj, booking_time_obj) < datetime.now():
             flash('That time has already passed. Please choose a later slot.', 'danger')
             return redirect(url_for('request_service'))
- 
-        slot_count = Booking.query.filter(Booking.booking_date == booking_date_obj,
-                                          Booking.booking_time == booking_time_obj,
-                                          Booking.status.in_(SLOT_STATUSES)).count()
-        if slot_count >= 5:
+        if booking_date_obj > (datetime.now() + timedelta(days=BOOKING_MAX_DAYS_AHEAD)).date():
+            flash(f'Bookings can be made up to {BOOKING_MAX_DAYS_AHEAD} days ahead.', 'danger')
+            return redirect(url_for('request_service'))
+
+        # Lock this slot's bookings so two requests can't both take the last place
+        # (MySQL row/gap locks on ix_bookings_slot; a no-op on SQLite).
+        in_slot = Booking.query.filter(Booking.booking_date == booking_date_obj,
+                                       Booking.booking_time == booking_time_obj,
+                                       Booking.status.in_(SLOT_STATUSES)).with_for_update().all()
+        mine = next((b for b in in_slot if b.customer_id == user_id), None)
+        if mine:
+            db.session.rollback()
+            flash(f'You already have booking #{mine.booking_number} at that time.', 'info')
+            return redirect(url_for('total_bookings'))
+        if len(in_slot) >= SLOT_CAPACITY:
+            db.session.rollback()
             flash('This time slot is fully booked. Please choose another time.', 'danger')
             return redirect(url_for('request_service'))
  
@@ -2110,7 +2338,7 @@ def request_service():
                           device_type=device_type, description=description or 'No description provided',
                           address=address if not is_in_shop else 'In-shop repair',
                           booking_date=booking_date_obj, booking_time=booking_time_obj,
-                          is_in_shop=is_in_shop, status='pending')
+                          is_in_shop=is_in_shop, status='pending', terms_accepted_at=datetime.utcnow())
         db.session.add(booking)
         db.session.flush()
         assign_booking_number(booking)
@@ -2267,7 +2495,11 @@ def api_booking_rate(booking_id):
     db.session.add(ServiceRating(booking_id=b.id, technician_id=b.technician_id, customer_id=b.user_id,
                                  stars=stars, experience=exp[:2000],
                                  improvement=(d.get('improvement') or '').strip()[:2000]))
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:                       # rated a moment ago from another tab
+        db.session.rollback()
+        return jsonify({'ok': False, 'reason': 'You already rated this repair.'}), 400
     create_notification(b.technician_id, 'New Rating', f'{b.booking_number} was rated {stars}/5.', 'info',
                         role='technician')
     return jsonify({'ok': True})
@@ -2286,6 +2518,8 @@ def api_booking_approval_respond(booking_id, approval_id):
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
     if a.status != 'pending':
         return jsonify({'ok': False, 'reason': 'This request was already answered.'}), 400
+    if b.status != 'on_hold':
+        return jsonify({'ok': False, 'reason': 'This job is no longer waiting for your answer.'}), 400
     data = request.get_json(silent=True) or {}
     decision = data.get('decision')
     if decision not in ('approve', 'decline'):
@@ -2293,9 +2527,15 @@ def api_booking_approval_respond(booking_id, approval_id):
     note = (data.get('note') or '').strip()[:1000]
 
     now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-    a.status = 'approved' if decision == 'approve' else 'declined'
-    a.responded_at = now_str
-    a.customer_response = note or None
+    # Claim the request in one UPDATE so a double click (or two tabs) can't
+    # answer it twice and bill the extra cost twice.
+    claimed = ApprovalRequest.query.filter_by(id=a.id, status='pending').update(
+        {'status': 'approved' if decision == 'approve' else 'declined',
+         'responded_at': now_str, 'customer_response': note or None}, synchronize_session=False)
+    if claimed != 1:
+        db.session.rollback()
+        return jsonify({'ok': False, 'reason': 'This request was already answered.'}), 400
+    db.session.refresh(a)
     if b.status == 'on_hold':
         b.status = resume_status(b)
     b.updated_at = datetime.utcnow()
@@ -2351,12 +2591,29 @@ def user_payment(transaction_id):
         flash('This payment belongs to a cancelled order.', 'info')
         return redirect(url_for('user_transactions'))
 
-    payment_method = request.form.get('payment_method')
-    reference = request.form.get('reference_number')
+    payment_method = request.form.get('payment_method') or ''
+    reference = (request.form.get('reference_number') or '').strip()
     receipt_file = request.files.get('receipt_image')
- 
+
+    # Orders are paid by GCash (or cash on delivery, which needs no submission);
+    # bookings by GCash or C.A.R. Anything else is refused.
+    allowed = ('GCash',) if transaction.order else BOOKING_PAYMENT_METHODS
+    if payment_method and payment_method not in allowed:
+        flash('Please choose a valid payment method.', 'danger')
+        return redirect(url_for('user_transactions'))
+    if len(reference) > 50:
+        flash('The reference number is too long (50 characters at most).', 'danger')
+        return redirect(url_for('user_transactions'))
+    if payment_method == 'GCash' and not reference and not (receipt_file and receipt_file.filename):
+        flash('Enter your GCash reference number or upload the receipt.', 'danger')
+        return redirect(url_for('user_transactions'))
+
     if payment_method:
-        transaction.payment_method = payment_method
+        if transaction.order:                    # keep the order and its payment in step
+            transaction.payment_method = 'gcash'
+            transaction.order.payment_method = 'gcash'
+        else:
+            transaction.payment_method = payment_method
     if reference:
         if payment_method == 'GCash':
             transaction.gcash_reference = reference
@@ -2388,6 +2645,9 @@ def user_payment(transaction_id):
     create_notification(user_id, 'Payment Submitted',
                         f'Your payment for transaction #{transaction.transaction_number} has been submitted for verification.',
                         'info', role='customer')
+    notify_admins('Payment Awaiting Confirmation',
+                  f'{transaction.transaction_number} (₱{float(transaction.amount):,.2f}) was submitted for '
+                  f'verification.', 'info')
     flash('Payment submitted. Please wait for admin confirmation.', 'success')
     return redirect(url_for('user_transactions'))
 
@@ -3161,11 +3421,21 @@ def api_cart_checkout():
         user.address, user.city, user.province, user.postal_code
     ]))
 
-    cart = ShoppingCart.query.filter_by(user_id=user_id, status='active').first()
-    
+    # Lock the cart row: a second checkout sent at the same moment (double click,
+    # two tabs) waits here, then finds the cart already completed.
+    cart = ShoppingCart.query.filter_by(user_id=user_id, status='active').with_for_update().first()
+
     if not cart:
+        db.session.rollback()
+        recent = Order.query.filter(Order.customer_id == user_id,
+                                    Order.created_at >= datetime.utcnow() - timedelta(minutes=2))\
+            .order_by(Order.id.desc()).first()
+        if recent:
+            return jsonify({'success': True, 'message': 'Your order was already placed.',
+                            'order_number': recent.order_number, 'total': float(recent.total_amount),
+                            'duplicate': True})
         return jsonify({'success': False, 'message': 'Cart is empty'}), 400
-    
+
     cart_items = CartItem.query.filter_by(cart_id=cart.id).all()
     if not cart_items:
         return jsonify({'success': False, 'message': 'Cart is empty'}), 400
@@ -3301,23 +3571,45 @@ def user_orders():
         user=user
     )
 
-def _cancel_order(order):
-    """Cancel an order: restore its stock and close any unpaid payment for it.
-    Commits. Callers check whether the order may be cancelled first."""
+def _cancel_order(order, cancelled_by='system'):
+    """Cancel an order: restore its stock, close unpaid payments, and open a refund
+    for any payment that was confirmed or that the customer sent proof for.
+    Commits. Returns the refunds it opened. Callers check whether the order may
+    be cancelled first."""
     for item in order.items:
         product = Product.query.get(item.product_id)
         if product:
             product.stock_quantity += item.quantity
+    now = datetime.utcnow()
     order.status = 'cancelled'
-    order.updated_at = datetime.utcnow()
+    order.updated_at = now
+    to_refund = []
     for txn in order.transactions:
-        if txn.payment_status in ('pending', 'rejected'):
+        if txn.payment_status == 'confirmed':
+            to_refund.append(txn)
+        elif txn.payment_status in ('pending', 'rejected'):
+            if txn.receipt_image or txn.gcash_reference or txn.reference_number:
+                to_refund.append(txn)               # customer says they paid
             txn.payment_status = 'cancelled'
-            txn.updated_at = datetime.utcnow()
+            txn.updated_at = now
     if order.payment_status != 'confirmed':
         order.payment_status = 'cancelled'
+    opened = []
+    for txn in to_refund:
+        why = (f'Order {order.order_number} cancelled after the payment was confirmed.'
+               if txn.payment_status == 'confirmed' else
+               f'Order {order.order_number} cancelled after the customer sent a GCash reference. '
+               f'Check the money arrived before refunding.')
+        refund, created = open_refund(txn, why, created_by=cancelled_by, order=order)
+        if created:
+            opened.append(refund)
     db.session.commit()
     cache.delete('active_products')
+    if opened:
+        notify_admins('Refund to process',
+                      f'Order {order.order_number} was cancelled with a paid or possibly paid charge. See Refunds.',
+                      'warning')
+    return opened
 
 @app.route('/api/order/<int:order_id>/cancel', methods=['POST'])
 @login_required
@@ -3334,30 +3626,20 @@ def api_order_cancel(order_id):
     if order.status in ['completed', 'cancelled']:
         return jsonify({'success': False, 'message': 'This order cannot be cancelled'}), 400
 
-    # If a GCash payment has already been verified by an admin, money has
-    # actually changed hands - self-service cancellation would silently
-    # drop that without a refund. Route those to support instead.
-    if order.payment_method == 'gcash' and order.payment_status == 'confirmed':
+    # A paid order can be cancelled by the customer only before it is being
+    # prepared; the payment then goes to Refunds. Later, they contact support.
+    if order.payment_status == 'confirmed' and order.status != 'pending':
         return jsonify({
             'success': False,
-            'message': 'This order has a confirmed GCash payment. Please contact support to cancel and process a refund.'
+            'message': 'This paid order is already being prepared. Please contact support to cancel it.'
         }), 400
-    
-    _cancel_order(order)
-    
-    # Create notification for user
-    create_notification(
-        user_id,
-        'Order Cancelled',
-        f'Your order #{order.order_number} has been cancelled. Stock has been restored.',
-        'warning',
-        role='customer'
-    )
-    
-    return jsonify({
-        'success': True,
-        'message': f'Order #{order.order_number} cancelled successfully. Stock restored.'
-    })
+
+    refunds = _cancel_order(order, cancelled_by=f'customer #{user_id}')
+    msg = f'Your order #{order.order_number} has been cancelled.'
+    if refunds:
+        msg += ' A refund has been opened; you can follow it on your Transactions page.'
+    create_notification(user_id, 'Order Cancelled', msg, 'warning', role='customer')
+    return jsonify({'success': True, 'message': msg, 'refund_opened': bool(refunds)})
 
 @app.route('/api/order/<int:order_id>', methods=['GET'])
 @login_required
@@ -3858,12 +4140,47 @@ def api_booking_detail(booking_id):
         } if txn else None,
     })
 
+ADMIN_PAGE_SIZE = 25
+
+def paginate(query, page, per_page=ADMIN_PAGE_SIZE):
+    """(items, pager) for one page of an ordered query. Out-of-range pages are
+    clamped, so a stale link never shows an empty page."""
+    total = query.order_by(None).count()
+    pages = max(1, -(-total // per_page))
+    page = min(max(page or 1, 1), pages)
+    items = query.limit(per_page).offset((page - 1) * per_page).all()
+    first = (page - 1) * per_page + 1 if total else 0
+    return items, {'page': page, 'pages': pages, 'total': total,
+                   'first': first, 'last': first + len(items) - 1 if items else 0}
+
+def _list_filters(allowed_statuses):
+    status = request.args.get('status', 'all')
+    if status not in allowed_statuses:
+        status = 'all'
+    q = (request.args.get('q') or '').strip()[:100]
+    return status, q, request.args.get('page', 1, type=int)
+
 @app.route('/admin/requests')
 @admin_required
 def admin_requests():
-    bookings = Booking.query.order_by(Booking.created_at.desc()).all()
+    status, q, page = _list_filters(STATUS_LABELS)
+    query = Booking.query
+    if status != 'all':
+        query = query.filter(Booking.status == status)
+    if q:
+        like = f'%{q}%'
+        query = query.join(Customer, Booking.customer_id == Customer.id)\
+            .join(Service, Booking.service_id == Service.id)\
+            .filter(or_(Booking.booking_number.ilike(like), Customer.full_name.ilike(like),
+                        Service.name.ilike(like)))
+    bookings, pager = paginate(query.order_by(Booking.created_at.desc(), Booking.id.desc()), page)
+    counts = dict(db.session.query(Booking.status, func.count(Booking.id)).group_by(Booking.status).all())
+    stats = {'total': sum(counts.values()), 'pending': counts.get('pending', 0),
+             'cancelled': counts.get('cancelled', 0)}
+    stats['approved'] = stats['total'] - stats['pending'] - stats['cancelled']
     technicians = Technician.query.order_by(Technician.full_name).all()
-    return render_template('admin/request_management.html', bookings=bookings, technicians=technicians)
+    return render_template('admin/request_management.html', bookings=bookings, technicians=technicians,
+                           pager=pager, stats=stats, status=status, q=q)
 
 @app.route('/admin/requests/<int:booking_id>/status', methods=['POST'])
 @admin_required
@@ -3915,7 +4232,9 @@ def admin_request_status(booking_id):
         booking.updated_at = now
         db.session.add(JobLog(booking_id=booking.id, at=stamp, by_name=admin_name,
                               action='status', text=f'Rejected by admin. {reason}'.strip()))
+        refund_check = settle_cancelled_booking(booking)
         db.session.commit()
+        notify_refund_check(booking, refund_check)
         msg = f'Your booking #{booking.booking_number} has been rejected.'
         if reason:
             msg += f'\n\nReason: {reason}'
@@ -3924,6 +4243,58 @@ def admin_request_status(booking_id):
             create_notification(booking.technician_id, 'Job Cancelled',
                                 f'{booking.booking_number} was cancelled by an admin.', 'warning', role='technician')
         flash('Request rejected.', 'warning')
+    return redirect(url_for('admin_requests'))
+
+REASSIGNABLE_STATUSES = ('confirmed', 'diagnosis_pending', 'in_progress', 'on_hold')
+
+@app.route('/admin/requests/<int:booking_id>/assign', methods=['POST'])
+@admin_required
+def admin_request_reassign(booking_id):
+    """Move an approved, unfinished job to another verified technician."""
+    from models.technician_models import JobLog, ApprovalRequest
+    booking = Booking.query.get_or_404(booking_id)
+    if booking.status not in REASSIGNABLE_STATUSES:
+        flash('Only approved jobs that are not finished or cancelled can be reassigned.', 'danger')
+        return redirect(url_for('admin_requests'))
+    tech = Technician.query.filter_by(id=request.form.get('technician_id', type=int), is_active=True).first()
+    if not tech:
+        flash('Please choose an active technician.', 'danger')
+        return redirect(url_for('admin_requests'))
+    if not tech.id_verified:
+        flash(f'{tech.full_name} is not identity-verified yet. Verify them in User Management first.', 'danger')
+        return redirect(url_for('admin_requests'))
+    if tech.id == booking.technician_id:
+        flash(f'{booking.booking_number} is already assigned to {tech.full_name}.', 'info')
+        return redirect(url_for('admin_requests'))
+
+    previous = booking.technician
+    reason = (request.form.get('reason') or '').strip()[:300]
+    now = datetime.utcnow()
+    booking.technician_id = tech.id
+    booking.assigned_at = now
+    booking.updated_at = now
+    # Answers to open extra-work requests should reach the technician now doing the job.
+    ApprovalRequest.query.filter_by(booking_id=booking.id, status='pending').update(
+        {'technician_id': tech.id}, synchronize_session=False)
+    db.session.add(JobLog(booking_id=booking.id, at=now.strftime('%Y-%m-%d %H:%M:%S'),
+                          by_name=session.get('username', 'Admin'), action='assign',
+                          text=(f'Reassigned from {previous.full_name} to {tech.full_name}.' if previous
+                                else f'Assigned to {tech.full_name}.') + (f' Reason: {reason}' if reason else '')))
+    db.session.commit()
+
+    create_notification(tech.id, 'Job Assigned to You',
+                        f'{booking.booking_number} - {booking.service.name} is now yours '
+                        f'(status: {STATUS_LABELS.get(booking.status, booking.status)}).', 'info', role='technician')
+    if previous:
+        create_notification(previous.id, 'Job Reassigned',
+                            f'{booking.booking_number} was reassigned to another technician.', 'warning',
+                            role='technician')
+    create_notification(booking.customer_id, 'New Technician Assigned',
+                        f'{tech.full_name} (verified) is now handling booking {booking.booking_number}.', 'info',
+                        role='customer')
+    log_activity(session.get('user_id'), 'booking_reassign',
+                 f'{booking.booking_number}: {previous.full_name if previous else "-"} -> {tech.full_name}')
+    flash(f'{booking.booking_number} reassigned to {tech.full_name}.', 'success')
     return redirect(url_for('admin_requests'))
 
 @app.route('/api/admin/booking/<int:booking_id>')
@@ -4007,10 +4378,10 @@ def admin_order_status(order_id):
         return redirect(url_for('admin_orders'))
 
     if new_status == 'cancelled':
-        _cancel_order(order)
+        refunds = _cancel_order(order, cancelled_by=_reviewer_label())
         msg = f'Your order #{order.order_number} was cancelled by our team.'
-        if order.payment_status == 'confirmed':
-            msg += ' Your payment will be refunded; we will contact you.'
+        if refunds:
+            msg += ' A refund has been opened; you can follow it on your Transactions page.'
     else:
         order.status = new_status
         order.updated_at = datetime.utcnow()
@@ -4322,8 +4693,35 @@ def admin_notifications_clear():
 @app.route('/admin/payments')
 @admin_required
 def admin_payments():
-    transactions = Transaction.query.order_by(Transaction.transaction_date.desc()).all()
-    return render_template('admin/payment_confirmation.html', transactions=transactions)
+    status, q, page = _list_filters(PAYMENT_STATUSES)
+    query = Transaction.query
+    if status != 'all':
+        query = query.filter(Transaction.payment_status == status)
+    if q:
+        like = f'%{q}%'
+        query = query.join(Customer, Transaction.customer_id == Customer.id)\
+            .filter(or_(Transaction.transaction_number.ilike(like), Transaction.gcash_reference.ilike(like),
+                        Transaction.reference_number.ilike(like), Customer.full_name.ilike(like)))
+    transactions, pager = paginate(query.order_by(Transaction.transaction_date.desc(), Transaction.id.desc()), page)
+    counts = dict(db.session.query(Transaction.payment_status, func.count(Transaction.id))
+                  .group_by(Transaction.payment_status).all())
+    stats = {'total': sum(counts.values()), **{s: counts.get(s, 0) for s in PAYMENT_STATUSES}}
+    return render_template('admin/payment_confirmation.html', transactions=transactions,
+                           pager=pager, stats=stats, status=status, q=q)
+
+def _reviewer_label():
+    admin = current_account()
+    return f'{admin.full_name} (admin #{admin.id})'[:120] if admin else 'admin'
+
+PAYMENT_STATUSES = ('pending', 'confirmed', 'rejected', 'cancelled', 'refunded')
+
+def payment_method_label(method):
+    """Display name for a stored payment method (bookings use 'GCash' / 'C.A.R',
+    shop orders 'gcash' / 'cod', unpaid extra charges 'unpaid')."""
+    return {'gcash': 'GCash', 'cod': 'Cash on delivery', 'c.a.r': 'C.A.R (Cash After Repair)',
+            'unpaid': 'Not yet chosen', '': 'Not yet chosen'}.get((method or '').lower(), method)
+
+app.jinja_env.globals['payment_method_label'] = payment_method_label
 
 @app.route('/admin/payments/<int:transaction_id>/confirm', methods=['POST'])
 @admin_required
@@ -4333,10 +4731,24 @@ def admin_payment_confirm(transaction_id):
         flash('This payment is already confirmed.', 'info')
         return redirect(url_for('admin_payments'))
     if transaction.payment_status == 'cancelled':
-        flash('This payment belongs to a cancelled order and cannot be confirmed.', 'danger')
+        flash('This payment was cancelled and cannot be confirmed.', 'danger')
         return redirect(url_for('admin_payments'))
-    transaction.payment_status = 'confirmed'
-    transaction.updated_at = datetime.utcnow()
+    if (transaction.booking and transaction.booking.status == 'cancelled') or \
+            (transaction.order and transaction.order.status == 'cancelled'):
+        flash('This payment belongs to a cancelled booking or order and cannot be confirmed.', 'danger')
+        return redirect(url_for('admin_payments'))
+    now = datetime.utcnow()
+    # One UPDATE that only succeeds while the payment is still open, so a
+    # double click can't confirm (and notify) twice.
+    claimed = Transaction.query.filter(Transaction.id == transaction.id,
+                                       Transaction.payment_status.in_(('pending', 'rejected'))).update(
+        {'payment_status': 'confirmed', 'updated_at': now, 'reviewed_at': now,
+         'reviewed_by': _reviewer_label()}, synchronize_session=False)
+    if claimed != 1:
+        db.session.rollback()
+        flash('This payment was already handled.', 'info')
+        return redirect(url_for('admin_payments'))
+    db.session.refresh(transaction)
     if transaction.order:
         transaction.order.payment_status = 'confirmed'
     db.session.commit()
@@ -4359,10 +4771,17 @@ def admin_payment_reject(transaction_id):
     if transaction.payment_status in ('confirmed', 'cancelled'):
         flash(f'A {transaction.payment_status} payment cannot be rejected.', 'danger')
         return redirect(url_for('admin_payments'))
-    reason = (request.form.get('reason') or '').strip() or 'Payment rejected by admin.'
-    transaction.payment_status = 'rejected'
-    transaction.rejection_reason = reason
-    transaction.updated_at = datetime.utcnow()
+    reason = (request.form.get('reason') or '').strip()[:1000] or 'Payment rejected by admin.'
+    now = datetime.utcnow()
+    claimed = Transaction.query.filter(Transaction.id == transaction.id,
+                                       Transaction.payment_status == 'pending').update(
+        {'payment_status': 'rejected', 'rejection_reason': reason, 'updated_at': now,
+         'reviewed_at': now, 'reviewed_by': _reviewer_label()}, synchronize_session=False)
+    if claimed != 1:
+        db.session.rollback()
+        flash('This payment was already handled.', 'info')
+        return redirect(url_for('admin_payments'))
+    db.session.refresh(transaction)
     if transaction.order:
         transaction.order.payment_status = 'rejected'
     db.session.commit()
@@ -4377,6 +4796,133 @@ def admin_payment_reject(transaction_id):
     
     flash('Payment rejected.', 'warning')
     return redirect(url_for('admin_payments'))
+
+# ==================== ADMIN: REFUNDS ====================
+REFUND_STATUSES = ('pending', 'refunded', 'declined')
+
+@app.route('/admin/refunds')
+@admin_required
+def admin_refunds():
+    status, q, page = _list_filters(REFUND_STATUSES)
+    query = Refund.query
+    if status != 'all':
+        query = query.filter(Refund.status == status)
+    if q:
+        like = f'%{q}%'
+        query = query.join(Transaction, Refund.transaction_id == Transaction.id)\
+            .join(Customer, Refund.customer_id == Customer.id)\
+            .filter(or_(Transaction.transaction_number.ilike(like), Customer.full_name.ilike(like),
+                        Refund.reference.ilike(like), Refund.reason.ilike(like)))
+    # open refunds first, then newest
+    refunds, pager = paginate(query.order_by((Refund.status == 'pending').desc(), Refund.created_at.desc(),
+                                             Refund.id.desc()), page)
+    counts = dict(db.session.query(Refund.status, func.count(Refund.id)).group_by(Refund.status).all())
+    owed = db.session.query(func.coalesce(func.sum(Refund.amount), 0)).filter(Refund.status == 'pending').scalar()
+    stats = {'total': sum(counts.values()), 'owed': float(owed or 0),
+             **{st: counts.get(st, 0) for st in REFUND_STATUSES}}
+    return render_template('admin/refunds.html', refunds=refunds, pager=pager, stats=stats, status=status, q=q,
+                           methods=REFUND_METHODS)
+
+def _claim_refund(refund_id, new_status, **values):
+    """Move a refund out of 'pending' in one UPDATE, so two admins (or a double
+    click) can't process it twice. Returns the refund, or None if it was already handled."""
+    refund = Refund.query.get_or_404(refund_id)
+    claimed = Refund.query.filter_by(id=refund.id, status='pending').update(
+        dict(status=new_status, processed_at=datetime.utcnow(), processed_by=_reviewer_label(), **values),
+        synchronize_session=False)
+    if claimed != 1:
+        db.session.rollback()
+        return None
+    db.session.refresh(refund)
+    return refund
+
+@app.route('/admin/refunds/<int:refund_id>/complete', methods=['POST'])
+@admin_required
+def admin_refund_complete(refund_id):
+    from decimal import Decimal, InvalidOperation
+    refund = Refund.query.get_or_404(refund_id)
+    method = request.form.get('method') or ''
+    reference = (request.form.get('reference') or '').strip()
+    note = (request.form.get('note') or '').strip()[:1000]
+    if method not in REFUND_METHODS:
+        flash('Choose how the money was returned.', 'danger')
+        return redirect(url_for('admin_refunds'))
+    if method != 'Cash' and not reference:
+        flash(f'Enter the {method} reference number of the refund.', 'danger')
+        return redirect(url_for('admin_refunds'))
+    if len(reference) > 80:
+        flash('The reference is too long (80 characters at most).', 'danger')
+        return redirect(url_for('admin_refunds'))
+    try:
+        amount = Decimal(str(request.form.get('amount') or refund.amount)).quantize(Decimal('0.01'))
+    except (InvalidOperation, ValueError):
+        amount = None
+    paid = Decimal(str(refund.transaction.amount))
+    if amount is None or amount <= 0 or amount > paid:
+        flash(f'The refunded amount must be more than ₱0 and at most ₱{paid:,.2f}.', 'danger')
+        return redirect(url_for('admin_refunds'))
+
+    refund = _claim_refund(refund.id, 'refunded', amount=amount, method=method,
+                           reference=reference or None, note=note or None)
+    if not refund:
+        flash('This refund was already handled.', 'info')
+        return redirect(url_for('admin_refunds'))
+    txn = refund.transaction
+    txn.payment_status = 'refunded'
+    txn.updated_at = datetime.utcnow()
+    if txn.order:
+        txn.order.payment_status = 'refunded'
+    db.session.commit()
+    log_activity(session.get('user_id'), 'refund_complete',
+                 f'Refunded ₱{amount:,.2f} for {txn.transaction_number} via {method}')
+    create_notification(refund.customer_id, 'Refund Sent',
+                        f'We refunded ₱{amount:,.2f} for transaction {txn.transaction_number} via {method}'
+                        + (f' (reference {reference})' if reference else '') + '.', 'success', role='customer')
+    flash(f'Refund for {txn.transaction_number} marked as sent.', 'success')
+    return redirect(url_for('admin_refunds'))
+
+@app.route('/admin/refunds/<int:refund_id>/decline', methods=['POST'])
+@admin_required
+def admin_refund_decline(refund_id):
+    note = (request.form.get('note') or '').strip()[:1000]
+    if len(note) < 5:
+        flash('Explain why no refund is due (the customer will see this).', 'danger')
+        return redirect(url_for('admin_refunds'))
+    refund = _claim_refund(refund_id, 'declined', note=note)
+    if not refund:
+        flash('This refund was already handled.', 'info')
+        return redirect(url_for('admin_refunds'))
+    db.session.commit()
+    txn = refund.transaction
+    log_activity(session.get('user_id'), 'refund_decline', f'Declined refund for {txn.transaction_number}: {note}')
+    create_notification(refund.customer_id, 'About your refund',
+                        f'No refund was issued for transaction {txn.transaction_number}. Reason: {note}',
+                        'warning', role='customer')
+    flash(f'Refund for {txn.transaction_number} declined.', 'warning')
+    return redirect(url_for('admin_refunds'))
+
+@app.route('/admin/payments/<int:transaction_id>/refund', methods=['POST'])
+@admin_required
+def admin_payment_refund(transaction_id):
+    """Open a refund by hand for a confirmed payment (e.g. goodwill or a partial refund)."""
+    txn = Transaction.query.get_or_404(transaction_id)
+    if txn.payment_status != 'confirmed':
+        flash('Only confirmed payments can be refunded.', 'danger')
+        return redirect(url_for('admin_payments'))
+    reason = (request.form.get('reason') or '').strip()
+    if len(reason) < 5:
+        flash('Give a reason for the refund.', 'danger')
+        return redirect(url_for('admin_payments'))
+    refund, created = open_refund(txn, reason, created_by=_reviewer_label())
+    db.session.commit()
+    if not created:
+        flash(f'{txn.transaction_number} already has a refund ({refund.status}).', 'info')
+        return redirect(url_for('admin_refunds'))
+    create_notification(txn.customer_id, 'Refund requested',
+                        f'A refund was opened for transaction {txn.transaction_number}. '
+                        f'You can follow it on your Transactions page.', 'info', role='customer')
+    flash(f'Refund opened for {txn.transaction_number}.', 'success')
+    return redirect(url_for('admin_refunds'))
 
 MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -4745,6 +5291,7 @@ def admin_analytics():
 @admin_required
 def admin_technician_activity():
     from models.technician_models import IncidentReport, ServiceReport, ServiceRating, ApprovalRequest
+    from blueprints.technician import incident_files
 
     incidents = IncidentReport.query.order_by(IncidentReport.reported_at.desc()).limit(100).all()
     approvals = ApprovalRequest.query.order_by((ApprovalRequest.status == 'pending').desc(),
@@ -4778,8 +5325,25 @@ def admin_technician_activity():
     return render_template(
         'admin/technician_activity.html',
         incidents=incidents, reports=reports, ratings=ratings, approvals=approvals,
-        technicians=technicians, customers=customers, bookings=bookings
+        technicians=technicians, customers=customers, bookings=bookings,
+        incident_files=incident_files([i.id for i in incidents])
     )
+
+@app.route('/admin/uploads/<int:upload_id>')
+@admin_required
+def admin_upload_file(upload_id):
+    """Technician uploads (incident evidence and the like) for administrators.
+    Images open in the browser; anything else downloads."""
+    from models.technician_models import UploadedFile
+    from services.upload_service import path_for
+    f = UploadedFile.query.get_or_404(upload_id)
+    path = path_for(f)
+    if not os.path.isfile(path):
+        abort(404)
+    resp = send_file(path, mimetype=f.mime_type, download_name=f.original_name,
+                     as_attachment=not f.mime_type.startswith('image/'))
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
 
 @app.route('/admin/incidents/<int:incident_id>/review', methods=['POST'])
 @admin_required
@@ -4920,6 +5484,7 @@ def init_db():
         add_receipt_image_column()
         add_service_category_columns()
         add_profile_columns()
+        add_workflow_columns()
         
         # No default admin is ever created here. Create one with
         # `flask --app app create-admin` (or /setup/first-admin with SETUP_TOKEN).
