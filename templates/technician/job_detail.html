@@ -23,6 +23,15 @@
 {% set stage_keys = stages|map(attribute=0)|list %}
 {% set current_index = stage_keys.index(job.status) if job.status in stage_keys else 0 %}
 
+{% block extra_js %}
+<script nonce="{{ tech_nonce }}">
+    document.querySelectorAll('.tech-banner-close').forEach(function (btn) {
+        btn.addEventListener('click', function () { btn.parentElement.remove(); });
+    });
+    document.querySelector('.tech-banner')?.scrollIntoView({ block: 'nearest' });
+</script>
+{% endblock %}
+
 {% block body %}
 
 <section class="tech-job-detail">
@@ -31,6 +40,18 @@
         <i class="fas fa-arrow-left"></i>
         Back to My Jobs
     </a>
+
+    {# Result of "Advance to next stage", saving a report, etc. #}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="tech-banner tech-banner--{{ 'ok' if category == 'success' else ('warn' if category in ('warning', 'info') else 'danger') }}"
+         role="{{ 'status' if category == 'success' else 'alert' }}">
+        <i class="fas fa-{{ 'circle-check' if category == 'success' else 'triangle-exclamation' }}"></i>
+        <span>{{ message }}</span>
+        <button type="button" class="tech-banner-close" aria-label="Dismiss">&times;</button>
+    </div>
+    {% endfor %}
+    {% endwith %}
 
     <section class="tech-card" style="margin-bottom:1.1rem;">
 
@@ -193,6 +214,13 @@
                         <span class="tech-kv-key">Device type</span>
                         <span class="tech-kv-val">{{ job.device_type }}</span>
                     </div>
+
+                    {% if job.device_brand or job.device_model %}
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">Brand / model</span>
+                        <span class="tech-kv-val">{{ [job.device_brand, job.device_model]|select|join(' ') }}</span>
+                    </div>
+                    {% endif %}
 
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Service mode</span>
@@ -420,7 +448,24 @@
                     gap:0.5rem;
                 ">
 
-                    {% if job.status not in ('released', 'cancelled', 'on_hold') %}
+                    {% if reqs %}
+                        <div class="tech-next-step">
+                            <span class="tech-kv-key">
+                                Next: {{ reqs.next_label }}
+                                {% if not reqs.manual %}<span class="tech-next-auto">· moves automatically</span>{% endif %}
+                            </span>
+                            <ul class="tech-req-list">
+                                {% for item in reqs['items'] %}
+                                <li class="{{ 'is-met' if item.met else ('is-open' if item.met is none else 'is-missing') }}">
+                                    <i class="fas fa-{{ 'circle-check' if item.met else ('hand-holding-dollar' if item.met is none else 'circle-xmark') }}"></i>
+                                    <span><strong>{{ item.label }}</strong>{% if not item.met %}<br><small>{{ item.hint }}</small>{% endif %}</span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+
+                    {% if reqs and reqs.manual %}
 
                         <form
                             method="POST"
@@ -434,13 +479,20 @@
                                 value="{{ csrf_token() }}"
                             >
 
+                            {% if reqs.cash_due is not none %}
+                            <label class="tech-check" style="margin-bottom:0.55rem;">
+                                <input type="checkbox" name="cash_received" value="1">
+                                <span>I collected ₱{{ '{:,.2f}'.format(reqs.cash_due) }} cash from the customer</span>
+                            </label>
+                            {% endif %}
+
                             <button
                                 class="tech-btn tech-btn--primary tech-btn--wide"
                                 style="justify-content:flex-start;"
                                 type="submit"
                             >
-                                <i class="fas fa-forward"></i>
-                                Advance to next stage
+                                <i class="fas fa-{{ 'hand-holding-heart' if reqs.next == 'released' else 'forward' }}"></i>
+                                {{ 'Release device to customer' if reqs.next == 'released' else 'Advance to ' ~ reqs.next_label }}
                             </button>
 
                         </form>

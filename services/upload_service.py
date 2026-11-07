@@ -74,6 +74,32 @@ def check_file(file_storage, max_bytes=MAX_BYTES):
     return True, (data, mime, ext, safe)
 
 
+def strip_jpeg_metadata(data):
+    """Drop the EXIF/XMP (APP1), IPTC (APP13) and comment segments of a JPEG.
+    A phone photo's EXIF can hold where and when it was taken. The image data
+    is untouched; anything that isn't a well-formed JPEG is returned as is."""
+    if not data.startswith(b'\xff\xd8'):
+        return data
+    out, i = bytearray(b'\xff\xd8'), 2
+    while i + 4 <= len(data):
+        if data[i] != 0xFF:
+            return data
+        marker = data[i + 1]
+        if marker == 0xFF:                         # fill byte
+            i += 1
+            continue
+        if marker == 0xDA:                         # start of scan: the rest is image data
+            out += data[i:]
+            return bytes(out)
+        length = int.from_bytes(data[i + 2:i + 4], 'big')
+        if length < 2 or i + 2 + length > len(data):
+            return data
+        if marker not in (0xE1, 0xED, 0xFE):
+            out += data[i:i + 2 + length]
+        i += 2 + length
+    return data
+
+
 def save_upload(file_storage, owner_type, owner_id, booking_id,
                 technician_id, caption=''):
     """Validate and store one uploaded file.

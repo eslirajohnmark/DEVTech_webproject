@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS customers (
 	UNIQUE (email)
 );
 
+-- delivery_riders
+CREATE TABLE IF NOT EXISTS delivery_riders (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	name VARCHAR(100) NOT NULL, 
+	phone VARCHAR(20), 
+	is_active BOOL NOT NULL, 
+	on_duty BOOL NOT NULL, 
+	created_at DATETIME, 
+	PRIMARY KEY (id)
+);
+
 -- messages
 CREATE TABLE IF NOT EXISTS messages (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -134,6 +145,7 @@ CREATE TABLE IF NOT EXISTS products (
 	compatibility VARCHAR(100), 
 	image_url VARCHAR(255), 
 	is_active BOOL, 
+	sale_price NUMERIC(10, 2), 
 	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id)
@@ -167,37 +179,6 @@ CREATE TABLE IF NOT EXISTS system_settings (
 	UNIQUE (setting_key)
 );
 
--- technicians
-CREATE TABLE IF NOT EXISTS technicians (
-	username VARCHAR(80) NOT NULL, 
-	address VARCHAR(255), 
-	city VARCHAR(50), 
-	province VARCHAR(50), 
-	id_type VARCHAR(30), 
-	id_number VARCHAR(50), 
-	id_verified BOOL, 
-	id_verified_at DATETIME, 
-	id INTEGER NOT NULL AUTO_INCREMENT, 
-	email VARCHAR(120) NOT NULL, 
-	password_hash VARCHAR(255) NOT NULL, 
-	full_name VARCHAR(100) NOT NULL, 
-	phone VARCHAR(20), 
-	is_active BOOL, 
-	last_active DATETIME, 
-	created_at DATETIME, 
-	updated_at DATETIME, 
-	display_name VARCHAR(60), 
-	headline VARCHAR(120), 
-	avatar_file VARCHAR(64), 
-	avatar_icon VARCHAR(30), 
-	avatar_color VARCHAR(20), 
-	avatar_frame VARCHAR(20), 
-	banner VARCHAR(20), 
-	PRIMARY KEY (id), 
-	UNIQUE (username), 
-	UNIQUE (email)
-);
-
 -- message_attachments
 CREATE TABLE IF NOT EXISTS message_attachments (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -229,11 +210,18 @@ CREATE TABLE IF NOT EXISTS orders (
 	longitude NUMERIC(10, 7), 
 	payment_method VARCHAR(20), 
 	payment_status VARCHAR(20), 
+	distance_km NUMERIC(7, 1), 
+	eta_from DATETIME, 
+	eta_to DATETIME, 
+	rider_id INTEGER, 
+	dispatched_at DATETIME, 
+	delivered_at DATETIME, 
 	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(customer_id) REFERENCES customers (id), 
-	UNIQUE (order_number)
+	UNIQUE (order_number), 
+	FOREIGN KEY(rider_id) REFERENCES delivery_riders (id)
 );
 
 -- services
@@ -276,6 +264,47 @@ CREATE TABLE IF NOT EXISTS support_tickets (
 	FOREIGN KEY(customer_id) REFERENCES customers (id)
 );
 
+-- technicians
+CREATE TABLE IF NOT EXISTS technicians (
+	username VARCHAR(80) NOT NULL, 
+	address VARCHAR(255), 
+	city VARCHAR(50), 
+	province VARCHAR(50), 
+	gender VARCHAR(20), 
+	birth_date DATE, 
+	id_type VARCHAR(30), 
+	id_number VARCHAR(50), 
+	id_verified BOOL, 
+	id_verified_at DATETIME, 
+	verification_status VARCHAR(20) NOT NULL, 
+	verification_reason VARCHAR(500), 
+	verification_submitted_at DATETIME, 
+	verification_decided_at DATETIME, 
+	verified_by_admin_id INTEGER, 
+	id_document_file VARCHAR(64), 
+	id_document_mime VARCHAR(40), 
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	email VARCHAR(120) NOT NULL, 
+	password_hash VARCHAR(255) NOT NULL, 
+	full_name VARCHAR(100) NOT NULL, 
+	phone VARCHAR(20), 
+	is_active BOOL, 
+	last_active DATETIME, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	display_name VARCHAR(60), 
+	headline VARCHAR(120), 
+	avatar_file VARCHAR(64), 
+	avatar_icon VARCHAR(30), 
+	avatar_color VARCHAR(20), 
+	avatar_frame VARCHAR(20), 
+	banner VARCHAR(20), 
+	PRIMARY KEY (id), 
+	UNIQUE (username), 
+	FOREIGN KEY(verified_by_admin_id) REFERENCES admins (id) ON DELETE SET NULL, 
+	UNIQUE (email)
+);
+
 -- user_preferences
 CREATE TABLE IF NOT EXISTS user_preferences (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -299,6 +328,8 @@ CREATE TABLE IF NOT EXISTS bookings (
 	customer_id INTEGER NOT NULL, 
 	service_id INTEGER NOT NULL, 
 	device_type VARCHAR(50) NOT NULL, 
+	device_brand VARCHAR(50), 
+	device_model VARCHAR(80), 
 	description TEXT NOT NULL, 
 	address VARCHAR(255), 
 	booking_date DATE NOT NULL, 
@@ -342,6 +373,55 @@ CREATE TABLE IF NOT EXISTS order_items (
 	PRIMARY KEY (id), 
 	FOREIGN KEY(order_id) REFERENCES orders (id), 
 	FOREIGN KEY(product_id) REFERENCES products (id)
+);
+
+-- technician_credentials
+CREATE TABLE IF NOT EXISTS technician_credentials (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	technician_id INTEGER NOT NULL, 
+	title VARCHAR(120) NOT NULL, 
+	issuer VARCHAR(120), 
+	issued_on DATE, 
+	file VARCHAR(64) NOT NULL, 
+	mime VARCHAR(40) NOT NULL, 
+	created_at DATETIME NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(technician_id) REFERENCES technicians (id) ON DELETE CASCADE
+);
+
+-- technician_employees
+CREATE TABLE IF NOT EXISTS technician_employees (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	tech_id VARCHAR(20) NOT NULL, 
+	full_name VARCHAR(100) NOT NULL, 
+	birth_date DATE NOT NULL, 
+	id_type VARCHAR(30) NOT NULL, 
+	id_number VARCHAR(50) NOT NULL, 
+	hired_on DATE, 
+	note VARCHAR(255), 
+	created_by VARCHAR(120), 
+	created_at DATETIME NOT NULL, 
+	technician_id INTEGER, 
+	registered_at DATETIME, 
+	PRIMARY KEY (id), 
+	UNIQUE (tech_id), 
+	UNIQUE (technician_id), 
+	FOREIGN KEY(technician_id) REFERENCES technicians (id) ON DELETE SET NULL
+);
+
+-- technician_verification_events
+CREATE TABLE IF NOT EXISTS technician_verification_events (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	technician_id INTEGER NOT NULL, 
+	action VARCHAR(30) NOT NULL, 
+	status VARCHAR(20) NOT NULL, 
+	reason VARCHAR(500), 
+	admin_id INTEGER, 
+	actor VARCHAR(120) NOT NULL, 
+	created_at DATETIME NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(technician_id) REFERENCES technicians (id) ON DELETE CASCADE, 
+	FOREIGN KEY(admin_id) REFERENCES admins (id) ON DELETE SET NULL
 );
 
 -- service_ratings
@@ -515,6 +595,7 @@ CREATE TABLE IF NOT EXISTS refunds (
 	method VARCHAR(30), 
 	reference VARCHAR(80), 
 	note TEXT, 
+	payout_account VARCHAR(60), 
 	created_by VARCHAR(120) NOT NULL, 
 	created_at DATETIME, 
 	processed_by VARCHAR(120), 

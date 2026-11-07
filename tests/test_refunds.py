@@ -77,7 +77,9 @@ def test_customer_may_cancel_a_paid_order_only_before_it_is_prepared(client, cus
     preparing, _ = _order(customer, status='processing')
     _txn(order=preparing, method='gcash')
     login_as(client, customer)
-    ok = client.post(f'/api/order/{pending.id}/cancel').get_json()
+    # Money already paid by GCash goes back to the number the customer gives.
+    assert client.post(f'/api/order/{pending.id}/cancel').status_code == 400
+    ok = client.post(f'/api/order/{pending.id}/cancel', json={'refund_to': '09171234567'}).get_json()
     assert ok['success'] and ok['refund_opened']
     refused = client.post(f'/api/order/{preparing.id}/cancel')
     assert refused.status_code == 400 and db.session.get(Order, preparing.id).status == 'processing'
@@ -88,9 +90,10 @@ def test_gcash_order_with_reference_cancelled_before_verification(client, custom
     o, _ = _order(customer, payment_status='pending')
     t = _txn(order=o, status='pending', method='gcash', gcash_reference='GC-77')
     login_as(client, customer)
-    client.post(f'/api/order/{o.id}/cancel')
+    client.post(f'/api/order/{o.id}/cancel', json={'refund_to': '09171234567'})
     assert db.session.get(Transaction, t.id).payment_status == 'cancelled'
     assert Refund.query.one().transaction_id == t.id
+    assert Refund.query.one().payout_account == '09171234567'
 
 
 # ---------------------------------------------------------------- processing

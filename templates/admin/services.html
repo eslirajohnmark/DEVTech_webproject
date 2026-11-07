@@ -16,7 +16,7 @@
         </select>
     </div>
     <div class="admin-form-group">
-        <label>Price (₱)</label>
+        <label>Starting price (₱) <span class="admin-muted">· 0 = price upon diagnosis</span></label>
         <input type="number" name="price" min="0" step="0.01" required value="{{ '%.2f'|format(s.price) if s else '' }}">
     </div>
     <div class="admin-form-group">
@@ -84,7 +84,7 @@
             </form>
         </details>
     </td>
-    <td>₱{{ '%.2f'|format(s.price) }}</td>
+    <td>{% if s.price and s.price > 0 %}₱{{ '%.2f'|format(s.price) }}{% else %}<span class="admin-muted">Upon diagnosis</span>{% endif %}</td>
     <td>{{ s.estimated_hours or 1 }}</td>
     <td><span class="admin-status-badge {{ 'active' if s.is_active else 'inactive' }}">{{ 'Bookable' if s.is_active else 'Hidden' }}</span></td>
     <td>

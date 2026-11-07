@@ -9,6 +9,7 @@ from flask import (
     Blueprint, render_template, redirect, url_for,
     session, flash, abort, request,
 )
+import time
 from datetime import datetime
 from functools import wraps
 from services.job_status import ACTIVE_STATUSES, FINISHED_STATUSES
@@ -66,8 +67,17 @@ def login():
                                    prefill_id=tech_id), 401
 
         if not user.is_active:
-            flash('This technician account is not active. It may be awaiting '
-                  'admin approval or has been deactivated.', 'danger')
+            # The password was right, so it is safe to say where the registration stands.
+            reason = user.verification_reason
+            flash({
+                'pending': 'Your registration is waiting for an administrator to verify '
+                           'your ID. You will be notified when it is reviewed.',
+                'needs_correction': 'An administrator asked you to correct your registration. '
+                                    'Open "Check registration status" below to see what to fix.',
+                'rejected': 'Your technician registration was not approved.'
+                            + (f' Reason: {reason}' if reason else ''),
+            }.get(user.verification_status,
+                  'This technician account has been deactivated by an administrator.'), 'danger')
             return render_template('technician/login.html',
                                    prefill_id=tech_id), 403
 
@@ -81,21 +91,109 @@ def login():
                            prefill_id=request.args.get('registered', ''))
 
 
+def _registration_page(mode, form, errors=None, tech=None, status=200):
+    from services.technician_service import ID_TYPES, GENDERS, ID_DOC_MAX_BYTES
+    return render_template('technician/registration.html', mode=mode, form=form,
+                           errors=errors or {}, tech=tech, id_types=ID_TYPES, genders=GENDERS,
+                           max_mb=ID_DOC_MAX_BYTES // (1024 * 1024)), status
+
+
 @technician_bp.route('/register', methods=['GET', 'POST'])
 @limiter.limit('5 per hour', methods=['POST'])
 def register():
+    if _status_technician():
+        # Already registered: their saved details live on the status page.
+        return redirect(url_for('technician.registration_status'))
     if request.method == 'POST':
         from services.technician_service import register_technician
-        result = register_technician(request.form)
+        result = register_technician(request.form, request.files)
         if not result['ok']:
-            flash(result['reason'], 'danger')
-            return render_template('technician/registration.html',
-                                   form=request.form), 400
-        flash('Registration received. An administrator must activate your '
-              'account before you can sign in.', 'success')
+            return _registration_page('new', request.form, result['errors'], status=400)
+        flash('Registration sent. An administrator will check your ID; you can sign in '
+              'once it is approved.', 'success')
         return redirect(url_for('technician.login',
                                 registered=result['technician_id']))
-    return render_template('technician/registration.html', form={})
+    return _registration_page('new', {})
+
+
+# How long proving who you are on the status page lasts (no portal login).
+STATUS_CHECK_SECONDS = 15 * 60
+
+
+def _status_technician():
+    """The technician whose registration is being looked at: the signed-in
+    technician, or one who entered their Tech ID and password on the status
+    page in the last 15 minutes (inactive accounts cannot sign in)."""
+    if session.get('role') == 'technician':
+        tech = current_account()
+        if tech:
+            return tech
+    check = session.get('tech_status_check') or {}
+    if check.get('id') and time.time() - check.get('at', 0) < STATUS_CHECK_SECONDS:
+        tech = db.session.get(Technician, check['id'])
+        if tech:
+            return tech
+    session.pop('tech_status_check', None)
+    return None
+
+
+@technician_bp.route('/register/status', methods=['GET', 'POST'])
+@limiter.limit('5 per minute', methods=['POST'])
+def registration_status():
+    """Where a registered technician sees their verification status and the
+    admin's reason, and opens their saved details to correct them."""
+    from services.technician_service import can_resubmit, id_document_path
+    if request.method == 'POST':
+        tech_id = (request.form.get('technician_id') or '').strip().upper()
+        tech = Technician.query.filter(db.func.upper(Technician.username) == tech_id).first()
+        if not tech or not tech.check_password(request.form.get('password') or ''):
+            flash('Incorrect Tech ID or password.', 'danger')
+            return render_template('technician/registration_status.html', tech=None,
+                                   prefill_id=tech_id), 401
+        session['tech_status_check'] = {'id': tech.id, 'at': time.time()}
+        return redirect(url_for('technician.registration_status'))
+    tech = _status_technician()
+    return render_template('technician/registration_status.html', tech=tech,
+                           prefill_id=request.args.get('id', ''),
+                           can_resubmit=bool(tech and can_resubmit(tech)),
+                           has_document=bool(tech and id_document_path(tech)))
+
+
+@technician_bp.route('/register/update', methods=['GET', 'POST'])
+@limiter.limit('10 per hour', methods=['POST'])
+def registration_update():
+    """Correct the registration (prefilled from the database) and send it again."""
+    from services.technician_service import can_resubmit, resubmit_registration, registration_details
+    tech = _status_technician()
+    if not tech:
+        flash('Enter your Tech ID and password to update your registration.', 'warning')
+        return redirect(url_for('technician.registration_status'))
+    if not can_resubmit(tech):
+        flash('Your registration cannot be changed right now.', 'warning')
+        return redirect(url_for('technician.registration_status'))
+    if request.method == 'POST':
+        result = resubmit_registration(tech, request.form, request.files)
+        if not result['ok']:
+            return _registration_page('update', request.form, result['errors'], tech=tech, status=400)
+        flash('Your updated registration was sent. An administrator will review it again.', 'success')
+        return redirect(url_for('technician.registration_status'))
+    return _registration_page('update', registration_details(tech), tech=tech)
+
+
+@technician_bp.route('/register/status/document')
+def registration_document():
+    """The technician's own ID document (admins use their own route)."""
+    from services.technician_service import send_id_document
+    tech = _status_technician()
+    if not tech:
+        abort(403)
+    return send_id_document(tech)
+
+
+@technician_bp.route('/register/status/done')
+def registration_status_done():
+    session.pop('tech_status_check', None)
+    return redirect(url_for('technician.login'))
 
 
 @technician_bp.route('/logout')
@@ -165,9 +263,11 @@ def job_detail(job_id):
     approvals = ApprovalRequest.query.filter_by(booking_id=booking.id)\
         .order_by(ApprovalRequest.id.desc()).all()
     pending_approval = next((a for a in approvals if a.status == 'pending'), None)
+    from blueprints.technician_api import stage_requirements
     return render_template('technician/job_detail.html',
                            job=booking, intake=intake, report=report, logs=logs,
-                           approvals=approvals, pending_approval=pending_approval)
+                           approvals=approvals, pending_approval=pending_approval,
+                           reqs=stage_requirements(booking))
 
 
 @technician_bp.route('/intake')
@@ -263,9 +363,8 @@ def _tech_thread(conv):
     """Shape an inbox entry from app._load_inbox for the technician template."""
     initials = ''.join(w[0] for w in (conv['name'] or '?').split()[:2]).upper() or '?'
     return dict(conv, initials=initials,
-                role_label='Administrator' if conv['role'] == 'admin' else 'Customer',
-                last_message=conv['last_message'] or 'No messages yet',
-                last_time=conv['last_time'].strftime('%b %d, %I:%M %p') if conv['last_message'] else '')
+                role_label='DEVTech Support' if conv['role'] == 'admin' else 'Customer',
+                last_message=conv['last_message'] or 'No messages yet')
 
 
 @technician_bp.route('/messages')
@@ -282,41 +381,43 @@ def messages():
     if selected is not None and not active:
         abort(403)
 
-    thread_messages = [{
-        'content': m.content,
-        'created_at': m.created_at.strftime('%b %d, %I:%M %p'),
-        'is_sent': m.is_sent,
-        'attachments': m.attachments,
-    } for m in rows]
     return render_template('technician/messages.html',
                            conversations=[_tech_thread(c) for c in conversations],
                            active_thread=_tech_thread(active) if active else None,
-                           thread_messages=thread_messages)
+                           thread_messages=rows)
 
 
 @technician_bp.route('/messages/<other_key>/send', methods=['POST'])
 @technician_required
 def message_send(other_key):
+    """Form post, or a background send from the chat page (JSON reply)."""
     from app import (check_message_attachment, MAX_MESSAGE_LENGTH, send_message,
-                     _account_from_key, _can_message)
+                     _account_from_key, _can_message, sent_message_json, wants_json)
+    from flask import jsonify
+
+    def fail(msg, code=400):
+        if wants_json():
+            return jsonify({'success': False, 'message': msg}), code
+        flash(msg, 'danger')
+        return redirect(url_for('technician.messages', thread=other_key))
 
     content = (request.form.get('content') or '').strip()
     checked, file_error = check_message_attachment(request.files.get('attachment'))
     if file_error:
-        flash(file_error, 'danger')
-        return redirect(url_for('technician.messages', thread=other_key))
+        return fail(file_error)
     if (not content and not checked) or len(content) > MAX_MESSAGE_LENGTH:
-        flash('Write a message or attach a file.', 'danger')
-        return redirect(url_for('technician.messages', thread=other_key))
+        return fail('Write a message or attach a file.')
 
     me = current_account()
     other = _account_from_key(other_key)
     if not other:
-        abort(404)
+        return fail('Conversation not found.', 404) if wants_json() else abort(404)
     if not _can_message(me, other):
-        abort(403)
+        return fail('You cannot message this account.', 403) if wants_json() else abort(403)
 
-    send_message(me, other, content, checked=checked)
+    _, attachment = send_message(me, other, content, checked=checked)
+    if wants_json():
+        return sent_message_json(attachment)
     return redirect(url_for('technician.messages', thread=other.key))
 
 
@@ -338,7 +439,8 @@ def profile():
     }
     rating, rating_count = technician_rating(tid)
     return render_template('technician/profile.html', tech=tech, stats=stats,
-                           rating=rating, rating_count=rating_count)
+                           rating=rating, rating_count=rating_count,
+                           today_iso=datetime.utcnow().date().isoformat())
 
 
 @technician_bp.route('/profile/details', methods=['POST'])
@@ -352,6 +454,10 @@ def update_details():
     if not values['full_name']:
         flash('Full name is required.', 'danger')
         return redirect(url_for('technician.profile'))
+    name_locked = tech.verification_status == 'verified' and values['full_name'] != tech.full_name
+    if name_locked:
+        # Verified against the ID; only an admin may change it.
+        values['full_name'] = tech.full_name
     too_long = [f for f, n in limits.items() if len(values[f]) > n]
     if too_long:
         flash('Some details are too long. Please shorten them.', 'danger')
@@ -360,8 +466,35 @@ def update_details():
     for f in ('phone', 'address', 'city', 'province'):
         setattr(tech, f, values[f] or None)
     db.session.commit()
-    flash('Your details were saved.', 'success')
+    flash('Your details were saved.' + (' Your name was verified against your ID, so only an '
+                                        'administrator can change it.' if name_locked else ''), 'success')
     return redirect(url_for('technician.profile'))
+
+
+@technician_bp.route('/profile/credentials', methods=['POST'])
+@technician_required
+@limiter.limit('20 per hour')
+def add_credential():
+    """Upload a certificate or achievement for customers and admins to see."""
+    from services.technician_service import add_credential as save
+    ok, result = save(current_account(), request.form, request.files.get('file'))
+    flash('Added to your profile. Admins and your customers can now see it.' if ok else result,
+          'success' if ok else 'danger')
+    return redirect(url_for('technician.profile') + '#credentials')
+
+
+@technician_bp.route('/profile/credentials/<int:cred_id>/delete', methods=['POST'])
+@technician_required
+def delete_credential(cred_id):
+    from app import TechnicianCredential
+    from services.technician_service import delete_credential_file
+    cred = TechnicianCredential.query.filter_by(id=cred_id, technician_id=session['user_id']).first_or_404()
+    name = cred.file
+    db.session.delete(cred)
+    db.session.commit()
+    delete_credential_file(name)
+    flash('Removed from your profile.', 'success')
+    return redirect(url_for('technician.profile') + '#credentials')
 
 
 @technician_bp.route('/profile/password', methods=['POST'])
@@ -404,7 +537,9 @@ def _tech_notif_count():
 def notifications():
     from app import Notification
     mine = Notification.query.filter_by(user_role='technician', user_id=session['user_id'])
-    rows = mine.order_by(Notification.created_at.desc()).limit(50).all()
+    rows = mine.order_by(Notification.created_at.desc()).limit(100).all()
+    unread_ids = {n.id for n in rows if not n.is_read}       # shown as "new" on this visit
     mine.filter_by(is_read=False).update({'is_read': True})
     db.session.commit()
-    return render_template('technician/notifications.html', rows=rows)
+    return render_template('technician/notifications.html', rows=rows, unread_ids=unread_ids,
+                           total=mine.count())

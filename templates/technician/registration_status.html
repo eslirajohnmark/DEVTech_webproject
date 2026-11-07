@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#070b18" />
+    <title>DEVTech · Registration Status</title>
+    <link rel="icon" href="{{ url_for('static', filename='images/favicon.svg') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
+    <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+</head>
+<body class="tech-login-page">
+
+{% set event_labels = {'submitted': 'Registration sent', 'resubmitted': 'Corrected registration sent',
+                       'approved': 'Approved', 'rejected': 'Rejected',
+                       'correction_requested': 'Correction requested', 'suspended': 'Suspended'} %}
+{% set pill = {'pending': 'info', 'verified': 'ok', 'rejected': 'danger',
+               'needs_correction': 'warn', 'suspended': 'danger'} %}
+
+<main class="tech-login-card tech-login-card--wide">
+    <div class="tech-login-brand">
+        <div class="tech-login-mark"><i class="fas fa-id-card"></i></div>
+        <h1>DEV<span>Tech</span></h1>
+        <p>Technician registration status</p>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="{{ 'tech-login-success' if category == 'success' else 'tech-login-error' }} is-shown" role="status">
+        <i class="fas fa-{{ 'circle-check' if category == 'success' else 'circle-exclamation' }}"></i><span>{{ message }}</span>
+    </div>
+    {% endfor %}
+    {% endwith %}
+
+    {% if not tech %}
+    <p class="tech-hint" style="margin:0 0 1rem; text-align:center;">
+        Enter the Tech ID and password you registered with to see where your registration stands
+        or to fix it.
+    </p>
+    <form method="POST" action="{{ url_for('technician.registration_status') }}" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="tech-field">
+            <label class="tech-label" for="technician_id">Staff / Tech ID <span class="req">*</span></label>
+            <input class="tech-input tech-input--mono" id="technician_id" name="technician_id" type="text"
+                   maxlength="12" placeholder="TECH-0001" value="{{ prefill_id or '' }}" autocomplete="username" required />
+        </div>
+        <div class="tech-field">
+            <label class="tech-label" for="password">Password <span class="req">*</span></label>
+            <input class="tech-input" id="password" name="password" type="password"
+                   autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="tech-btn tech-btn--primary tech-btn--wide">
+            <i class="fas fa-magnifying-glass"></i> Check status
+        </button>
+    </form>
+    <div class="tech-login-note">
+        <a href="{{ url_for('technician.login') }}" style="color:var(--t-accent); font-weight:600;">Sign in</a>
+        ·
+        <a href="{{ url_for('technician.register') }}" style="color:var(--t-accent); font-weight:600;">Register</a>
+    </div>
+
+    {% else %}
+    {% set st = tech.verification_status %}
+    <div class="tech-reg-status">
+        <div>
+            <strong>{{ tech.full_name }}</strong>
+            <code>{{ tech.username }}</code>
+        </div>
+        <span class="tech-pill tech-pill--{{ pill.get(st, 'neutral') }}">{{ tech.verification_label }}</span>
+    </div>
+
+    <div class="tech-reg-reason tech-reg-reason--{{ st }}" role="note">
+        {% if st == 'pending' and has_document %}
+            <strong><i class="fas fa-hourglass-half"></i> Waiting for review</strong>
+            <p>An administrator will check your ID
+               {%- if tech.verification_submitted_at %} (sent {{ tech.verification_submitted_at.strftime('%b %d, %Y %I:%M %p') }}){% endif %}.
+               You will get an email when it is reviewed.</p>
+        {% elif st == 'pending' %}
+            <strong><i class="fas fa-id-card"></i> We don't have your ID yet</strong>
+            <p>Upload a valid ID so an administrator can verify you. You can't be assigned jobs until then.</p>
+        {% elif st == 'needs_correction' %}
+            <strong><i class="fas fa-pen-to-square"></i> Please correct your registration</strong>
+            <p>{{ tech.verification_reason }}</p>
+        {% elif st == 'rejected' %}
+            <strong><i class="fas fa-circle-xmark"></i> Your registration was not approved</strong>
+            {% if tech.verification_reason %}<p>Reason: {{ tech.verification_reason }}</p>{% endif %}
+            <p>If you think this is a mistake, contact DEVTech support.</p>
+        {% elif st == 'suspended' %}
+            <strong><i class="fas fa-pause"></i> Your verification is suspended</strong>
+            {% if tech.verification_reason %}<p>Reason: {{ tech.verification_reason }}</p>{% endif %}
+            <p>You won't be assigned new jobs until an administrator reinstates you.</p>
+        {% else %}
+            <strong><i class="fas fa-circle-check"></i> You're verified</strong>
+            <p>You can sign in and be assigned repair jobs.</p>
+        {% endif %}
+    </div>
+
+    {% if can_resubmit %}
+    <a class="tech-btn tech-btn--primary tech-btn--wide" href="{{ url_for('technician.registration_update') }}"
+       style="justify-content:center; margin-bottom:1.2rem;">
+        <i class="fas fa-pen"></i> {{ 'Fix my registration' if st == 'needs_correction' else 'Upload my ID' }}
+    </a>
+    {% elif st == 'verified' and session.get('role') != 'technician' %}
+    <a class="tech-btn tech-btn--primary tech-btn--wide" href="{{ url_for('technician.login', registered=tech.username) }}"
+       style="justify-content:center; margin-bottom:1.2rem;">
+        <i class="fas fa-arrow-right-to-bracket"></i> Sign in
+    </a>
+    {% endif %}
+
+    <h2 class="tech-reg-subhead">What you sent</h2>
+    <div class="tech-kv">
+        <div class="tech-kv-item"><span class="tech-kv-key">Email</span><span class="tech-kv-val">{{ tech.email }}</span></div>
+        <div class="tech-kv-item"><span class="tech-kv-key">Mobile</span><span class="tech-kv-val">{{ tech.phone or '—' }}</span></div>
+        <div class="tech-kv-item"><span class="tech-kv-key">ID type</span><span class="tech-kv-val">{{ tech.id_type or '—' }}</span></div>
+        <div class="tech-kv-item"><span class="tech-kv-key">ID number</span>
+            {# Only the last 4 characters, in case someone else can see this screen. #}
+            <span class="tech-kv-val">{% if tech.id_number %}•••• {{ tech.id_number[-4:] }}{% else %}—{% endif %}</span></div>
+    </div>
+    {% if has_document %}
+    <div class="tech-reg-review-doc" style="margin-top:1rem;">
+        {% if (tech.id_document_mime or '').startswith('image/') %}
+        <img src="{{ url_for('technician.registration_document') }}" alt="The ID you uploaded" loading="lazy">
+        {% else %}
+        <a class="tech-btn tech-btn--ghost" href="{{ url_for('technician.registration_document') }}" target="_blank" rel="noopener">
+            <i class="fas fa-file-pdf"></i> View the ID you uploaded
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if tech.verification_events %}
+    <h2 class="tech-reg-subhead">History</h2>
+    <div class="tech-timeline">
+        {% for e in tech.verification_events %}
+        <div class="tech-tl-item" data-action="{{ {'approved': 'release', 'rejected': 'safety', 'suspended': 'safety',
+                                                   'correction_requested': 'approval'}.get(e.action, 'status') }}">
+            <div class="tech-tl-text">{{ event_labels.get(e.action, e.action) }}{% if e.reason %}: {{ e.reason }}{% endif %}</div>
+            <div class="tech-tl-meta">{{ e.created_at.strftime('%b %d, %Y %I:%M %p') }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="tech-login-note">
+        {% if session.get('role') == 'technician' %}
+        <a href="{{ url_for('technician.dashboard') }}" style="color:var(--t-accent); font-weight:600;">Back to the portal</a>
+        {% else %}
+        <a href="{{ url_for('technician.registration_status_done') }}" style="color:var(--t-accent); font-weight:600;">Done</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</main>
+</body>
+</html>

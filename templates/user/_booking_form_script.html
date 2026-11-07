@@ -562,7 +562,7 @@
     function updateSummary() {
         // Device
         const deviceRadios = document.querySelectorAll('input[name="device_type"]');
-        let device = 'Desktop';
+        let device = 'Laptop';
         let customDevice = '';
         deviceRadios.forEach(radio => {
             if (radio.checked) {
@@ -572,7 +572,10 @@
                 }
             }
         });
-        document.getElementById('summaryDevice').textContent = device === 'Other' ? `Other: ${customDevice}` : device;
+        const brandModel = [document.getElementById('device_brand')?.value.trim(),
+                            document.getElementById('device_model')?.value.trim()].filter(Boolean).join(' ');
+        document.getElementById('summaryDevice').textContent =
+            (device === 'Other' ? `Other: ${customDevice}` : device) + (brandModel ? ` · ${brandModel}` : '');
 
         // Service
         const serviceSelect = document.getElementById('service_id');
@@ -580,8 +583,10 @@
         if (selectedOption && selectedOption.value) {
             let serviceName = selectedOption.text;
             const price = selectedOption.dataset.price || '0';
-            document.getElementById('summaryService').textContent = serviceName;
-            document.getElementById('summaryPrice').textContent = `₱${parseFloat(price).toFixed(2)}`;
+            document.getElementById('summaryService').textContent = serviceName.split(' - ')[0];
+            document.getElementById('summaryPrice').textContent = parseFloat(price) > 0
+                ? `₱${parseFloat(price).toLocaleString(undefined, {minimumFractionDigits: 2})}`
+                : 'Price upon diagnosis';
         } else {
             document.getElementById('summaryService').textContent = 'Not selected';
             document.getElementById('summaryPrice').textContent = '₱0.00';
@@ -643,8 +648,28 @@
                     customGroup.style.display = 'none';
                     document.getElementById('custom_service').removeAttribute('required');
                 }
+                showServiceInfo();
                 updateSummary();
             });
+            showServiceInfo();          // a service pre-selected from the catalog
+        }
+        ['device_brand', 'device_model'].forEach(function (id) {
+            document.getElementById(id)?.addEventListener('input', updateSummary);
+        });
+
+        // What the chosen service covers, its price and typical time.
+        function showServiceInfo() {
+            const box = document.getElementById('serviceInfo');
+            const opt = serviceSelect.options[serviceSelect.selectedIndex];
+            if (!box || !opt || !opt.value || opt.value === 'other') { if (box) box.hidden = true; return; }
+            const price = parseFloat(opt.dataset.price || '0'), hours = parseInt(opt.dataset.hours || '1', 10);
+            document.getElementById('serviceInfoText').textContent = opt.dataset.description || '';
+            document.getElementById('serviceInfoPrice').textContent = price > 0
+                ? `Starts at ₱${price.toLocaleString(undefined, {minimumFractionDigits: 2})}`
+                : 'Price upon diagnosis';
+            document.getElementById('serviceInfoHours').textContent =
+                `Typically about ${hours} hour${hours === 1 ? '' : 's'} of work`;
+            box.hidden = false;
         }
 
         // Device radio change

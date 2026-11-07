@@ -5,13 +5,61 @@
 {% block page_subtitle %}View and manage all customer orders{% endblock %}
 
 {% block content %}
+{% set on_duty = riders|selectattr('is_active')|selectattr('on_duty')|list %}
+
+<!-- Delivery riders: who is on duty drives the customers' delivery estimates -->
+<details class="admin-card admin-riders" {% if not riders %}open{% endif %}>
+    <summary>
+        <span><i class="fas fa-motorcycle" style="color:var(--admin-primary);"></i> Delivery riders</span>
+        <span class="admin-muted">{{ on_duty|length }} on duty{% if not (shop.lat and shop.lng) and not shop.city %} · <a href="{{ url_for('admin_settings') }}">set the shop location</a> for accurate estimates{% endif %}</span>
+    </summary>
+    <div class="admin-riders-body">
+        <ul class="admin-riders-list">
+            {% for r in riders if r.is_active %}
+            <li>
+                <span class="admin-rider-dot {{ 'on' if r.on_duty else 'off' }}" aria-hidden="true"></span>
+                <span class="admin-rider-name"><strong>{{ r.name }}</strong>{% if r.phone %}<small>{{ r.phone }}</small>{% endif %}</span>
+                <form method="POST" action="{{ url_for('admin_rider_update', rider_id=r.id, action='duty') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="admin-btn admin-btn-sm {{ '' if r.on_duty else 'admin-btn-primary' }}">{{ 'Set off duty' if r.on_duty else 'Set on duty' }}</button>
+                </form>
+                <form method="POST" action="{{ url_for('admin_rider_update', rider_id=r.id, action='active') }}"
+                      onsubmit="return confirm('Remove {{ r.name }} from the rider list?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="admin-btn admin-btn-sm admin-btn-danger" aria-label="Remove {{ r.name }}"><i class="fas fa-user-minus"></i></button>
+                </form>
+            </li>
+            {% else %}
+            <li class="admin-muted">No riders yet. Add your delivery riders so customers get real delivery times.</li>
+            {% endfor %}
+        </ul>
+        <form method="POST" action="{{ url_for('admin_rider_create') }}" class="admin-rider-add">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="text" name="name" maxlength="100" required placeholder="Rider name" aria-label="Rider name">
+            <input type="tel" name="phone" maxlength="20" placeholder="Phone (optional)" aria-label="Rider phone">
+            <button type="submit" class="admin-btn admin-btn-primary admin-btn-sm"><i class="fas fa-plus"></i> Add rider</button>
+        </form>
+        {% set removed = riders|rejectattr('is_active')|list %}
+        {% if removed %}
+        <p class="admin-muted" style="margin:0.6rem 0 0;">Removed:
+            {% for r in removed %}
+            <form method="POST" action="{{ url_for('admin_rider_update', rider_id=r.id, action='active') }}" style="display:inline;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="admin-link-btn">{{ r.name }} (restore)</button>
+            </form>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </p>
+        {% endif %}
+    </div>
+</details>
+
 <div class="admin-table-container">
     <div style="padding:1rem 1.2rem; display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between;">
         <h3 style="font-weight:600; color:var(--admin-text-primary);">
             <i class="fas fa-shopping-cart" style="color:var(--admin-primary);"></i> Shop Orders
         </h3>
         <div style="display:flex; flex-wrap:wrap; gap:0.4rem;">
-            {% for key, label in [('all', 'All'), ('pending', 'Pending'), ('processing', 'Processing'), ('completed', 'Completed'), ('cancelled', 'Cancelled')] %}
+            {% for key, label in [('all', 'All'), ('pending', 'Pending'), ('processing', 'Preparing'), ('out_for_delivery', 'Out for delivery'), ('completed', 'Delivered'), ('cancelled', 'Cancelled')] %}
             <a href="{{ url_for('admin_orders', status=key) }}"
                class="admin-btn admin-btn-sm {% if status_filter == key %}admin-btn-primary{% endif %}">
                 {{ label }}
@@ -30,13 +78,14 @@
                 <th>Deliver to</th>
                 <th>Total</th>
                 <th>Payment</th>
-                <th>Status</th>
+                <th>Status / delivery</th>
                 <th>Date</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for order in orders %}
+            {% set eta = etas.get(order.id) %}
             <tr>
                 <td>{{ order.order_number }}</td>
                 <td>{{ order.recipient_name or (order.user.full_name if order.user else 'Unknown') }}<br>
@@ -50,21 +99,40 @@
                     {% if order.latitude is not none and order.longitude is not none %}
                     <br><a href="https://www.google.com/maps?q={{ order.latitude }},{{ order.longitude }}" target="_blank" rel="noopener"><small>Map pin</small></a>
                     {% endif %}
+                    {% if eta and eta.distance_km %}<br><small class="admin-muted">≈ {{ eta.distance_km }} km{% if eta.basis != 'pin' %} (by {{ eta.basis }}){% endif %}</small>{% endif %}
                 </td>
-                <td>₱{{ '%.2f'|format(order.total_amount) }}</td>
+                <td>₱{{ '{:,.2f}'.format(order.total_amount) }}</td>
                 <td>{{ (order.payment_method or 'N/A')|upper }}<br>
-                    <span class="admin-status-badge {% if order.payment_status == 'confirmed' %}active{% elif order.payment_status == 'pending' %}warning{% else %}inactive{% endif %}">{{ order.payment_status }}</span></td>
-                <td><span class="admin-status-badge {% if order.status == 'completed' %}active{% elif order.status in ('pending', 'processing') %}warning{% else %}inactive{% endif %}">{{ order.status }}</span></td>
+                    <span class="admin-status-badge {% if order.payment_status == 'confirmed' %}active{% elif order.payment_status == 'pending' %}warning{% else %}inactive{% endif %}">{{ order.payment_status }}</span>
+                    {% if order.payment_method == 'gcash' and order.payment_status == 'pending' %}<br><a href="{{ url_for('admin_payments') }}"><small>Check screenshot</small></a>{% endif %}</td>
+                <td><span class="admin-status-badge {% if order.status == 'completed' %}active{% elif order.status in ('pending', 'processing', 'out_for_delivery') %}warning{% else %}inactive{% endif %}">{{ order_status_labels.get(order.status, order.status) }}</span>
+                    {% if order.rider and order.status in ('out_for_delivery', 'completed') %}<br><small><i class="fas fa-motorcycle"></i> {{ order.rider.name }}</small>{% endif %}
+                    {% if eta %}<br><small class="admin-muted" title="{{ eta.note }}">ETA {{ eta.label }}</small>{% endif %}
+                </td>
                 <td>{{ order.created_at.strftime('%Y-%m-%d') if order.created_at else 'N/A' }}</td>
-                <td>
+                <td class="admin-order-actions">
                     {% for next_status in transitions.get(order.status, ()) %}
-                    <form method="POST" action="{{ url_for('admin_order_status', order_id=order.id, filter=status_filter) }}" style="display:inline;"
-                          {% if next_status == 'cancelled' %}onsubmit="return confirm('Cancel order {{ order.order_number }}? Its items go back into stock.');"{% endif %}>
+                    <form method="POST" action="{{ url_for('admin_order_status', order_id=order.id, filter=status_filter) }}"
+                          {% if next_status == 'cancelled' %}onsubmit="return confirm('Cancel order {{ order.order_number }}? Its items go back into stock and any payment goes to Refunds.');"{% endif %}>
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="status" value="{{ next_status }}">
+                        {% if next_status == 'out_for_delivery' %}
+                            {% if on_duty %}
+                            <select name="rider_id" required aria-label="Rider for {{ order.order_number }}">
+                                {% for r in on_duty %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+                            </select>
+                            <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary"
+                                {% if order.payment_method == 'gcash' and order.payment_status != 'confirmed' %}disabled title="Confirm the GCash payment first"{% endif %}>
+                                <i class="fas fa-motorcycle"></i> Send out
+                            </button>
+                            {% else %}
+                            <small class="admin-muted">No rider on duty</small>
+                            {% endif %}
+                        {% else %}
                         <button type="submit" class="admin-btn admin-btn-sm {% if next_status == 'cancelled' %}admin-btn-danger{% else %}admin-btn-primary{% endif %}">
-                            {{ {'processing': 'Start processing', 'completed': 'Mark completed', 'cancelled': 'Cancel'}[next_status] }}
+                            {{ {'processing': 'Start preparing', 'completed': ('Mark delivered' if order.status == 'out_for_delivery' else 'Mark completed (picked up)'), 'cancelled': 'Cancel'}[next_status] }}
                         </button>
+                        {% endif %}
                     </form>
                     {% else %}
                     <small style="opacity:0.6;">No actions</small>

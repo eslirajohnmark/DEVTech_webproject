@@ -1,0 +1,163 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Verify {{ tech.username }}{% endblock %}
+
+{% block content %}
+{% set event_labels = {'submitted': 'Registration sent', 'resubmitted': 'Corrected registration sent',
+                       'approved': 'Approved', 'rejected': 'Rejected',
+                       'correction_requested': 'Correction requested', 'suspended': 'Suspended'} %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>{{ tech.full_name }}</h1>
+        <p><a href="{{ url_for('admin_tech_verification') }}" class="tv-back"><i class="fas fa-arrow-left"></i> Technician Verification</a>
+           · {{ tech.username }}</p>
+    </div>
+    <div class="admin-top-actions">
+        <span class="tv-status tv-status--{{ tech.verification_status }}">{{ tech.verification_label }}</span>
+    </div>
+</div>
+
+<div class="tv-detail">
+    <section class="tv-panel tv-doc" aria-labelledby="tvDocTitle">
+        <header class="tv-panel-head">
+            <h2 id="tvDocTitle">ID document</h2>
+            {% if has_document %}
+            <div class="tv-doc-tools">
+                {% if (tech.id_document_mime or '').startswith('image/') %}
+                <button type="button" class="admin-btn admin-btn-sm admin-btn-secondary" id="tvRotate" aria-label="Rotate the image">
+                    <i class="fas fa-rotate-right"></i> Rotate
+                </button>
+                {% endif %}
+                <a class="admin-btn admin-btn-sm admin-btn-secondary" target="_blank" rel="noopener"
+                   href="{{ url_for('admin_tech_verification_document', tech_id=tech.id) }}">
+                    <i class="fas fa-up-right-from-square"></i> Open full size
+                </a>
+            </div>
+            {% endif %}
+        </header>
+        {% if has_document %}
+            {% if (tech.id_document_mime or '').startswith('image/') %}
+            <div class="tv-doc-frame">
+                <img id="tvDocImage" src="{{ url_for('admin_tech_verification_document', tech_id=tech.id) }}"
+                     alt="ID document uploaded by {{ tech.full_name }}">
+            </div>
+            {% else %}
+            <iframe class="tv-doc-pdf" title="ID document (PDF) uploaded by {{ tech.full_name }}"
+                    src="{{ url_for('admin_tech_verification_document', tech_id=tech.id) }}"></iframe>
+            {% endif %}
+            <p class="admin-muted tv-small"><i class="fas fa-lock"></i> Private. Each time this document is opened it is recorded in the activity log.</p>
+        {% else %}
+            <div class="admin-empty-state">
+                <i class="fas fa-id-card"></i>
+                <p>No ID uploaded</p>
+                <p>This account was created without an ID. The technician can upload one from the registration status
+                   page, or verify them in person from User Management.</p>
+            </div>
+        {% endif %}
+    </section>
+
+    <section class="tv-panel" aria-labelledby="tvInfoTitle">
+        <header class="tv-panel-head"><h2 id="tvInfoTitle">Submitted details</h2></header>
+        <dl class="tv-kv">
+            <dt>Full name</dt><dd>{{ tech.full_name }}</dd>
+            <dt>Tech ID</dt><dd><code>{{ tech.username }}</code></dd>
+            <dt>Email</dt><dd>{{ tech.email }}</dd>
+            <dt>Mobile</dt><dd>{{ tech.phone or '—' }}</dd>
+            <dt>Gender</dt><dd>{{ tech.gender or '—' }}</dd>
+            <dt>Date of birth</dt><dd>{% if tech.birth_date %}{{ tech.birth_date.strftime('%b %d, %Y') }} (age {{ age }}){% else %}—{% endif %}</dd>
+            <dt>ID type</dt><dd>{{ tech.id_type or '—' }}</dd>
+            <dt>ID number</dt><dd><code>{{ tech.id_number or '—' }}</code></dd>
+            <dt>Employee record</dt>
+            <dd>{% if tech.employee_record %}<span class="ta-ok"><i class="fas fa-circle-check"></i> Matches roster entry {{ tech.employee_record.tech_id }}</span>
+                {% if tech.employee_record.hired_on %}· hired {{ tech.employee_record.hired_on.strftime('%b %d, %Y') }}{% endif %}
+                {% else %}<span class="ta-warn">Not on the Technician Roster</span>{% endif %}</dd>
+            <dt>Registered</dt><dd>{{ tech.created_at.strftime('%b %d, %Y %I:%M %p') if tech.created_at else '—' }}</dd>
+            <dt>ID sent</dt><dd>{{ tech.verification_submitted_at.strftime('%b %d, %Y %I:%M %p') if tech.verification_submitted_at else '—' }}</dd>
+            {% if tech.verification_decided_at %}
+            <dt>Last decision</dt>
+            <dd>{{ tech.verification_decided_at.strftime('%b %d, %Y %I:%M %p') }}{% if tech.verified_by %} by {{ tech.verified_by.full_name }}{% endif %}</dd>
+            {% endif %}
+            <dt>Account</dt><dd>{{ 'Active (can sign in)' if tech.is_active else 'Inactive (cannot sign in)' }}</dd>
+            <dt>Open jobs</dt><dd>{{ open_jobs }}</dd>
+        </dl>
+        {% if tech.verification_reason %}
+        <p class="tv-card-reason"><strong>Reason given:</strong> {{ tech.verification_reason }}</p>
+        {% endif %}
+
+        <h3 class="tv-subhead">Decision</h3>
+        {% if actions %}
+        <p class="admin-muted tv-small">Check that the name, birth date, photo and ID number match the document.
+            The technician is notified of every decision.</p>
+        <div class="refund-actions">
+            {% if 'approve' in actions %}
+            <form method="POST" action="{{ url_for('admin_tech_verification_decide', tech_id=tech.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="approve">
+                <input type="hidden" name="expected" value="{{ tech.verification_status }}">
+                <button type="submit" class="admin-btn admin-btn-sm admin-btn-confirm">
+                    <i class="fas fa-circle-check"></i> {{ 'Reinstate' if tech.verification_status == 'suspended' else 'Approve' }}
+                </button>
+            </form>
+            {% endif %}
+            {% for action, label, icon, cls, hint in [
+                ('correction', 'Request correction', 'fa-pen-to-square', 'admin-btn-secondary', 'What should they fix? e.g. The photo is blurry - upload a clearer one'),
+                ('reject', 'Reject', 'fa-circle-xmark', 'admin-btn-reject', 'Why is this registration rejected?'),
+                ('suspend', 'Suspend', 'fa-pause', 'admin-btn-reject', 'Why is this technician suspended?')] if action in actions %}
+            <details>
+                <summary class="admin-btn admin-btn-sm {{ cls }}"><i class="fas {{ icon }}"></i> {{ label }}</summary>
+                <form method="POST" action="{{ url_for('admin_tech_verification_decide', tech_id=tech.id) }}" class="refund-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="{{ action }}">
+                    <input type="hidden" name="expected" value="{{ tech.verification_status }}">
+                    <label class="refund-form-wide">Reason (the technician sees this)
+                        <input type="text" name="reason" required minlength="5" maxlength="500" placeholder="{{ hint }}">
+                    </label>
+                    {% if action == 'suspend' and open_jobs %}
+                    <p class="admin-muted tv-small refund-form-wide">Their {{ open_jobs }} open job(s) stay with them; reassign them from Service Requests if needed.</p>
+                    {% endif %}
+                    <button type="submit" class="admin-btn admin-btn-sm {{ cls }}">{{ label }}</button>
+                </form>
+            </details>
+            {% endfor %}
+        </div>
+        {% elif tech.verification_status == 'pending' and not has_document %}
+        <p class="admin-muted tv-small">Waiting for the technician to upload an ID.</p>
+        {% else %}
+        <p class="admin-muted tv-small">No decision is needed right now.</p>
+        {% endif %}
+    </section>
+</div>
+
+<section class="tv-panel" aria-labelledby="tvHistoryTitle" style="margin-top:1rem;">
+    <header class="tv-panel-head"><h2 id="tvHistoryTitle">Verification history</h2></header>
+    {% if tech.verification_events %}
+    <ol class="tv-history">
+        {% for e in tech.verification_events %}
+        <li class="tv-history-item tv-history-item--{{ e.action }}">
+            <strong>{{ event_labels.get(e.action, e.action) }}</strong>
+            <span class="admin-muted">· {{ e.created_at.strftime('%b %d, %Y %I:%M %p') }} · {{ e.actor }}</span>
+            {% if e.reason %}<p>{{ e.reason }}</p>{% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p class="admin-muted tv-small">No verification steps recorded yet.</p>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var btn = document.getElementById('tvRotate'), img = document.getElementById('tvDocImage');
+    if (!btn || !img) return;
+    // Phone photos lose their rotation flag when location data is stripped on upload.
+    var turn = 0;
+    btn.addEventListener('click', function () {
+        turn = (turn + 90) % 360;
+        img.style.transform = 'rotate(' + turn + 'deg)';
+        img.classList.toggle('is-sideways', turn % 180 !== 0);
+    });
+})();
+</script>
+{% endblock %}

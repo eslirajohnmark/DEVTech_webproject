@@ -32,7 +32,7 @@
                     {% if tech.id_verified %}
                     <span class="pf-chip"><i class="fas fa-circle-check"></i> ID verified</span>
                     {% else %}
-                    <span class="pf-chip"><i class="fas fa-clock"></i> Verification pending</span>
+                    <span class="pf-chip"><i class="fas fa-clock"></i> {{ tech.verification_label }}</span>
                     {% endif %}
                     <span class="pf-chip"><i class="fas fa-star"></i>
                         {% if rating %}{{ rating }} / 5 ({{ rating_count }}){% else %}No ratings yet{% endif %}
@@ -96,7 +96,11 @@
                     <div class="tech-field">
                         <label class="tech-label" for="tdFullName">Full name <span class="req">*</span></label>
                         <input class="tech-input" id="tdFullName" name="full_name" maxlength="100" required
-                               value="{{ tech.full_name }}" autocomplete="name">
+                               value="{{ tech.full_name }}" autocomplete="name"
+                               {% if tech.verification_status == 'verified' %}readonly aria-describedby="tdFullNameHint"{% endif %}>
+                        {% if tech.verification_status == 'verified' %}
+                        <p class="tech-hint" id="tdFullNameHint">Verified against your ID. Ask an administrator to change it.</p>
+                        {% endif %}
                     </div>
                     <div class="tech-field">
                         <label class="tech-label" for="tdEmail">Email address</label>
@@ -161,11 +165,15 @@
                         {% endif %}
                     {% else %}
                         <p style="font-size:0.86rem; margin-top:0.15rem; color:var(--t-text-muted);">
-                            <i class="fas fa-clock"></i> Pending review
+                            <i class="fas fa-clock"></i> {{ tech.verification_label }}
                         </p>
+                        {% if tech.verification_reason %}
+                        <p class="tech-hint">Reason: {{ tech.verification_reason }}</p>
+                        {% endif %}
                         <p class="tech-hint">
                             An administrator must verify your identity document before
                             you can be assigned to new service bookings.
+                            <a href="{{ url_for('technician.registration_status') }}" style="color:var(--t-accent);">See your verification status</a>
                         </p>
                     {% endif %}
                 </div>
@@ -231,6 +239,76 @@
             </section>
         </div>
     </div>
+
+    <section class="tech-card" id="credentials" style="margin-top:1.1rem;">
+        <div class="tech-card-head">
+            <h3 class="tech-card-title">
+                <i class="fas fa-award"></i> Certificates &amp; Achievements
+            </h3>
+            <span class="tech-pill tech-pill--neutral">{{ tech.credentials|length }} / 12</span>
+        </div>
+        <p class="tech-hint" style="margin:-0.4rem 0 1rem;">
+            Training certificates, licenses and awards. Admins and the customers whose repairs you handle can see these.
+        </p>
+
+        {% if tech.credentials %}
+        <div class="tech-cred-grid">
+            {% for c in tech.credentials %}
+            <article class="tech-cred">
+                <a class="tech-cred-thumb" href="{{ url_for('credential_file', cred_id=c.id) }}" target="_blank" rel="noopener"
+                   aria-label="Open {{ c.title }}">
+                    {% if c.is_image %}<img src="{{ url_for('credential_file', cred_id=c.id) }}" alt="" loading="lazy">
+                    {% else %}<i class="fas fa-file-pdf"></i>{% endif %}
+                </a>
+                <div class="tech-cred-text">
+                    <strong>{{ c.title }}</strong>
+                    <small>{{ c.issuer or '' }}{% if c.issuer and c.issued_on %} · {% endif %}{{ c.issued_on.strftime('%b %Y') if c.issued_on else '' }}</small>
+                </div>
+                <form method="POST" action="{{ url_for('technician.delete_credential', cred_id=c.id) }}" class="tech-cred-remove">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="tech-btn tech-btn--ghost tech-btn--sm" aria-label="Remove {{ c.title }}">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </form>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="tech-empty" style="padding:1.2rem;">
+            <i class="fas fa-award"></i>
+            <p>No certificates yet. Add one below to build customers' trust.</p>
+        </div>
+        {% endif %}
+
+        {% if tech.credentials|length < 12 %}
+        <form method="POST" action="{{ url_for('technician.add_credential') }}" enctype="multipart/form-data"
+              class="tech-cred-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="tech-field">
+                <label class="tech-label" for="credTitle">Title <span class="req">*</span></label>
+                <input class="tech-input" id="credTitle" name="title" maxlength="120" required
+                       placeholder="e.g. TESDA Computer Systems Servicing NC II">
+            </div>
+            <div class="tech-field">
+                <label class="tech-label" for="credIssuer">Issued by</label>
+                <input class="tech-input" id="credIssuer" name="issuer" maxlength="120" placeholder="e.g. TESDA">
+            </div>
+            <div class="tech-field">
+                <label class="tech-label" for="credDate">Date</label>
+                <input class="tech-input" id="credDate" name="issued_on" type="date" max="{{ today_iso }}">
+            </div>
+            <div class="tech-field">
+                <label class="tech-label" for="credFile">Photo or PDF <span class="req">*</span></label>
+                <input class="tech-input" id="credFile" name="file" type="file" required
+                       accept="image/jpeg,image/png,image/webp,application/pdf">
+                <p class="tech-hint">JPG, PNG, WEBP or PDF, up to 5 MB.</p>
+            </div>
+            <button class="tech-btn tech-btn--primary" type="submit">
+                <i class="fas fa-upload"></i> Add to my profile
+            </button>
+        </form>
+        {% endif %}
+    </section>
 
 </section>
 

@@ -1,10 +1,121 @@
 {% extends "base/admin_base.html" %}
+{% from 'partials/avatar.html' import avatar %}
 {% block title %}Technician Activity{% endblock %}
 {% block content %}
 <div class="admin-top-bar"><div class="admin-page-title">
-  <h1>Technician Activity</h1><p>Incidents, approval requests, submitted reports and customer ratings</p></div></div>
+  <h1>Technician Activity</h1>
+  <p>{% if selected %}<a class="tv-back" href="{{ url_for('admin_technician_activity') }}"><i class="fas fa-arrow-left"></i> All technicians</a> · {{ selected.full_name }}
+     {% else %}Each technician's workload, reports, incidents and ratings{% endif %}</p></div>
+  <div class="admin-top-actions">{% include 'admin/_notification_bell.html' %}</div>
+</div>
 
-<h3 class="admin-panel-title" style="margin:1rem 0;"><i class="fas fa-shield-halved"></i> Incident Reports</h3>
+{# ---- Roster: one card per technician ---- #}
+<h3 class="admin-panel-title" style="margin:0 0 1rem;"><i class="fas fa-people-group"></i> Technicians</h3>
+<div class="ta-roster">
+  {% for r in roster %}
+  {% set t = r.tech %}
+  <a class="ta-card {% if selected and selected.id == t.id %}is-current{% endif %} {% if not t.is_active %}is-inactive{% endif %}"
+     href="{{ url_for('admin_technician_activity', tech=t.id) }}">
+    <div class="ta-card-head">
+      {{ avatar(t, 'md') }}
+      <div class="ta-card-name">
+        <strong>{{ t.full_name }}</strong>
+        <span class="admin-muted">{{ t.username }} ·
+          {% if t.can_take_jobs %}<span class="ta-ok">Verified</span>{% else %}<span class="ta-warn">{{ t.verification_label if t.is_active else 'Inactive' }}</span>{% endif %}</span>
+      </div>
+      <span class="ta-assigned" title="Jobs assigned and not yet released">{{ r.assigned }}<small>assigned</small></span>
+    </div>
+    <div class="ta-counts">
+      <span title="Diagnosis or repair in progress"><b>{{ r.working }}</b>Working on</span>
+      <span title="Assigned, intake not recorded yet"><b>{{ r.not_started }}</b>Not started</span>
+      <span class="{{ 'is-hot' if r.on_hold }}" title="Waiting for the customer to answer"><b>{{ r.on_hold }}</b>On hold</span>
+      <span title="Repaired, waiting for collection"><b>{{ r.ready }}</b>Ready</span>
+      <span title="Released to the customer"><b>{{ r.released }}</b>Released</span>
+    </div>
+    <div class="ta-card-foot admin-muted">
+      <span><i class="fas fa-star"></i> {% if r.rating[1] %}{{ r.rating[0] }} ({{ r.rating[1] }}){% else %}No ratings{% endif %}</span>
+      <span class="{{ 'ta-warn' if r.open_incidents }}"><i class="fas fa-shield-halved"></i> {{ r.open_incidents }} open incident{{ '' if r.open_incidents == 1 else 's' }}</span>
+    </div>
+  </a>
+  {% else %}
+  <div class="admin-empty-state"><i class="fas fa-users"></i><p>No technicians yet</p></div>
+  {% endfor %}
+</div>
+
+{% if selected %}
+{# ---- One technician: profile, certificates, jobs by stage ---- #}
+<section class="tv-panel ta-profile">
+  <div class="ta-profile-head">
+    {{ avatar(selected, 'lg') }}
+    <div>
+      <h2>{{ selected.full_name }}</h2>
+      <p class="admin-muted">{{ selected.username }} · {{ selected.email }} · {{ selected.phone or 'no phone' }}</p>
+      <p><span class="tv-status tv-status--{{ selected.verification_status }}">{{ selected.verification_label }}</span>
+         {% if not selected.is_active %}<span class="tv-status tv-status--suspended">Inactive</span>{% endif %}
+         <a class="admin-muted" href="{{ url_for('admin_tech_verification_detail', tech_id=selected.id) }}">Verification details</a></p>
+    </div>
+  </div>
+  {% if selected.credentials %}
+  <h3 class="tv-subhead">Certificates &amp; achievements</h3>
+  <div class="ta-creds">
+    {% for c in selected.credentials %}
+    <a class="ta-cred" href="{{ url_for('credential_file', cred_id=c.id) }}" target="_blank" rel="noopener">
+      {% if c.is_image %}<img src="{{ url_for('credential_file', cred_id=c.id) }}" alt="" loading="lazy">
+      {% else %}<span class="ta-cred-pdf"><i class="fas fa-file-pdf"></i></span>{% endif %}
+      <span><strong>{{ c.title }}</strong><small>{{ c.issuer or '' }}{% if c.issuer and c.issued_on %} · {% endif %}{{ c.issued_on.strftime('%b %Y') if c.issued_on else '' }}</small></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="admin-muted tv-small">No certificates or achievements uploaded.</p>
+  {% endif %}
+</section>
+
+<h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-briefcase"></i> Jobs</h3>
+<div class="ta-jobs">
+  {% for key, label, jobs in job_groups %}
+  <section class="tv-panel ta-job-group ta-job-group--{{ key }}">
+    <header class="tv-panel-head"><h2>{{ label }}</h2><span class="tv-status ta-count">{{ selected_row[key] if selected_row else jobs|length }}</span></header>
+    {% for b in jobs %}
+    <a class="ta-job" href="{{ url_for('admin_requests', q=b.booking_number) }}">
+      <span><strong>{{ b.booking_number }}</strong> · {{ b.service.name if b.service else 'Service' }}</span>
+      <span class="admin-muted">{{ b.customer.full_name if b.customer else 'Customer' }} ·
+        {{ b.booking_date.strftime('%b %d') if b.booking_date else '' }} · {{ 'In shop' if b.is_in_shop else 'Home service' }}</span>
+    </a>
+    {% else %}
+    <p class="admin-muted tv-small">None.</p>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-file-lines"></i> Service Reports{% if not selected %} (submitted){% endif %}</h3>
+<div class="ta-reports">
+{% for r in reports %}
+  <details class="tv-panel ta-report">
+    <summary>
+      <span><strong>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</strong>
+        {% if not selected %}· {{ technicians[r.technician_id].full_name if r.technician_id in technicians else '—' }}{% endif %}</span>
+      <span class="admin-muted">{{ (r.outcome or '')|replace('_',' ')|title or 'No outcome yet' }} · {{ r.hours_spent or 0 }} h ·
+        {% if r.status == 'submitted' %}submitted {{ r.submitted_at }}{% else %}<span class="ta-warn">draft</span>{% endif %}</span>
+    </summary>
+    <dl class="tv-kv">
+      <dt>Diagnosis</dt><dd>{{ r.diagnosis or '—' }}</dd>
+      <dt>Tests done</dt><dd>{{ r.tests or '—' }}</dd>
+      <dt>Work performed</dt><dd>{{ r.work_performed or '—' }}</dd>
+      <dt>Outcome notes</dt><dd>{{ r.outcome_notes or '—' }}</dd>
+      <dt>Recommendations</dt><dd>{{ r.recommendations or '—' }}</dd>
+      <dt>Photos</dt><dd>{{ r.photos_note or '—' }}</dd>
+      <dt>Private note to admin</dt><dd>{{ r.admin_note or '—' }}</dd>
+    </dl>
+  </details>
+{% else %}
+  <div class="admin-empty-state"><i class="fas fa-file-lines"></i><p>No service reports yet.</p></div>
+{% endfor %}
+</div>
+
+<h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-shield-halved"></i> Incident Reports</h3>
 <div class="admin-table-container"><table class="admin-table">
 <thead><tr><th>ID</th><th>Technician</th><th>Job</th><th>Type</th><th>Severity</th><th>Description</th><th>Evidence</th><th>Status</th><th></th></tr></thead>
 <tbody>
@@ -54,21 +165,6 @@
 {% else %}<tr><td colspan="7" style="text-align:center;padding:1.5rem;">No approval requests yet.</td></tr>{% endfor %}
 </tbody></table></div>
 
-<h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-file-lines"></i> Submitted Service Reports</h3>
-<div class="admin-table-container"><table class="admin-table">
-<thead><tr><th>Job</th><th>Technician</th><th>Outcome</th><th>Hours</th><th>Diagnosis</th><th>Private note</th><th>Submitted</th></tr></thead>
-<tbody>
-{% for r in reports %}
-<tr>
-  <td>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</td>
-  <td>{{ technicians[r.technician_id].full_name if r.technician_id in technicians else '—' }}</td>
-  <td>{{ (r.outcome or '')|replace('_',' ')|title }}</td><td>{{ r.hours_spent or 0 }}</td>
-  <td style="max-width:280px;">{{ r.diagnosis }}</td><td style="max-width:220px;">{{ r.admin_note or '—' }}</td>
-  <td>{{ r.submitted_at }}</td>
-</tr>
-{% else %}<tr><td colspan="7" style="text-align:center;padding:1.5rem;">No submitted reports yet.</td></tr>{% endfor %}
-</tbody></table></div>
-
 <h3 class="admin-panel-title" style="margin:1.5rem 0 1rem;"><i class="fas fa-star"></i> Customer Ratings</h3>
 <div class="admin-table-container"><table class="admin-table">
 <thead><tr><th>Job</th><th>Technician</th><th>Customer</th><th>Stars</th><th>Feedback</th></tr></thead>
@@ -78,7 +174,7 @@
   <td>{{ bookings[r.booking_id].booking_number if r.booking_id in bookings else '—' }}</td>
   <td>{{ technicians[r.technician_id].full_name if r.technician_id in technicians else '—' }}</td>
   <td>{{ customers[r.customer_id].full_name if r.customer_id in customers else '—' }}</td>
-  <td>{{ r.stars }}/5</td><td style="max-width:320px;">{{ r.experience }}</td>
+  <td>{{ r.stars }}/5</td><td style="max-width:320px;">{{ r.experience }}{% if r.improvement %}<br><span class="admin-muted">Could improve: {{ r.improvement }}</span>{% endif %}</td>
 </tr>
 {% else %}<tr><td colspan="5" style="text-align:center;padding:1.5rem;">No ratings yet.</td></tr>{% endfor %}
 </tbody></table></div>

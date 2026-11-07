@@ -1,123 +1,130 @@
 {% extends 'base/technician_base.html' %}
+{% from 'partials/avatar.html' import avatar %}
 
 {% block title %}Messages{% endblock %}
 {% block meta_title %}Messages{% endblock %}
-{% block meta_subtitle %}Customers and administrators{% endblock %}
+{% block meta_subtitle %}Customers and DEVTech support{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{{ url_for('static', filename='css/messenger.css') }}">{% endblock %}
 
 {% block body %}
 
-{% if not conversations %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% for category, message in messages %}
+<div class="tech-banner tech-banner--{{ 'ok' if category == 'success' else 'danger' }}" role="status">
+    <i class="fas fa-triangle-exclamation"></i><span>{{ message }}</span>
+</div>
+{% endfor %}
+{% endwith %}
+
+{% if not conversations and not active_thread %}
 <section class="tech-card">
     <div class="tech-empty">
         <i class="fas fa-comments"></i>
         <h3>No conversations yet</h3>
-        <p>When a customer or admin messages you, their thread appears here.
-           You can also start one from any job's detail page.</p>
+        <p>When a customer or DEVTech support messages you, the chat appears here.
+           You can also message a customer from any job's page.</p>
     </div>
 </section>
 
 {% else %}
-
-<section class="tech-msg-layout">
-
-    <aside class="tech-msg-list" id="techThreadList" data-live-region="list">
-        <div style="padding:0.9rem 1rem 0.6rem; border-bottom:1px solid var(--t-glass-edge-2);">
-            <h3 style="font-size:0.94rem; font-weight:700; display:flex;
-                       align-items:center; gap:0.5rem;">
-                <i class="fas fa-comments" style="color:var(--t-blue);"></i>
-                Conversations
-            </h3>
+<div class="mx-wrap">
+<div class="mx mx--technician {% if active_thread %}has-thread{% endif %}">
+    <aside class="mx-side" aria-label="Conversations">
+        <div class="mx-side-head"><h2>Chats</h2></div>
+        <div class="mx-search">
+            <i class="fas fa-search" aria-hidden="true"></i>
+            <input type="search" class="mx-search-input" placeholder="Search chats" aria-label="Search conversations">
         </div>
-
-        {% for conv in conversations %}
-        <a class="tech-thread {% if conv.is_active %}is-active{% endif %}"
-           href="{{ url_for('technician.messages', thread=conv.key) }}">
-
-            <div class="tech-thread-avatar">
-                {{ conv.initials }}
-            </div>
-
-            <div class="tech-thread-body">
-                <div class="tech-thread-name">
-                    <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                        {{ conv.name }}
+        <div class="mx-list" id="techThreadList" data-live-region="list">
+            {% for conv in conversations %}
+            <a class="mx-conv {% if conv.is_active %}is-active{% endif %} {% if conv.unread_count %}is-unread{% endif %}"
+               href="{{ url_for('technician.messages', thread=conv.key) }}" data-search="{{ conv.name }} {{ conv.last_message }}"
+               {% if conv.is_active %}aria-current="true"{% endif %}>
+                <span class="mx-avatar-wrap">{{ avatar(conv.account, 'md') }}{% if conv.is_online %}<span class="mx-online" title="Online"></span>{% endif %}</span>
+                <span class="mx-conv-text">
+                    <span class="mx-conv-top">
+                        <span class="mx-conv-name">{{ conv.name }}</span>
+                        <span class="mx-conv-time" data-ts="{{ conv.last_time.isoformat() }}Z">{{ conv.last_time.strftime('%b %d') }}</span>
                     </span>
-                    {% if conv.unread_count > 0 %}
-                    <span class="tech-thread-unread">{{ conv.unread_count }}</span>
-                    {% endif %}
-                </div>
-                <div class="tech-thread-preview">
-                    {{ conv.last_message[:60] }}{% if conv.last_message|length > 60 %}…{% endif %}
-                </div>
-            </div>
-
-            <div class="tech-thread-time">
-                {{ conv.last_time }}
-            </div>
-        </a>
-        {% endfor %}
+                    <span class="mx-conv-bottom">
+                        <span class="mx-conv-last">{% if conv.last_from_me %}You: {% endif %}{{ conv.last_message|truncate(48) }}</span>
+                        {% if conv.unread_count %}<span class="mx-unread" aria-label="{{ conv.unread_count }} unread">{{ conv.unread_count }}</span>{% endif %}
+                    </span>
+                </span>
+            </a>
+            {% endfor %}
+        </div>
     </aside>
 
-    <main class="tech-msg-pane">
+    <section class="mx-main" aria-label="Conversation">
         {% if active_thread %}
-
-        <div class="tech-msg-head">
-            <div style="min-width:0;">
-                <div style="font-weight:700; font-size:0.92rem;">
-                    {{ active_thread.name }}
-                </div>
-                <div style="font-size:0.74rem; color:var(--t-text-muted);">
-                    {{ active_thread.role_label }}
-                </div>
+        {% set them = active_thread.account %}
+        <div class="mx-head">
+            <a class="mx-back" href="{{ url_for('technician.messages') }}" aria-label="Back to all chats"><i class="fas fa-arrow-left"></i></a>
+            <div class="mx-head-info" id="techThreadHead" data-live-region="header">
+                <span class="mx-avatar-wrap">{{ avatar(them, 'sm') }}{% if active_thread.is_online %}<span class="mx-online"></span>{% endif %}</span>
+                <span class="mx-head-text">
+                    <span class="mx-head-name">{{ active_thread.name }}</span>
+                    <span class="mx-head-sub {% if active_thread.is_online %}is-online{% endif %}">
+                        {{ 'Active now' if active_thread.is_online else 'Offline' }} · {{ active_thread.role_label }}
+                    </span>
+                </span>
             </div>
         </div>
 
-        <div class="tech-msg-body" id="msgBody" data-live-region="chat">
-            {% if thread_messages %}
-                {% for m in thread_messages %}
-                <div class="tech-bubble from-{{ 'tech' if m.is_sent else 'customer' }}">
-                    {{ m.content }}
+        <div class="mx-thread" id="msgBody" data-live-region="chat" role="log" aria-live="polite"
+             aria-label="Messages with {{ active_thread.name }}">
+            {% for m in thread_messages %}
+            <div class="mx-msg {{ 'sent' if m.is_sent else 'received' }}" data-ts="{{ m.created_at.isoformat() }}Z"
+                 {% if m.is_sent %}data-read="{{ 1 if m.is_read else 0 }}"{% endif %}>
+                {% if not m.is_sent %}<span class="mx-msg-avatar" aria-hidden="true">{{ avatar(them, 'xs') }}</span>{% endif %}
+                <div class="mx-bubble">
+                    {% if m.content %}<p>{{ m.content }}</p>{% endif %}
                     {% for f in m.attachments %}
-                        <a class="msg-attachment {% if not f.is_image %}msg-attachment-file{% endif %}" href="{{ f.url }}" {% if f.is_image %}target="_blank" rel="noopener"{% endif %}>
-                            {% if f.is_image %}<img src="{{ f.url }}" alt="{{ f.name }}">{% else %}<i class="fas fa-file-pdf"></i> {{ f.name }}{% endif %}
-                        </a>
+                    <a class="msg-attachment {% if not f.is_image %}msg-attachment-file{% endif %}" href="{{ f.url }}" {% if f.is_image %}target="_blank" rel="noopener"{% endif %}>{% if f.is_image %}<img src="{{ f.url }}" alt="{{ f.name }}">{% else %}<i class="fas fa-file-pdf"></i> {{ f.name }}{% endif %}</a>
                     {% endfor %}
-                    <span class="tech-bubble-time">{{ m.created_at }}</span>
+                    <span class="mx-time">{{ m.created_at.strftime('%b %d, %I:%M %p') }}</span>
                 </div>
-                {% endfor %}
+            </div>
             {% else %}
-                <div style="margin:auto; text-align:center; color:var(--t-text-muted);
-                            font-size:0.82rem;">
-                    No messages yet. Say hello.
-                </div>
-            {% endif %}
+            <div class="mx-empty-thread">
+                {{ avatar(them, 'lg') }}
+                <h3>{{ active_thread.name }}</h3>
+                <p>No messages yet. Say hello below.</p>
+            </div>
+            {% endfor %}
         </div>
 
-        <form class="tech-msg-compose" method="POST" enctype="multipart/form-data"
+        <div class="mx-chip" hidden>
+            <i class="fas fa-paperclip"></i> <span class="mx-chip-name"></span>
+            <button type="button" class="mx-chip-remove" aria-label="Remove attachment">&times;</button>
+        </div>
+        <form class="mx-composer" method="POST" enctype="multipart/form-data"
               action="{{ url_for('technician.message_send', other_key=active_thread.key) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <label class="tech-btn tech-btn--ghost" title="Attach an image or PDF (max 5 MB)" style="cursor:pointer;">
-                <i class="fas fa-paperclip"></i>
-                <input type="file" name="attachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" style="display:none;">
+            <label class="mx-attach" title="Attach a photo or PDF (max 5 MB)">
+                <i class="fas fa-circle-plus"></i><span class="visually-hidden">Attach a file</span>
+                <input type="file" name="attachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" hidden>
             </label>
-            <textarea class="tech-textarea" name="content" rows="1"
-                      placeholder="Write a message..."></textarea>
-            <button class="tech-btn tech-btn--primary" type="submit"
-                    aria-label="Send">
-                <i class="fas fa-paper-plane"></i>
-            </button>
+            <div class="mx-input-wrap">
+                <textarea class="mx-input" name="content" rows="1" maxlength="5000" placeholder="Aa"
+                          aria-label="Message {{ active_thread.name }}"></textarea>
+            </div>
+            <button type="submit" class="mx-send" aria-label="Send"><i class="fas fa-paper-plane"></i></button>
         </form>
-
         {% else %}
-        <div class="tech-empty">
+        <div class="mx-pick">
             <i class="fas fa-comment-dots"></i>
             <h3>Select a conversation</h3>
-            <p>Choose a thread from the list on the left.</p>
+            <p>Choose a chat from the list.</p>
         </div>
         {% endif %}
-    </main>
-
-</section>
+    </section>
+</div>
+</div>
 {% endif %}
+{% endblock %}
 
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/messenger.js') }}" defer></script>
 {% endblock %}

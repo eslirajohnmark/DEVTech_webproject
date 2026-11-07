@@ -1,0 +1,82 @@
+{# Notification feed shared by the admin and technician portals (customers keep
+   their own page but use delete_all_dialog). Styles: static/css/notifications.css,
+   behaviour (local times, day groups, filters, dialog): static/js/notifications.js.
+   Usage: {% from 'partials/notification_feed.html' import feed %} {{ feed(rows, unread_ids, 'admin', total) }} #}
+
+{% macro delete_all_dialog(total) -%}
+<dialog id="nfDeleteAll" class="nf-dialog" aria-labelledby="nfDeleteTitle" aria-describedby="nfDeleteText">
+    <form method="POST" action="{{ url_for('notifications_delete_all') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="nf-dialog-icon" aria-hidden="true"><i class="fas fa-trash-can"></i></div>
+        <h2 id="nfDeleteTitle">Delete all notifications?</h2>
+        <p id="nfDeleteText">This permanently removes all {{ total }} notification{{ '' if total == 1 else 's' }}.
+            You can't undo this.</p>
+        <div class="nf-dialog-actions">
+            <button type="button" class="nf-btn" data-nf-close autofocus>Cancel</button>
+            <button type="submit" class="nf-btn nf-btn--danger"><i class="fas fa-trash-can"></i> Delete all</button>
+        </div>
+    </form>
+</dialog>
+{%- endmacro %}
+
+{% macro feed(rows, unread_ids, role, total) -%}
+{% set icons = {'success': 'circle-check', 'warning': 'triangle-exclamation', 'error': 'circle-xmark', 'info': 'bell'} %}
+<section class="nf nf--{{ role }}" aria-label="Notifications">
+    <div class="nf-summary">
+        <div class="nf-stat"><strong>{{ unread_ids|length }}</strong><span>New since your last visit</span></div>
+        <div class="nf-stat"><strong>{{ total }}</strong><span>In total</span></div>
+        {% if total %}
+        <button type="button" class="nf-btn nf-btn--danger nf-delete-all" data-nf-open="nfDeleteAll">
+            <i class="fas fa-trash-can"></i> Delete all
+        </button>
+        {% endif %}
+    </div>
+
+    {% if rows %}
+    <div class="nf-filters" role="toolbar" aria-label="Filter notifications">
+        <button type="button" class="nf-chip is-active" data-filter="all" aria-pressed="true">All <span>{{ rows|length }}</span></button>
+        {% if unread_ids %}<button type="button" class="nf-chip" data-filter="new" aria-pressed="false">New <span>{{ unread_ids|length }}</span></button>{% endif %}
+        {% for kind, label in [('warning', 'Needs attention'), ('error', 'Problems'), ('success', 'Done'), ('info', 'Updates')] %}
+            {% set count = rows|selectattr('type', 'equalto', kind)|list|length if kind != 'info'
+                           else rows|rejectattr('type', 'in', ['warning', 'error', 'success'])|list|length %}
+            {% if count %}<button type="button" class="nf-chip nf-chip--{{ kind }}" data-filter="{{ kind }}" aria-pressed="false">{{ label }} <span>{{ count }}</span></button>{% endif %}
+        {% endfor %}
+    </div>
+
+    <ol class="nf-list">
+        {% for n in rows %}
+        {% set kind = n.type if n.type in ('success', 'warning', 'error') else 'info' %}
+        {% set link = notification_link(role, n.title) %}
+        <li class="nf-item nf-item--{{ kind }} {% if n.id in unread_ids %}is-new{% endif %}"
+            data-type="{{ kind }}" data-new="{{ 1 if n.id in unread_ids else 0 }}"
+            data-ts="{{ n.created_at.isoformat() ~ 'Z' if n.created_at else '' }}">
+            <span class="nf-icon" aria-hidden="true"><i class="fas fa-{{ icons[kind] }}"></i></span>
+            <div class="nf-body">
+                <div class="nf-head">
+                    <strong class="nf-title">{{ n.title }}</strong>
+                    {% if n.id in unread_ids %}<span class="nf-new">New</span>{% endif %}
+                    <time class="nf-time">{{ n.created_at.strftime('%b %d, %I:%M %p') if n.created_at else '' }}</time>
+                </div>
+                <p class="nf-msg">{{ n.message }}</p>
+                {% if link %}<a class="nf-open" href="{{ link }}">Open <i class="fas fa-arrow-right" aria-hidden="true"></i></a>{% endif %}
+            </div>
+            <form method="POST" action="{{ url_for('notification_remove', notification_id=n.id) }}" class="nf-remove">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" aria-label="Delete “{{ n.title }}”" title="Delete"><i class="fas fa-xmark"></i></button>
+            </form>
+        </li>
+        {% endfor %}
+    </ol>
+    <p class="nf-filter-empty" hidden>No notifications match this filter.</p>
+    {% if total > rows|length %}<p class="nf-more">Showing the latest {{ rows|length }} of {{ total }}.</p>{% endif %}
+    {% else %}
+    <div class="nf-empty">
+        <span class="nf-empty-icon" aria-hidden="true"><i class="fas fa-bell-slash"></i></span>
+        <h3>You're all caught up</h3>
+        <p>New notifications will appear here as they happen.</p>
+    </div>
+    {% endif %}
+
+    {% if total %}{{ delete_all_dialog(total) }}{% endif %}
+</section>
+{%- endmacro %}

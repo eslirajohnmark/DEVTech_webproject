@@ -1158,8 +1158,7 @@ body {
             background: #fef3c7;
             color: #92400e;
             border: 1px solid #fde68a;
-        }
-        .flash-message.info {
+        }        .flash-message.info {
             background: #dbeafe;
             color: #1e40af;
             border: 1px solid #bfdbfe;

@@ -4,137 +4,270 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#070b18" />
-    <title>DEVTech · Technician Registration</title>
+    <title>DEVTech · {{ 'Update Registration' if mode == 'update' else 'Technician Registration' }}</title>
     <link rel="icon" href="{{ url_for('static', filename='images/favicon.svg') }}" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/vendor/jsQR.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/id-autofill.js') }}" defer></script>
 </head>
 <body class="tech-login-page">
 
+{% macro field_error(name) -%}
+<p class="tech-field-error" id="{{ name }}-error" data-error-for="{{ name }}" {% if not errors.get(name) %}hidden{% endif %}>{{ errors.get(name, '') }}</p>
+{%- endmacro %}
+{% macro invalid(name) -%}
+{% if errors.get(name) %}is-invalid{% endif %}
+{%- endmacro %}
+
 <main class="tech-login-card tech-login-card--wide">
     <div class="tech-login-brand">
-        <div class="tech-login-mark"><i class="fas fa-user-plus"></i></div>
+        <div class="tech-login-mark"><i class="fas fa-{{ 'id-card' if mode == 'update' else 'user-plus' }}"></i></div>
         <h1>DEV<span>Tech</span></h1>
-        <p>Create your technician account</p>
+        <p>{{ 'Update your technician registration' if mode == 'update' else 'Create your technician account' }}</p>
     </div>
 
-    {% with messages = get_flashed_messages() %}
-    {% if messages %}
-    <div class="tech-login-error is-shown">
-        <i class="fas fa-circle-exclamation"></i>
-        <span>{{ messages[0] }}</span>
+    {% if mode == 'update' %}
+    <div class="tech-reg-status">
+        <code>{{ tech.username }}</code>
+        <span class="tech-pill tech-pill--{{ 'warn' if tech.verification_status == 'needs_correction' else 'info' }}">{{ tech.verification_label }}</span>
+    </div>
+    {% if tech.verification_reason %}
+    <div class="tech-reg-reason" role="note">
+        <strong><i class="fas fa-circle-info"></i> What the administrator asked you to fix</strong>
+        <p>{{ tech.verification_reason }}</p>
     </div>
     {% endif %}
+    {% endif %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="{{ 'tech-login-success' if category == 'success' else 'tech-login-error' }} is-shown" role="status">
+        <i class="fas fa-circle-exclamation"></i><span>{{ message }}</span>
+    </div>
+    {% endfor %}
     {% endwith %}
 
-    <form id="registerForm" method="POST"
-          action="{{ url_for('technician.register') }}" novalidate>
+    {% if mode != 'update' %}
+    <p class="tech-reg-intro">
+        <i class="fas fa-circle-info"></i>
+        For technicians DEVTech has hired. Use the Tech ID you were given, and upload a valid ID whose
+        name, birth date and number match the details DEVTech has on record.
+    </p>
+    {% endif %}
+
+    <div class="tech-login-error {% if errors %}is-shown{% endif %}" id="formErrorSummary" role="alert">
+        <i class="fas fa-circle-exclamation"></i>
+        <span>{{ errors.get('form') or 'Please fix the highlighted fields.' }}</span>
+    </div>
+
+    <form id="registerForm" method="POST" enctype="multipart/form-data" novalidate
+          action="{{ url_for('technician.registration_update' if mode == 'update' else 'technician.register') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-        <div class="tech-field">
-            <label class="tech-label" for="fullname">
-                Full Name <span class="req">*</span>
-            </label>
-            <input class="tech-input" id="fullname" name="fullname"
-                   type="text" placeholder="e.g. Juan Dela Cruz"
-                   value="{{ form.fullname or '' }}" required />
-        </div>
-
-        <div class="tech-field">
-            <label class="tech-label" for="email">
-                Email Address <span class="req">*</span>
-            </label>
-            <input class="tech-input" id="email" name="email"
-                   type="email" placeholder="juan@email.com"
-                   value="{{ form.email or '' }}" required />
-        </div>
-
-        <div class="tech-field">
-            <label class="tech-label" for="staffId">
-                Staff / Tech ID Number <span class="req">*</span>
-            </label>
-            <input class="tech-input tech-input--mono" id="staffId" name="staffId"
-                   type="text" placeholder="TECH-0002" maxlength="12"
-                   value="{{ form.staffId or '' }}" required />
-            <p class="tech-hint">Format: <code>TECH-0001</code>.</p>
-        </div>
-
-        <div class="tech-grid-2">
+        <fieldset class="tech-reg-section">
+            <legend>1 · {% if mode != 'update' %}Tech ID &amp; {% endif %}valid ID</legend>
+            {% if mode != 'update' %}
             <div class="tech-field">
-                <label class="tech-label" for="gender">
-                    Gender <span class="req">*</span>
-                </label>
-                <select class="tech-select" id="gender" name="gender"
-                        style="width:100%;" required>
-                    <option value="">Select gender</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                </select>
+                <label class="tech-label" for="staffId">Your DEVTech Tech ID <span class="req">*</span></label>
+                <input class="tech-input tech-input--mono {{ invalid('staffId') }}" id="staffId" name="staffId"
+                       type="text" placeholder="TECH-0042" maxlength="12" autocomplete="username"
+                       value="{{ form.get('staffId', '') }}" aria-describedby="staffId-hint staffId-error" required />
+                <p class="tech-hint" id="staffId-hint">The Tech ID DEVTech gave you when you were hired (like <code>TECH-0042</code>).
+                    You sign in with it. Don't have one? Ask the DEVTech admin.</p>
+                {{ field_error('staffId') }}
             </div>
+            {% endif %}
             <div class="tech-field">
-                <label class="tech-label" for="dob">
-                    Date of Birth <span class="req">*</span>
+                <span class="tech-label" id="idDocLabel">
+                    Photo or scan of the ID {% if mode != 'update' %}<span class="req">*</span>{% endif %}
+                </span>
+                {% if mode == 'update' and tech.id_document_file %}
+                <p class="tech-hint" style="margin:0 0 0.5rem;">
+                    <i class="fas fa-paperclip"></i> An ID is already on file
+                    (<a href="{{ url_for('technician.registration_document') }}" target="_blank" rel="noopener">view it</a>).
+                    Upload a new one only if you were asked to.
+                </p>
+                {% endif %}
+                <label class="tech-upload {{ invalid('id_document') }}" for="id_document">
+                    <span class="tech-upload-thumb" id="idDocThumb" aria-hidden="true"><i class="fas fa-id-card"></i></span>
+                    <span class="tech-upload-text">
+                        <strong id="idDocName">Choose a photo or PDF of your ID</strong>
+                        <small>JPG, PNG, WEBP or PDF · up to {{ max_mb }} MB · all four corners visible and readable</small>
+                    </span>
+                    <input type="file" id="id_document" name="id_document" data-max-bytes="{{ max_mb * 1024 * 1024 }}"
+                           accept="image/jpeg,image/png,image/webp,application/pdf"
+                           aria-labelledby="idDocLabel" aria-describedby="id_document-error"
+                           {% if mode != 'update' %}required{% endif %} />
                 </label>
-                <input class="tech-input" id="dob" name="dob" type="date"
-                       value="{{ form.dob or '' }}" required />
+                {{ field_error('id_document') }}
+                <p class="tech-reg-autofill" id="idAutofillNote" role="status" hidden></p>
+                <p class="tech-reg-notice">
+                    <i class="fas fa-lock"></i>
+                    Your ID is stored privately and is seen only by DEVTech administrators to confirm who you are.
+                    It is never shown to customers. Location data in phone photos is removed when you upload.
+                    For a PhilSys National ID, the QR code is read on this device to fill in your details.
+                </p>
             </div>
-        </div>
+            <div class="tech-grid-2">
+                <div class="tech-field">
+                    <label class="tech-label" for="id_type">ID type <span class="req">*</span></label>
+                    <select class="tech-select {{ invalid('id_type') }}" id="id_type" name="id_type" style="width:100%;"
+                            aria-describedby="id_type-error" required>
+                        <option value="">Select ID type</option>
+                        {% for t in id_types %}
+                        <option value="{{ t }}" {% if form.get('id_type') == t %}selected{% endif %}>{{ t }}</option>
+                        {% endfor %}
+                    </select>
+                    {{ field_error('id_type') }}
+                </div>
+                <div class="tech-field">
+                    <label class="tech-label" for="id_number">ID number <span class="req">*</span></label>
+                    <input class="tech-input tech-input--mono {{ invalid('id_number') }}" id="id_number" name="id_number"
+                           type="text" maxlength="50" autocomplete="off" placeholder="As printed on the ID"
+                           value="{{ form.get('id_number', '') }}" aria-describedby="id_number-error" required />
+                    {{ field_error('id_number') }}
+                </div>
+            </div>
 
-        <div class="tech-field">
-            <label class="tech-label" for="password">
-                Password <span class="req">*</span>
-            </label>
-            <div class="tech-password-wrap">
-                <input class="tech-input" id="password" name="password"
-                       type="password" placeholder="At least 8 characters"
-                       minlength="8" required />
-                <button type="button" class="tech-password-toggle"
-                        data-target="password">
-                    <i class="fas fa-eye"></i>
-                </button>
-            </div>
-            <div class="tech-pw-meter" id="pwMeter">
-                <div class="tech-pw-bar"><span></span></div>
-                <span class="tech-pw-label" id="pwLabel">Enter a password</span>
-            </div>
-        </div>
+        </fieldset>
 
-        <div class="tech-field">
-            <label class="tech-label" for="password2">
-                Confirm Password <span class="req">*</span>
-            </label>
-            <div class="tech-password-wrap">
-                <input class="tech-input" id="password2" name="password2"
-                       type="password" required />
-                <button type="button" class="tech-password-toggle"
-                        data-target="password2">
-                    <i class="fas fa-eye"></i>
-                </button>
+        <fieldset class="tech-reg-section">
+            <legend>2 · Personal details</legend>
+            <div class="tech-field">
+                <label class="tech-label" for="fullname">Full name (as printed on your ID) <span class="req">*</span></label>
+                <input class="tech-input {{ invalid('fullname') }}" id="fullname" name="fullname" type="text"
+                       maxlength="100" autocomplete="name" placeholder="e.g. Juan Santos Dela Cruz"
+                       value="{{ form.get('fullname', '') }}" aria-describedby="fullname-error" required />
+                {{ field_error('fullname') }}
             </div>
-        </div>
+            <div class="tech-grid-2">
+                <div class="tech-field">
+                    <label class="tech-label" for="email">Email address <span class="req">*</span></label>
+                    <input class="tech-input {{ invalid('email') }}" id="email" name="email" type="email"
+                           maxlength="120" autocomplete="email" placeholder="juan@email.com"
+                           value="{{ form.get('email', '') }}" aria-describedby="email-error" required />
+                    {{ field_error('email') }}
+                </div>
+                <div class="tech-field">
+                    <label class="tech-label" for="phone">Mobile number <span class="req">*</span></label>
+                    <input class="tech-input {{ invalid('phone') }}" id="phone" name="phone" type="tel"
+                           maxlength="16" autocomplete="tel" inputmode="tel" placeholder="09171234567"
+                           value="{{ form.get('phone', '') }}" aria-describedby="phone-error" required />
+                    {{ field_error('phone') }}
+                </div>
+            </div>
+            <div class="tech-grid-2">
+                <div class="tech-field">
+                    <label class="tech-label" for="gender">Gender <span class="req">*</span></label>
+                    <select class="tech-select {{ invalid('gender') }}" id="gender" name="gender" style="width:100%;"
+                            aria-describedby="gender-error" required>
+                        <option value="">Select gender</option>
+                        {% for g in genders %}
+                        <option value="{{ g }}" {% if (form.get('gender') or '')|capitalize == g %}selected{% endif %}>{{ g }}</option>
+                        {% endfor %}
+                    </select>
+                    {{ field_error('gender') }}
+                </div>
+                <div class="tech-field">
+                    <label class="tech-label" for="dob">Date of birth <span class="req">*</span></label>
+                    <input class="tech-input {{ invalid('dob') }}" id="dob" name="dob" type="date"
+                           value="{{ form.get('dob', '') }}" aria-describedby="dob-error" required />
+                    {{ field_error('dob') }}
+                </div>
+            </div>
+        </fieldset>
 
-        <label class="tech-check" style="margin-bottom:1.1rem;">
-            <input type="checkbox" name="terms" required />
-            <span>I confirm the information above is correct.</span>
+        {% if mode != 'update' %}
+        <fieldset class="tech-reg-section">
+            <legend>3 · Password</legend>
+            <div class="tech-grid-2">
+                <div class="tech-field">
+                    <label class="tech-label" for="password">Password <span class="req">*</span></label>
+                    <div class="tech-password-wrap">
+                        <input class="tech-input {{ invalid('password') }}" id="password" name="password" type="password"
+                               placeholder="At least 8 characters" minlength="8" autocomplete="new-password"
+                               aria-describedby="password-error" required />
+                        <button type="button" class="tech-password-toggle" data-target="password" aria-label="Show password">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                    <div class="tech-pw-meter" id="pwMeter">
+                        <div class="tech-pw-bar"><span></span></div>
+                        <span class="tech-pw-label" id="pwLabel">Enter a password</span>
+                    </div>
+                    {{ field_error('password') }}
+                </div>
+                <div class="tech-field">
+                    <label class="tech-label" for="password2">Confirm password <span class="req">*</span></label>
+                    <div class="tech-password-wrap">
+                        <input class="tech-input {{ invalid('password2') }}" id="password2" name="password2" type="password"
+                               autocomplete="new-password" aria-describedby="password2-error" required />
+                        <button type="button" class="tech-password-toggle" data-target="password2" aria-label="Show password">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                    {{ field_error('password2') }}
+                </div>
+            </div>
+        </fieldset>
+
+        <label class="tech-check" style="margin-bottom:0.4rem;">
+            <input type="checkbox" name="privacy_consent" value="1" aria-describedby="privacy_consent-error"
+                   {% if form.get('privacy_consent') %}checked{% endif %} required />
+            <span>I agree that DEVTech may collect and keep my personal details and ID to verify my identity
+                and manage my technician account, as allowed by the Data Privacy Act of 2012 (RA 10173).</span>
         </label>
+        {{ field_error('privacy_consent') }}
+        {% endif %}
 
-        <button type="submit" class="tech-btn tech-btn--primary tech-btn--wide">
-            <i class="fas fa-user-plus"></i> Create Account
-        </button>
+        <div class="tech-reg-actions">
+            <a class="tech-btn tech-btn--ghost"
+               href="{{ url_for('technician.registration_status' if mode == 'update' else 'technician.login') }}">
+                <i class="fas fa-xmark"></i> Cancel
+            </a>
+            <button type="submit" class="tech-btn tech-btn--primary">
+                <i class="fas fa-eye"></i> Review details
+            </button>
+        </div>
     </form>
 
+    <section class="tech-reg-review" id="reviewPanel" hidden aria-labelledby="reviewTitle" tabindex="-1">
+        <h2 id="reviewTitle">Check your details</h2>
+        <p class="tech-hint">Make sure everything matches your ID before you send it.</p>
+        <dl id="reviewList"></dl>
+        <div id="reviewDoc" class="tech-reg-review-doc"></div>
+        <div class="tech-reg-actions">
+            <button type="button" class="tech-btn tech-btn--ghost" id="reviewEdit"><i class="fas fa-pen"></i> Edit</button>
+            <button type="button" class="tech-btn tech-btn--primary" id="reviewSubmit">
+                <i class="fas fa-paper-plane"></i> {{ 'Send updated registration' if mode == 'update' else 'Submit registration' }}
+            </button>
+        </div>
+    </section>
+
     <div class="tech-login-note">
-        Already have an account?
-        <a href="{{ url_for('technician.login') }}"
-           style="color:var(--t-accent); font-weight:600;">Sign in here</a>
+        {% if mode == 'update' %}
+        Signed in for this check as <code>{{ tech.username }}</code>.
+        <a href="{{ url_for('technician.registration_status_done') }}" style="color:var(--t-accent); font-weight:600;">Done</a>
+        {% else %}
+        Already registered?
+        <a href="{{ url_for('technician.login') }}" style="color:var(--t-accent); font-weight:600;">Sign in</a>
+        or <a href="{{ url_for('technician.registration_status') }}" style="color:var(--t-accent); font-weight:600;">check your registration status</a>
+        {% endif %}
     </div>
 </main>
 
 <script nonce="{{ tech_nonce }}">
+(function () {
+    var form = document.getElementById('registerForm');
+    var panel = document.getElementById('reviewPanel');
+    var summary = document.getElementById('formErrorSummary');
+    var fileInput = document.getElementById('id_document');
+    var isUpdate = {{ 'true' if mode == 'update' else 'false' }};
+
     // Show / hide password
     document.querySelectorAll('.tech-password-toggle').forEach(function (btn) {
         btn.addEventListener('click', function () {
@@ -142,34 +275,199 @@
             if (!input) return;
             var isPw = input.type === 'password';
             input.type = isPw ? 'text' : 'password';
-            btn.querySelector('i').className = isPw
-                ? 'fas fa-eye-slash'
-                : 'fas fa-eye';
+            btn.querySelector('i').className = isPw ? 'fas fa-eye-slash' : 'fas fa-eye';
         });
     });
 
     // Password strength meter
     var pw = document.getElementById('password');
-    var meter = document.getElementById('pwMeter');
-    var label = document.getElementById('pwLabel');
-
-    pw.addEventListener('input', function () {
-        var v = pw.value;
-        if (!v) {
-            meter.removeAttribute('data-tone');
-            label.textContent = 'Enter a password';
-            return;
-        }
+    if (pw) pw.addEventListener('input', function () {
+        var meter = document.getElementById('pwMeter'), label = document.getElementById('pwLabel'), v = pw.value;
+        if (!v) { meter.removeAttribute('data-tone'); label.textContent = 'Enter a password'; return; }
         var score = 0;
         if (v.length >= 8) score++;
         if (/[A-Z]/.test(v)) score++;
         if (/[0-9]/.test(v)) score++;
         if (/[^A-Za-z0-9]/.test(v)) score++;
-        var tones = ['weak', 'fair', 'good', 'strong'];
-        var names = ['Weak', 'Fair', 'Good', 'Strong'];
-        meter.setAttribute('data-tone', tones[Math.min(score, 3)]);
-        label.textContent = names[Math.min(score, 3)];
+        meter.setAttribute('data-tone', ['weak', 'fair', 'good', 'strong'][Math.min(score, 3)]);
+        label.textContent = ['Weak', 'Fair', 'Good', 'Strong'][Math.min(score, 3)];
     });
+
+    function setError(name, message) {
+        var el = form.querySelector('[data-error-for="' + name + '"]');
+        var input = form.elements[name];
+        if (el) { el.textContent = message || ''; el.hidden = !message; }
+        var box = name === 'id_document' ? fileInput.closest('.tech-upload') : input;
+        if (box && box.classList) box.classList.toggle('is-invalid', !!message);
+        if (input && input.setAttribute) input.setAttribute('aria-invalid', message ? 'true' : 'false');
+    }
+
+    // A field's message goes away as soon as it is changed.
+    ['input', 'change'].forEach(function (type) {
+        form.addEventListener(type, function (e) {
+            if (e.target.name && e.target !== fileInput) setError(e.target.name, '');
+            if (!form.querySelector('[data-error-for]:not([hidden])')) summary.classList.remove('is-shown');
+        });
+    });
+
+    // Fill the details in from a PhilSys National ID's QR code (read on this device;
+    // see static/js/id-autofill.js). Never overwrites something the person typed.
+    var autofillNote = document.getElementById('idAutofillNote');
+    var AUTOFILL_LABELS = { fullname: 'full name', dob: 'date of birth', gender: 'gender',
+                            id_type: 'ID type', id_number: 'ID number' };
+    function noteAutofill(kind, text) {
+        autofillNote.className = 'tech-reg-autofill' + (kind ? ' is-' + kind : '');
+        autofillNote.textContent = text || '';
+        autofillNote.hidden = !text;
+    }
+    function readIdDetails(file) {
+        if (!window.DevtechIdAutofill || !/^image\/(jpeg|png|webp)$/.test(file.type)) { noteAutofill('', ''); return; }
+        noteAutofill('busy', 'Reading the QR code on your ID…');
+        window.DevtechIdAutofill.read(file).then(function (r) {
+            if (fileInput.files[0] !== file) return;        // another file was picked meanwhile
+            if (r.status === 'filled') {
+                var filled = [], kept = [];
+                Object.keys(AUTOFILL_LABELS).forEach(function (name) {
+                    var el = form.elements[name], v = r.values[name];
+                    if (!el || !v) return;
+                    var typed = (el.value || '').trim();
+                    if (typed && !el.dataset.autofilled && typed.toUpperCase() !== v.toUpperCase()) {
+                        kept.push(AUTOFILL_LABELS[name]);
+                        return;
+                    }
+                    el.value = v;
+                    el.dataset.autofilled = '1';
+                    el.classList.add('is-autofilled');
+                    setError(name, '');
+                    filled.push(AUTOFILL_LABELS[name]);
+                });
+                noteAutofill('ok', (filled.length ? 'Filled in from your ID\'s QR code: ' + filled.join(', ') +
+                                    '. Check that they match your ID.' : 'Your details already match your ID\'s QR code.') +
+                                   (kept.length ? ' Kept what you typed for: ' + kept.join(', ') + '.' : ''));
+            } else if (r.status === 'not-philsys') {
+                noteAutofill('', 'This QR code isn\'t from a PhilSys National ID, so please type your details.');
+            } else if (r.status === 'no-qr') {
+                noteAutofill('', 'No readable QR code found. Type your details, or upload a sharper, straight-on photo of a ' +
+                                 'PhilSys National ID to fill them in automatically.');
+            } else {
+                noteAutofill('', '');
+            }
+        });
+    }
+    // Editing an autofilled field makes it the person's own value.
+    form.addEventListener('input', function (e) {
+        if (e.target.dataset && e.target.dataset.autofilled) {
+            delete e.target.dataset.autofilled;
+            e.target.classList.remove('is-autofilled');
+        }
+    });
+
+    // Preview of the chosen ID (data: URL - this page's CSP allows data: images)
+    var thumb = document.getElementById('idDocThumb'), docName = document.getElementById('idDocName');
+    var docPreview = '';
+    fileInput.addEventListener('change', function () {
+        var f = fileInput.files[0];
+        docPreview = '';
+        thumb.innerHTML = '<i class="fas fa-id-card"></i>';
+        docName.textContent = f ? f.name : 'Choose a photo or PDF of your ID';
+        setError('id_document', '');
+        if (!f) return;
+        if (f.size > Number(fileInput.dataset.maxBytes)) {
+            setError('id_document', 'This file is larger than {{ max_mb }} MB.');
+            return;
+        }
+        readIdDetails(f);
+        if (/^image\//.test(f.type)) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                docPreview = reader.result;
+                var img = document.createElement('img');
+                img.src = docPreview; img.alt = '';
+                thumb.innerHTML = ''; thumb.appendChild(img);
+            };
+            reader.readAsDataURL(f);
+        } else {
+            thumb.innerHTML = '<i class="fas fa-file-pdf"></i>';
+        }
+    });
+
+    function value(name) {
+        var el = form.elements[name];
+        if (!el) return '';
+        if (el.tagName === 'SELECT') return el.value ? el.options[el.selectedIndex].text : '';
+        return (el.value || '').trim();
+    }
+
+    // Quick checks before the review; the server checks everything again.
+    function check() {
+        var problems = {};
+        ['fullname', 'email', 'phone', 'gender', 'dob', 'id_type', 'id_number'].forEach(function (n) {
+            if (!value(n)) problems[n] = 'This field is required.';
+        });
+        if (value('fullname') && value('fullname').split(/\s+/).length < 2) problems.fullname = 'Enter your full name as it appears on your ID.';
+        if (value('email') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value('email'))) problems.email = 'Enter a valid email address.';
+        if (value('phone') && !/^(09|\+639)\d{9}$/.test(value('phone').replace(/[\s()-]/g, ''))) problems.phone = 'Enter a mobile number like 09171234567.';
+        var f = fileInput.files[0];
+        if (!f && !isUpdate) problems.id_document = 'Upload a photo or scan of your ID.';
+        if (f && f.size > Number(fileInput.dataset.maxBytes)) problems.id_document = 'This file is larger than {{ max_mb }} MB.';
+        if (!isUpdate) {
+            if (!/^TECH-\d{4}$/i.test(value('staffId'))) problems.staffId = 'Tech ID must look like TECH-0001.';
+            var p = form.elements.password.value;
+            if (p.length < 8 || !/[A-Za-z]/.test(p) || !/\d/.test(p)) problems.password = 'Password must be 8+ characters with a letter and a number.';
+            else if (p !== form.elements.password2.value) problems.password2 = 'The passwords do not match.';
+            if (!form.elements.privacy_consent.checked) problems.privacy_consent = 'You must agree to how your ID is used before registering.';
+        }
+        Array.prototype.forEach.call(form.querySelectorAll('[data-error-for]'), function (el) {
+            setError(el.dataset.errorFor, problems[el.dataset.errorFor]);
+        });
+        return problems;
+    }
+
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var problems = Object.keys(check());
+        summary.classList.toggle('is-shown', problems.length > 0);
+        if (problems.length) {
+            var first = form.elements[problems[0]];
+            if (first && first.focus) first.focus();
+            return;
+        }
+        var rows = [['Full name', value('fullname')], ['Email', value('email')], ['Mobile', value('phone')],
+                    ['Gender', value('gender')], ['Date of birth', value('dob')], ['ID type', value('id_type')],
+                    ['ID number', value('id_number')]];
+        if (!isUpdate) rows.push(['Tech ID', value('staffId').toUpperCase()]);
+        var f = fileInput.files[0];
+        rows.push(['ID file', f ? f.name : 'Keep the ID already on file']);
+        var list = document.getElementById('reviewList');
+        list.textContent = '';
+        rows.forEach(function (r) {
+            var dt = document.createElement('dt'), dd = document.createElement('dd');
+            dt.textContent = r[0]; dd.textContent = r[1];
+            list.appendChild(dt); list.appendChild(dd);
+        });
+        var doc = document.getElementById('reviewDoc');
+        doc.textContent = '';
+        if (docPreview) {
+            var img = document.createElement('img');
+            img.src = docPreview; img.alt = 'Preview of the ID you are uploading';
+            doc.appendChild(img);
+        }
+        form.hidden = true;
+        panel.hidden = false;
+        panel.focus();
+    });
+
+    document.getElementById('reviewEdit').addEventListener('click', function () {
+        panel.hidden = true;
+        form.hidden = false;
+        form.elements.fullname.focus();
+    });
+    document.getElementById('reviewSubmit').addEventListener('click', function () {
+        this.disabled = true;
+        this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+        form.submit();
+    });
+})();
 </script>
 </body>
 </html>

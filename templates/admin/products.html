@@ -16,6 +16,10 @@
         <input type="number" name="price" min="0" step="0.01" required value="{{ '%.2f'|format(p.price) if p else '' }}">
     </div>
     <div class="admin-form-group">
+        <label>Sale price (₱) · empty = no sale</label>
+        <input type="number" name="sale_price" min="0.01" step="0.01" value="{{ '%.2f'|format(p.sale_price) if p and p.sale_price else '' }}" placeholder="Lower than the price">
+    </div>
+    <div class="admin-form-group">
         <label>Stock</label>
         <input type="number" name="stock_quantity" min="0" step="1" required value="{{ p.stock_quantity if p else 0 }}">
     </div>
@@ -69,7 +73,8 @@
         </details>
     </td>
     <td>{{ p.category or '—' }}</td>
-    <td>₱{{ '%.2f'|format(p.price) }}</td>
+    <td>{% if p.on_sale %}₱{{ '%.2f'|format(p.sale_price) }} <s class="admin-muted">₱{{ '%.2f'|format(p.price) }}</s>
+        <span class="admin-status-badge warning">−{{ p.discount_percent }}%</span>{% else %}₱{{ '%.2f'|format(p.price) }}{% endif %}</td>
     <td>
         {% if p.stock_quantity <= 0 %}<span class="admin-text-danger">Out of stock</span>
         {% elif p.stock_quantity <= low_stock %}<span class="admin-text-danger">{{ p.stock_quantity }} (low)</span>

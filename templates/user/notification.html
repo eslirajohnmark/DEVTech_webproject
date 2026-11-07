@@ -1,6 +1,8 @@
 {% extends "base/user_base.html" %}
+{% from 'partials/notification_feed.html' import delete_all_dialog %}
 
 {% block title %}Notifications{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{{ url_for('static', filename='css/notifications.css') }}">{% endblock %}
 
 {% block content %}
 <!-- Top Bar -->
@@ -13,6 +15,12 @@
         <button class="user-btn-secondary" onclick="markAllAsRead()" style="font-size:0.8rem; padding:0.4rem 1rem;">
             <i class="fas fa-check-double"></i> Mark All Read
         </button>
+        {% if notifications %}
+        <button type="button" class="user-btn-secondary user-btn-danger-outline" data-nf-open="nfDeleteAll"
+                style="font-size:0.8rem; padding:0.4rem 1rem;">
+            <i class="fas fa-trash-can"></i> Delete All
+        </button>
+        {% endif %}
         <a href="{{ url_for('user_shop') }}" class="user-icon-btn" title="Back to Shop">
             <i class="fas fa-store"></i>
         </a>
@@ -475,4 +483,6 @@
         });
     });
 </script>
+{% if notifications %}{{ delete_all_dialog(notifications|length) }}{% endif %}
+<script src="{{ url_for('static', filename='js/notifications.js') }}" defer></script>
 {% endblock %}

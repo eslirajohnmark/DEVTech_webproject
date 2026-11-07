@@ -324,6 +324,46 @@
     flex-shrink: 0;
 }
 
+/* ---------- Search, service rows and "Book" ---------- */
+
+.user-catalog-search { position: relative; flex: 1 1 280px; max-width: 380px; }
+.user-catalog-search i {
+    position: absolute; left: 0.85rem; top: 50%; transform: translateY(-50%);
+    color: var(--user-text-muted); font-size: 0.85rem;
+}
+.user-catalog-search input {
+    width: 100%; box-sizing: border-box;
+    padding: 0.6rem 0.9rem 0.6rem 2.3rem;
+    border: 1px solid var(--user-border); border-radius: 999px;
+    background: var(--user-card); color: var(--user-text-primary);
+    font: inherit; font-size: 0.88rem;
+}
+.user-catalog-search input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+.user-catalog-all > .user-catalog-filters { margin-bottom: 1.2rem; }
+
+.user-catalog-svc-body li.user-catalog-svc {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem;
+    padding: 0.7rem 0;
+}
+.user-catalog-svc-body li.user-catalog-svc[hidden],
+.user-catalog-noresults[hidden] { display: none; }
+.user-catalog-svc-main { min-width: 0; }
+.user-catalog-svc-main strong { display: block; font-size: 0.9rem; color: var(--user-text-primary); }
+.user-catalog-svc-main p { margin: 0.2rem 0 0.35rem; font-size: 0.8rem; line-height: 1.45; color: var(--user-text-muted); }
+.user-catalog-svc-meta { display: flex; flex-wrap: wrap; gap: 0.25rem 0.85rem; font-size: 0.76rem; font-weight: 600; color: var(--user-text-secondary, var(--user-text-muted)); }
+.user-catalog-svc-meta i { color: #2563eb; margin-right: 0.2rem; }
+.user-catalog-svc-book {
+    flex: none; align-self: center;
+    padding: 0.38rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid #2563eb;
+    color: #2563eb; background: transparent;
+    font-size: 0.78rem; font-weight: 700; text-decoration: none;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.user-catalog-svc-book:hover, .user-catalog-svc-book:focus-visible { background: #2563eb; color: #fff; outline: none; }
+.user-catalog-noresults { padding: 2rem; text-align: center; }
+
 /* ---------- Footer Strip ---------- */
 
 .user-catalog-footer {
@@ -452,5 +492,7 @@
     .user-catalog-pill {
         font-size: 0.74rem;
         padding: 0.35rem 0.75rem;
+        white-space: normal;          /* long category names wrap instead of overflowing */
     }
+    .user-catalog-search { max-width: none; }
 }

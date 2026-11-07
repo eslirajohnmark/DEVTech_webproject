@@ -17,6 +17,7 @@
     <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
     <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
+    {% block extra_css %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
@@ -48,6 +49,7 @@
             </div>
         </a>
 
+        {% set _nc = nav_counts() %}
         <nav class="tech-nav">
             <a class="tech-nav-item {% if endpoint == 'technician.dashboard' %}is-active{% endif %}"
                href="{{ url_for('technician.dashboard') }}">
@@ -56,6 +58,7 @@
             <a class="tech-nav-item {% if endpoint in ('technician.my_jobs','technician.job_detail') %}is-active{% endif %}"
                href="{{ url_for('technician.my_jobs') }}">
                 <i class="fas fa-briefcase"></i><span>My Jobs</span>
+                <span class="live-nav-badge" title="New jobs to start" data-live-count="jobs" {% if not _nc.get('jobs') %}hidden{% endif %}>{{ _nc.get('jobs') or 0 }}</span>
             </a>
             <a class="tech-nav-item {% if 'intake' in endpoint %}is-active{% endif %}"
                href="{{ url_for('technician.intake_picker') }}">
@@ -68,7 +71,7 @@
             <a class="tech-nav-item {% if 'message' in endpoint %}is-active{% endif %}"
                href="{{ url_for('technician.messages') }}">
                 <i class="fas fa-comments"></i><span>Messages</span>
-                <span class="live-nav-badge" data-live-count="messages" hidden>0</span>
+                <span class="live-nav-badge" data-live-count="messages" {% if not _nc.get('messages') %}hidden{% endif %}>{{ _nc.get('messages') or 0 }}</span>
             </a>
             <a class="tech-nav-item {% if endpoint == 'technician.incidents' %}is-active{% endif %}"
                href="{{ url_for('technician.incidents') }}">

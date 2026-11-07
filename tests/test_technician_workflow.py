@@ -37,12 +37,27 @@ def test_full_workflow_auto_advances(tech_logged_in, assigned_booking):
     r = tech_logged_in.post(_api(jid, '/diagnosis'), json={'diagnosis': 'Cracked LCD panel.'})
     assert r.get_json()['new_status'] == 'in_progress'
 
+    # Advancing to Ready is the technician's call, and needs the report first.
+    r = tech_logged_in.post(_api(jid, '/advance'), json={})
+    assert r.status_code == 400 and 'service report' in r.get_json()['reason']
+
     r = tech_logged_in.post(_api(jid, '/report'), json=REPORT)
     assert r.status_code == 200
-    assert r.get_json()['new_status'] == 'completed'
+    assert r.get_json()['new_status'] is None                  # no auto-advance on submit
 
     r = tech_logged_in.post(_api(jid, '/advance'), json={})
+    assert r.get_json()['job']['repairStatus'] == 'completed'
+
+    # Releasing needs the payment settled: C.A.R cash must be confirmed as collected.
+    from app import Transaction
+    db.session.add(Transaction(transaction_number='TRX-W1', booking_id=jid, user_id=assigned_booking.user_id,
+                               amount=1000, payment_method='C.A.R', payment_status='pending'))
+    db.session.commit()
+    r = tech_logged_in.post(_api(jid, '/advance'), json={})
+    assert r.status_code == 400 and 'cash' in r.get_json()['reason']
+    r = tech_logged_in.post(_api(jid, '/advance'), json={'cashReceived': True})
     assert r.get_json()['job']['repairStatus'] == 'released'
+    assert Transaction.query.filter_by(transaction_number='TRX-W1').one().payment_status == 'confirmed'
 
     r = tech_logged_in.post(_api(jid, '/advance'), json={})
     assert r.get_json()['ok'] is False

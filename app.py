@@ -39,7 +39,7 @@ from flask_talisman import Talisman
 from commands import register_commands
 from flask import send_file
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from services import email_service, profile_presets
+from services import email_service, profile_presets, delivery_eta, gcash_qr
 from services.job_status import (STAGES, STATUS_LABELS, ACTIVE_STATUSES,
                                  FINISHED_STATUSES, SLOT_STATUSES)
  
@@ -63,13 +63,21 @@ if not os.environ.get('DATABASE_URL'):
     raise RuntimeError('DATABASE_URL is not set. Copy .env.example to .env and fill it in.')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280, 'pool_pre_ping': True}
+# Recycle before MySQL drops idle connections. Not for SQLite: an in-memory
+# database lives in its one connection, so recycling it (every 280 s) swapped in
+# an empty database mid-run - the random "no such table" test failures.
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = ({} if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite')
+                                           else {'pool_recycle': 280, 'pool_pre_ping': True})
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 # Payment receipts are private: kept outside static/ and served by receipt_file().
 app.config['RECEIPT_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'receipts')
 app.config['MESSAGE_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'messages')
 app.config['AVATAR_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'avatars')
 app.config['TECH_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'tech')
+# Technician ID documents (identity verification): private, admin + owner only.
+app.config['ID_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'id_documents')
+# Technicians' certificates / achievements: shown to admins and to their customers.
+app.config['CREDENTIAL_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'credentials')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['DEBUG'] = not IS_PRODUCTION
  
@@ -139,6 +147,34 @@ def _inject_technician_globals():
 def _inject_job_status():
     return {'job_stages': STAGES, 'status_labels': STATUS_LABELS}
 
+def nav_count_values(role, uid):
+    """Sidebar badge numbers: what is waiting for this account. Rendered with the
+    page and sent with every live update (see api_live), so the badges stay current."""
+    from models.technician_models import ApprovalRequest, IncidentReport
+    counts = {
+        'notifications': Notification.query.filter_by(user_role=role, user_id=uid, is_read=False).count(),
+        'messages': Message.query.filter_by(recipient_role=role, recipient_id=uid, is_read=False).count(),
+    }
+    if role == 'admin':
+        counts['tickets'] = SupportTicket.query.filter(SupportTicket.status != 'resolved').count()
+        counts['inquiries'] = ContactInquiry.query.filter_by(status='new').count()
+        counts['support'] = counts['tickets'] + counts['inquiries']
+        counts['refunds'] = Refund.query.filter_by(status='pending').count()
+        counts['verifications'] = Technician.query.filter(
+            Technician.verification_status == 'pending',
+            Technician.verification_submitted_at.isnot(None)).count()
+        counts['requests'] = Booking.query.filter_by(status='pending').count()
+        counts['payments'] = Transaction.query.filter_by(payment_status='pending').count()
+        counts['activity'] = IncidentReport.query.filter(IncidentReport.status != 'resolved').count()
+    elif role == 'technician':
+        # New jobs: assigned to them, intake not recorded yet.
+        counts['jobs'] = Booking.query.filter_by(technician_id=uid, status='confirmed').count()
+    else:
+        # Extra work / cost the technician is waiting for them to answer.
+        counts['approvals'] = ApprovalRequest.query.join(Booking, ApprovalRequest.booking_id == Booking.id)\
+            .filter(Booking.customer_id == uid, ApprovalRequest.status == 'pending').count()
+    return counts
+
 @app.context_processor
 def _inject_nav_counts():
     """nav_counts() for sidebar badges. A function, so the count queries only
@@ -147,15 +183,7 @@ def _inject_nav_counts():
         uid, role = session.get('user_id'), session.get('role')
         if not uid or role not in ('customer', 'technician', 'admin'):
             return {}
-        counts = {
-            'notifications': Notification.query.filter_by(user_role=role, user_id=uid, is_read=False).count(),
-            'messages': Message.query.filter_by(recipient_role=role, recipient_id=uid, is_read=False).count(),
-        }
-        if session.get('role') == 'admin':
-            counts['tickets'] = SupportTicket.query.filter(SupportTicket.status != 'resolved').count()
-            counts['inquiries'] = ContactInquiry.query.filter_by(status='new').count()
-            counts['refunds'] = Refund.query.filter_by(status='pending').count()
-        return counts
+        return nav_count_values(role, uid)
     return {'nav_counts': nav_counts}
 
 @app.context_processor
@@ -285,6 +313,8 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['TECH_UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['RECEIPT_UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['MESSAGE_UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['ID_UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['CREDENTIAL_UPLOAD_FOLDER'], exist_ok=True)
  
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
  
@@ -296,6 +326,7 @@ FILE_SIGNATURES = {
     'gif': [b'GIF87a', b'GIF89a'], 'pdf': [b'%PDF-'],
 }
 MAX_RECEIPT_SIZE = 5 * 1024 * 1024
+PAYMENT_PROOF_EXTENSIONS = ('png', 'jpg', 'jpeg')    # GCash screenshots
  
 def validate_uploaded_file(file_storage, extension):
     signatures = FILE_SIGNATURES.get(extension, [])
@@ -451,13 +482,38 @@ class Technician(AccountMixin, db.Model):
     address = db.Column(db.String(255))
     city = db.Column(db.String(50))
     province = db.Column(db.String(50))
+    gender = db.Column(db.String(20))
+    birth_date = db.Column(db.Date)
     # id_number: admin-only audit record, never serialized to customers.
     id_type = db.Column(db.String(30), nullable=True)
-    id_number = db.Column(db.String(50), nullable=True)
+    id_number = db.Column(db.String(50), nullable=True, index=True)
     id_verified = db.Column(db.Boolean, default=False)
     id_verified_at = db.Column(db.DateTime, nullable=True)
+    # Identity verification (keys of TECH_VERIFICATION_STATUSES). id_verified
+    # mirrors status == 'verified', because job assignment and many views filter
+    # on it; accounts created verified (admin tools, imports) start 'verified'.
+    verification_status = db.Column(
+        db.String(20), nullable=False, index=True,
+        default=lambda ctx: 'verified' if ctx.get_current_parameters().get('id_verified') else 'pending')
+    verification_reason = db.Column(db.String(500))      # why it was rejected / what to correct / why suspended
+    verification_submitted_at = db.Column(db.DateTime)   # last time the technician sent their ID
+    verification_decided_at = db.Column(db.DateTime)
+    verified_by_admin_id = db.Column(db.Integer, db.ForeignKey('admins.id', ondelete='SET NULL'))
+    # Stored file name in ID_UPLOAD_FOLDER (random; never the uploaded name).
+    id_document_file = db.Column(db.String(64))
+    id_document_mime = db.Column(db.String(40))
 
     jobs = db.relationship('Booking', back_populates='technician', lazy=True)
+    verified_by = db.relationship('Admin', foreign_keys=[verified_by_admin_id])
+
+    @property
+    def verification_label(self):
+        return TECH_VERIFICATION_STATUSES.get(self.verification_status, self.verification_status or 'Pending Verification')
+
+    @property
+    def can_take_jobs(self):
+        """Only an active, identity-verified technician may get new jobs."""
+        return bool(self.is_active and self.id_verified and self.verification_status == 'verified')
 
 
 class Admin(AccountMixin, db.Model):
@@ -471,6 +527,82 @@ class Admin(AccountMixin, db.Model):
 
 
 ACCOUNT_MODELS = {'customer': Customer, 'technician': Technician, 'admin': Admin}
+
+TECH_VERIFICATION_STATUSES = {
+    'pending': 'Pending Verification',
+    'verified': 'Verified',
+    'rejected': 'Rejected',
+    'needs_correction': 'Requires Correction',
+    'suspended': 'Suspended',
+}
+
+
+class TechnicianVerificationEvent(db.Model):
+    """One step in a technician's identity verification: a submission by the
+    technician or a decision by an admin. Never holds the ID number itself."""
+    __tablename__ = 'technician_verification_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id', ondelete='CASCADE'),
+                              nullable=False, index=True)
+    action = db.Column(db.String(30), nullable=False)   # submitted | resubmitted | approved | rejected | correction_requested | suspended
+    status = db.Column(db.String(20), nullable=False)   # status after this step
+    reason = db.Column(db.String(500))
+    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id', ondelete='SET NULL'))
+    actor = db.Column(db.String(120), nullable=False)   # who did it, kept even if that account goes
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    technician = db.relationship('Technician', backref=db.backref(
+        'verification_events', order_by='TechnicianVerificationEvent.id.desc()',
+        cascade='all, delete-orphan'))
+
+
+class TechnicianCredential(db.Model):
+    """A certificate or achievement a technician adds to their profile. Admins
+    and the customers whose jobs they handle can see it."""
+    __tablename__ = 'technician_credentials'
+
+    id = db.Column(db.Integer, primary_key=True)
+    technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id', ondelete='CASCADE'),
+                              nullable=False, index=True)
+    title = db.Column(db.String(120), nullable=False)
+    issuer = db.Column(db.String(120))
+    issued_on = db.Column(db.Date)
+    file = db.Column(db.String(64), nullable=False)        # random name in CREDENTIAL_UPLOAD_FOLDER
+    mime = db.Column(db.String(40), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    technician = db.relationship('Technician', backref=db.backref(
+        'credentials', order_by='TechnicianCredential.id.desc()',
+        cascade='all, delete-orphan'))
+
+    @property
+    def is_image(self):
+        return self.mime.startswith('image/')
+
+
+class TechnicianEmployee(db.Model):
+    """A hired technician as recorded by DEVTech, before they have an account.
+    Admins add these (Technician Roster page); a technician can only register
+    with a Tech ID listed here, and only when the name, birth date and ID on
+    their valid ID match this record. technician_id is set once they register."""
+    __tablename__ = 'technician_employees'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tech_id = db.Column(db.String(20), unique=True, nullable=False)          # TECH-0042, assigned on hiring
+    full_name = db.Column(db.String(100), nullable=False)                    # as printed on their ID
+    birth_date = db.Column(db.Date, nullable=False)
+    id_type = db.Column(db.String(30), nullable=False)
+    id_number = db.Column(db.String(50), nullable=False, index=True)
+    hired_on = db.Column(db.Date)
+    note = db.Column(db.String(255))
+    created_by = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id', ondelete='SET NULL'),
+                              unique=True, nullable=True)
+    registered_at = db.Column(db.DateTime)
+
+    technician = db.relationship('Technician', backref=db.backref('employee_record', uselist=False))
 ROLES = tuple(ACCOUNT_MODELS)
 
 
@@ -584,6 +716,8 @@ class Booking(db.Model):
     customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False, index=True)
     service_id = db.Column(db.Integer, db.ForeignKey('services.id'), nullable=False)
     device_type = db.Column(db.String(50), nullable=False)
+    device_brand = db.Column(db.String(50))     # optional, from the booking form
+    device_model = db.Column(db.String(80))     # optional, "if known"
     description = db.Column(db.Text, nullable=False)
     address = db.Column(db.String(255))
     booking_date = db.Column(db.Date, nullable=False)
@@ -645,6 +779,7 @@ class Refund(db.Model):
     method = db.Column(db.String(30))                             # GCash | Cash | Bank transfer
     reference = db.Column(db.String(80))
     note = db.Column(db.Text)
+    payout_account = db.Column(db.String(60))                     # where the customer asked for it (GCash number)
     created_by = db.Column(db.String(120), nullable=False, default='system')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     processed_by = db.Column(db.String(120))
@@ -665,11 +800,25 @@ class Product(db.Model):
     compatibility = db.Column(db.String(100))
     image_url = db.Column(db.String(255))
     is_active = db.Column(db.Boolean, default=True)
+    sale_price = db.Column(db.Numeric(10, 2))      # below price = on sale; empty = regular price
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     cart_items = db.relationship('CartItem', backref='product', lazy=True)
     order_items = db.relationship('OrderItem', backref='product', lazy=True)
+
+    @property
+    def on_sale(self):
+        return self.sale_price is not None and 0 < self.sale_price < self.price
+
+    @property
+    def effective_price(self):
+        """What the customer pays now: the sale price while the product is on sale."""
+        return self.sale_price if self.on_sale else self.price
+
+    @property
+    def discount_percent(self):
+        return int(round((1 - self.sale_price / self.price) * 100)) if self.on_sale else 0
 
 class Notification(db.Model):
     """For any account: (user_role, user_id) says whose it is."""
@@ -805,6 +954,18 @@ class CartItem(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+class DeliveryRider(db.Model):
+    """A shop delivery rider. Riders on duty are who the delivery estimate counts
+    and who an admin can send an order out with."""
+    __tablename__ = 'delivery_riders'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    phone = db.Column(db.String(20))
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    on_duty = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 class Order(db.Model):
     __tablename__ = 'orders'
 
@@ -824,10 +985,19 @@ class Order(db.Model):
     longitude = db.Column(db.Numeric(10, 7))
     payment_method = db.Column(db.String(20))
     payment_status = db.Column(db.String(20), default='pending')
+    # Delivery: road distance and the window promised at checkout (UTC), the rider,
+    # and when the order left the shop / was delivered.
+    distance_km = db.Column(db.Numeric(7, 1))
+    eta_from = db.Column(db.DateTime)
+    eta_to = db.Column(db.DateTime)
+    rider_id = db.Column(db.Integer, db.ForeignKey('delivery_riders.id'), nullable=True)
+    dispatched_at = db.Column(db.DateTime)
+    delivered_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan')
+    rider = db.relationship('DeliveryRider')
     customer = db.relationship('Customer', back_populates='orders')
     user_id = db.synonym('customer_id')
     user = db.synonym('customer')
@@ -1113,6 +1283,43 @@ def add_workflow_columns():
         _try_sql("ALTER TABLE transactions ADD COLUMN reviewed_at DATETIME NULL")
         _try_sql("CREATE INDEX ix_bookings_slot ON bookings (booking_date, booking_time)")
 
+def add_technician_verification_columns():
+    """Registration details, verification status/decision and ID document columns
+    on technicians, for databases created before them. Safe to run repeatedly."""
+    with app.app_context():
+        for name, d in [("gender", "VARCHAR(20) NULL"), ("birth_date", "DATE NULL"),
+                        ("verification_reason", "VARCHAR(500) NULL"),
+                        ("verification_submitted_at", "DATETIME NULL"),
+                        ("verification_decided_at", "DATETIME NULL"),
+                        ("verified_by_admin_id", "INT NULL"),
+                        ("id_document_file", "VARCHAR(64) NULL"),
+                        ("id_document_mime", "VARCHAR(40) NULL")]:
+            _try_sql(f"ALTER TABLE technicians ADD COLUMN {name} {d}")
+        if _try_sql("ALTER TABLE technicians ADD COLUMN verification_status VARCHAR(20) NOT NULL DEFAULT 'pending'"):
+            # Column just added: technicians verified before it existed stay verified.
+            _try_sql("UPDATE technicians SET verification_status = 'verified' WHERE id_verified = 1")
+        _try_sql("ALTER TABLE technicians ADD CONSTRAINT fk_technicians_verified_by "
+                 "FOREIGN KEY (verified_by_admin_id) REFERENCES admins (id) ON DELETE SET NULL")
+        _try_sql("CREATE INDEX ix_technicians_verification_status ON technicians (verification_status)")
+        _try_sql("CREATE INDEX ix_technicians_id_number ON technicians (id_number)")
+
+def add_booking_device_columns():
+    """Optional device brand / model on bookings (booking form). Safe to repeat."""
+    with app.app_context():
+        _try_sql("ALTER TABLE bookings ADD COLUMN device_brand VARCHAR(50) NULL")
+        _try_sql("ALTER TABLE bookings ADD COLUMN device_model VARCHAR(80) NULL")
+
+def add_shop_delivery_columns():
+    """Sale prices, delivery tracking on orders and the refund payout account.
+    The delivery_riders table itself comes from create_all(). Safe to repeat."""
+    with app.app_context():
+        _try_sql("ALTER TABLE products ADD COLUMN sale_price DECIMAL(10,2) NULL")
+        for col, kind in (('distance_km', 'DECIMAL(7,1)'), ('eta_from', 'DATETIME'), ('eta_to', 'DATETIME'),
+                          ('rider_id', 'INT'), ('dispatched_at', 'DATETIME'), ('delivered_at', 'DATETIME')):
+            _try_sql(f"ALTER TABLE orders ADD COLUMN {col} {kind} NULL")
+        _try_sql("ALTER TABLE orders ADD CONSTRAINT fk_orders_rider FOREIGN KEY (rider_id) REFERENCES delivery_riders(id)")
+        _try_sql("ALTER TABLE refunds ADD COLUMN payout_account VARCHAR(60) NULL")
+
 def add_service_category_columns():
     """Same columns as database/migrate_service_categories.sql, for DBs created before it."""
     with app.app_context():
@@ -1194,12 +1401,13 @@ def contact():
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
 def login():
-    """Customer sign-in. Technicians and admins who use their email here are
-    signed in to their own portal (emails are unique across all accounts)."""
+    """Customer sign-in only. Technician and admin accounts are not looked up
+    here at all, so staff credentials get the same "Invalid email or password"
+    as anything else and the page never hints that the staff portals exist."""
     if request.method == 'POST':
         email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password') or ''
-        user = find_account_by_email(email)
+        user = Customer.query.filter(func.lower(Customer.email) == email).first()
         if user and user.check_password(password):
             if not user.is_active:
                 flash('Your account has been deactivated. Please contact support.', 'danger')
@@ -1358,7 +1566,9 @@ def _login_or_create_oauth_user(provider, provider_id, email, full_name, email_v
     if not user:
         existing = find_account_by_email(email)
         if existing and existing.role != 'customer':
-            flash('Staff accounts must sign in with their password.', 'danger')
+            # A technician's or admin's Google/Facebook email: plain failure, no hint
+            # that it belongs to a staff account (and no customer account is made).
+            flash('Invalid login.', 'danger')
             return redirect(url_for('login'))
         user = existing
         if user:
@@ -1517,7 +1727,8 @@ def _live_stamp(account):
         add(func.count(IncidentReport.id), func.max(IncidentReport.reviewed_at), where=[IncidentReport.technician_id == aid])
         add(func.count(IntakeRecord.id), func.max(IntakeRecord.id), where=[IntakeRecord.booking_id.in_(jobs)])
         add(func.count(ServiceRating.id), where=[ServiceRating.technician_id == aid])
-        add(func.count(Technician.id), _count_where(Technician.id_verified.is_(True)), where=[Technician.id == aid])
+        add(func.count(Technician.id), _count_where(Technician.id_verified.is_(True)),
+            func.max(Technician.verification_decided_at), where=[Technician.id == aid])
     else:   # admin sees everything
         add(func.count(Booking.id), func.max(Booking.updated_at), func.max(Booking.assigned_at))
         add(func.count(Order.id), func.max(Order.updated_at))
@@ -1533,7 +1744,8 @@ def _live_stamp(account):
         # accounts: not updated_at, which every presence ping touches
         for model in (Customer, Technician, Admin):
             add(func.count(model.id), func.max(model.id), _count_where(model.is_active.is_(True)))
-        add(_count_where(Technician.id_verified.is_(True)))
+        add(_count_where(Technician.id_verified.is_(True)), _count_where(Technician.verification_status == 'pending'),
+            func.max(Technician.verification_submitted_at), func.max(Technician.verification_decided_at))
     # shared catalogue and settings (shop, services, prices)
     add(func.count(Product.id), func.max(Product.updated_at))
     add(func.count(Service.id), func.max(Service.id), func.sum(Service.price), _count_where(Service.is_active.is_(True)))
@@ -1656,6 +1868,7 @@ def api_live():
         state['new_messages'] = new_messages
     state['ok'] = True
     state['waited'] = waited
+    state['c'] = nav_count_values(account.role, account.id)     # sidebar badges
     resp = jsonify(state)
     resp.headers['Cache-Control'] = 'no-store'
     return resp
@@ -1666,7 +1879,9 @@ def _inject_live_boot():
     def live_boot():
         try:
             account = current_account()
-            return live_state(account) if account and account.is_active else None
+            if not account or not account.is_active:
+                return None
+            return dict(live_state(account), c=nav_count_values(account.role, account.id))
         except Exception:
             db.session.rollback()
             app.logger.exception('live_boot failed')
@@ -1878,6 +2093,64 @@ def notification_delete(notification_id):
     db.session.commit()
     return jsonify({'success': True, 'message': 'Notification deleted'})
 
+NOTIFICATIONS_PAGE = {'customer': 'notifications', 'technician': 'technician.notifications',
+                      'admin': 'admin_notifications'}
+
+@app.route('/notifications/delete-all', methods=['POST'])
+@account_required
+def notifications_delete_all():
+    """Delete every notification of the signed-in account (any role). The page
+    asks for confirmation first."""
+    me = current_account()
+    removed = _notifications_for(me.role, me.id).delete(synchronize_session=False)
+    db.session.commit()
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'success': True, 'deleted': removed})
+    flash(f'Deleted {removed} notification{"" if removed == 1 else "s"}.' if removed
+          else 'There were no notifications to delete.', 'success')
+    return redirect(url_for(NOTIFICATIONS_PAGE[me.role]))
+
+@app.route('/notifications/<int:notification_id>/remove', methods=['POST'])
+@account_required
+def notification_remove(notification_id):
+    """Delete one of the signed-in account's own notifications (staff pages)."""
+    me = current_account()
+    n = Notification.query.get_or_404(notification_id)
+    if (n.user_role, n.user_id) != (me.role, me.id):
+        abort(404)
+    db.session.delete(n)
+    db.session.commit()
+    return redirect(url_for(NOTIFICATIONS_PAGE[me.role]))
+
+# Where a notification is about, by role and title (notifications store no link).
+NOTIFICATION_LINKS = {
+    'admin': [
+        (('Payment Awaiting Confirmation', 'Cash Collected'), 'admin_payments'),
+        (('Refund',), 'admin_refunds'),
+        (('Technician Awaiting Verification', 'Technician Registration Updated'), 'admin_tech_verification'),
+        (('Service Report Submitted', 'Incident Reported'), 'admin_technician_activity'),
+        (('New Support Ticket', 'New Website Inquiry'), 'admin_support'),
+        (('Booking', 'New Booking'), 'admin_requests'),
+        (('New Message',), 'admin_messages'),
+    ],
+    'technician': [
+        (('New Job Assigned', 'Job Assigned to You', 'Job Reassigned', 'Job Cancelled',
+          'Approval', 'Customer'), 'technician.my_jobs'),
+        (('New Rating', 'Your password', 'Profile'), 'technician.profile'),
+        (('Registration', 'Correction Needed', 'Verification'), 'technician.registration_status'),
+        (('New Message',), 'technician.messages'),
+    ],
+}
+
+def notification_link(role, title):
+    """URL of the page a notification is about, or None."""
+    for prefixes, endpoint in NOTIFICATION_LINKS.get(role, ()):
+        if (title or '').startswith(prefixes):
+            return url_for(endpoint)
+    return None
+
+app.jinja_env.globals['notification_link'] = notification_link
+
 
 # ==================== MESSAGE ROUTES ====================
 # Both sides of a message can be any kind of account, so every conversation is
@@ -1905,6 +2178,16 @@ def store_message_attachment(message_id, checked):
                                    mime_type=mime, size_bytes=len(data))
     db.session.add(attachment)
     return attachment
+
+def sent_message_json(attachment):
+    """Answer to a chat page's background send (customer, admin and technician)."""
+    return jsonify({'success': True, 'message': 'Message sent',
+                    'time': datetime.utcnow().strftime('%I:%M %p'),
+                    'sent_at': datetime.utcnow().isoformat() + 'Z',
+                    'attachments': [attachment_info(attachment)] if attachment else []})
+
+def wants_json():
+    return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
 def attachment_info(a):
     return {'url': url_for('message_attachment', attachment_id=a.id), 'name': a.original_name,
@@ -1986,8 +2269,9 @@ def send_message(sender, recipient, content, subject=None, checked=None):
 
 def _conversation(other, me, latest=None):
     return {'id': other.id, 'key': other.key, 'name': other.full_name, 'role': other.role,
-            'email': other.email,
+            'email': other.email, 'account': other,
             'last_message': message_preview(latest) if latest else '',
+            'last_from_me': bool(latest and (latest.sender_role, latest.sender_id) == (me.role, me.id)),
             'last_time': latest.created_at if latest else datetime.utcnow(),
             'unread_count': Message.query.filter_by(sender_role=other.role, sender_id=other.id,
                                                     recipient_role=me.role, recipient_id=me.id,
@@ -2029,6 +2313,7 @@ def _load_inbox(me, selected=None):
             files = attachments_by_message(m.id for m in rows)
             messages_data = [SimpleNamespace(content=m.content, created_at=m.created_at, subject=m.subject,
                                              is_sent=(m.sender_role, m.sender_id) == (me.role, me.id),
+                                             is_read=bool(m.is_read),
                                              attachments=files.get(m.id, [])) for m in rows]
     return conversations, selected_conversation, messages_data
 
@@ -2048,7 +2333,8 @@ def messages():
     me = current_account()
     try:
         conversations, selected_conversation, messages_data = _load_inbox(me, _account_from_key(conv))
-        if not selected_conversation and conversations:
+        # ?list=1 shows just the conversation list (phones show one pane at a time).
+        if not selected_conversation and conversations and not request.args.get('list'):
             return redirect(url_for('messages', conv=conversations[0]['key']))
         return render_template('user/messages.html', conversations=conversations,
                                selected_conversation=selected_conversation, messages=messages_data)
@@ -2080,9 +2366,7 @@ def message_send(conv_key):
         return jsonify({'success': False, 'message': 'You cannot message this user.'}), 403
     try:
         _, attachment = send_message(me, recipient, content, checked=checked)
-        return jsonify({'success': True, 'message': 'Message sent',
-                        'time': datetime.utcnow().strftime('%I:%M %p'),
-                        'attachments': [attachment_info(attachment)] if attachment else []})
+        return sent_message_json(attachment)
     except Exception:
         db.session.rollback()
         app.logger.exception('Sending message failed')
@@ -2250,7 +2534,7 @@ def request_service():
                 cat = ServiceCategory.query.first()
                 if not cat:
                     cat = ServiceCategory(name='Custom Services', description='Custom service requests',
-                                          icon='fa-tools', is_active=True)
+                                          icon='fa-tools', is_active=False)   # never shown in the catalog
                     db.session.add(cat)
                     db.session.commit()
                 # Hidden from the catalogue: only reachable through "Other".
@@ -2278,6 +2562,11 @@ def request_service():
         device_type = (device_type or '').strip()
         if not device_type or len(device_type) > 50:
             flash('Please select a device type (up to 50 characters).', 'danger')
+            return redirect(url_for('request_service'))
+        device_brand = ' '.join((request.form.get('device_brand') or '').split())
+        device_model = ' '.join((request.form.get('device_model') or '').split())
+        if len(device_brand) > 50 or len(device_model) > 80:
+            flash('Please shorten the device brand (up to 50 characters) or model (up to 80).', 'danger')
             return redirect(url_for('request_service'))
         if address and len(address) > 255:
             flash('Please shorten the service address (up to 255 characters).', 'danger')
@@ -2335,7 +2624,9 @@ def request_service():
  
         service_obj = Service.query.get(service_id_for_booking)
         booking = Booking(booking_number=placeholder_number(), user_id=user_id, service_id=service_id_for_booking,
-                          device_type=device_type, description=description or 'No description provided',
+                          device_type=device_type, device_brand=device_brand or None,
+                          device_model=device_model or None,
+                          description=description or 'No description provided',
                           address=address if not is_in_shop else 'In-shop repair',
                           booking_date=booking_date_obj, booking_time=booking_time_obj,
                           is_in_shop=is_in_shop, status='pending', terms_accepted_at=datetime.utcnow())
@@ -2362,9 +2653,16 @@ def request_service():
 @app.route('/user/services')
 @login_required
 def service_catalog():
-    categories = ServiceCategory.query.filter_by(is_active=True)\
-        .order_by(ServiceCategory.display_order, ServiceCategory.name).all()
-    return render_template('user/service_catalog.html', categories=categories,
+    # Only bookable services, and only categories that have some (a hidden
+    # service or an empty category never shows up).
+    catalog = []
+    for cat in ServiceCategory.query.filter_by(is_active=True)\
+            .order_by(ServiceCategory.display_order, ServiceCategory.name).all():
+        services = sorted((s for s in cat.services if s.is_active), key=lambda s: s.id)
+        if services:
+            catalog.append((cat, services))
+    return render_template('user/service_catalog.html', catalog=catalog,
+                           categories=[cat for cat, _ in catalog],
                            notifications=_unread_notifs(session.get('user_id')))
  
 @app.route('/user/book', methods=['GET', 'POST'])
@@ -2435,10 +2733,15 @@ def api_booking_monitor(booking_id):
         t = b.technician
         avg, cnt = technician_rating(t.id)
         tech = {'id': t.id, 'key': t.key, 'name': t.full_name, 'verified': bool(t.id_verified),
-                'role': 'Technician',
+                'role': t.headline or 'Technician',
                 'initials': ''.join(w[0] for w in (t.full_name or '').split()[:2]).upper() or 'T',
-                'rating': avg or 5.0, 'rating_count': cnt,
-                'phone': t.phone, 'email': t.email}
+                'avatar': t.avatar_url,
+                'rating': avg, 'rating_count': cnt,          # avg is None until someone rates them
+                'phone': t.phone, 'email': t.email,
+                'credentials': [{'title': c.title, 'issuer': c.issuer,
+                                 'issued': c.issued_on.strftime('%b %Y') if c.issued_on else '',
+                                 'url': url_for('credential_file', cred_id=c.id), 'isImage': c.is_image}
+                                for c in t.credentials]}
 
     rating = ServiceRating.query.filter_by(booking_id=b.id).first()
     logs = JobLog.query.filter_by(booking_id=b.id).order_by(JobLog.id.desc()).all()
@@ -2450,6 +2753,7 @@ def api_booking_monitor(booking_id):
                     'statusLabel': STATUS_LABELS.get(b.status, b.status),
                     'service': b.service.name, 'description': b.description,
                     'deviceType': b.device_type, 'isInShop': b.is_in_shop,
+                    'deviceBrandModel': ' '.join(x for x in (b.device_brand, b.device_model) if x),
                     'address': b.address,
                     'scheduledDate': fmt(b.booking_date, '%b %d, %Y'),
                     'scheduledTime': fmt(b.booking_time, '%I:%M %p'),
@@ -2463,6 +2767,8 @@ def api_booking_monitor(booking_id):
         'repair': repair,
         'approval': approval_dict(ApprovalRequest.query.filter_by(booking_id=b.id, status='pending').first()),
         'canRate': bool(b.status in FINISHED_STATUSES and b.technician_id and not rating),
+        'rateLater': bool(b.technician_id and not rating and b.status not in FINISHED_STATUSES
+                          and b.status != 'cancelled'),
         'rating': {'stars': rating.stars, 'experience': rating.experience,
                    'improvement': rating.improvement,
                    'submittedAt': fmt(rating.submitted_at, '%b %d, %Y')} if rating else None,
@@ -2742,6 +3048,22 @@ def _save_avatar(account, file_storage):
     account.avatar_file = filename
     return None
 
+@app.route('/credentials/<int:cred_id>')
+@account_required
+def credential_file(cred_id):
+    """A technician's certificate/achievement: admins, the technician, and
+    customers with a job assigned to that technician."""
+    from services.technician_service import can_view_credential, credential_path
+    cred = TechnicianCredential.query.get_or_404(cred_id)
+    path = credential_path(cred)
+    if not path or not can_view_credential(current_account(), cred):
+        abort(404)
+    resp = send_file(path, mimetype=cred.mime, max_age=0,
+                     download_name='certificate' + os.path.splitext(path)[1])
+    resp.headers['Cache-Control'] = 'private, max-age=300'
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
 @app.route('/avatars/<filename>')
 @account_required
 def account_avatar(filename):
@@ -2941,6 +3263,17 @@ def _delete_account_private_rows(account):
     """Rows that only matter to this account. Does not commit."""
     Notification.query.filter_by(user_role=account.role, user_id=account.id).delete()
     ActivityLog.query.filter_by(user_role=account.role, user_id=account.id).delete()
+    if account.role == 'technician' and account.id_document_file:
+        from services.technician_service import delete_id_document
+        delete_id_document(account.id_document_file)
+        account.id_document_file = account.id_document_mime = None
+    if account.role == 'technician':
+        TechnicianEmployee.query.filter_by(technician_id=account.id).update(
+            {'technician_id': None, 'registered_at': None}, synchronize_session=False)
+        from services.technician_service import delete_credential_file
+        for cred in TechnicianCredential.query.filter_by(technician_id=account.id).all():
+            delete_credential_file(cred.file)
+            db.session.delete(cred)
     if account.role == 'customer':
         for cart in ShoppingCart.query.filter_by(customer_id=account.id).all():
             CartItem.query.filter_by(cart_id=cart.id).delete()
@@ -2966,7 +3299,7 @@ def _anonymize_account(account):
     account.full_name = 'Deleted user'
     columns = account.__table__.columns
     for field in ('phone', 'address', 'city', 'province', 'postal_code', 'latitude',
-                  'longitude', 'birth_date', 'oauth_provider', 'oauth_id', 'id_type', 'id_number'):
+                  'longitude', 'birth_date', 'oauth_provider', 'oauth_id', 'id_type', 'id_number', 'gender'):
         if field in columns:
             setattr(account, field, None)
     account.password_hash = bcrypt.generate_password_hash(secrets.token_urlsafe(32)).decode('utf-8')
@@ -3079,12 +3412,76 @@ def get_cached_active_products():
     once per minute is the single highest-value cache in the app."""
     return Product.query.filter_by(is_active=True).distinct().all()
 
+HOT_DAYS = 30
+ACTIVE_ORDER_STATUSES = ('pending', 'processing', 'out_for_delivery')
+
+def _setting_values(*keys):
+    rows = SystemSetting.query.filter(SystemSetting.setting_key.in_(keys)).all()
+    return {r.setting_key: (r.value or '').strip() for r in rows}
+
+def shop_location():
+    """The shop's pin and city / province from Settings (blank values -> None / '')."""
+    v = _setting_values('shop_latitude', 'shop_longitude', 'shop_city', 'shop_province')
+    def num(key):
+        try:
+            return float(v[key]) if v.get(key) else None
+        except ValueError:
+            return None
+    return {'lat': num('shop_latitude'), 'lng': num('shop_longitude'),
+            'city': v.get('shop_city', ''), 'province': v.get('shop_province', '')}
+
+def _address_point(obj):
+    """Pin + city/province of a customer or an order's delivery snapshot."""
+    return {'lat': obj.latitude, 'lng': obj.longitude, 'city': obj.city, 'province': obj.province}
+
+def delivery_estimate(dest, order=None):
+    """Delivery window for an address (or an existing order), from the distance to
+    the shop and the riders on duty against the orders already waiting."""
+    km, basis = delivery_eta.road_distance_km(shop_location(), dest)
+    riders = DeliveryRider.query.filter_by(is_active=True, on_duty=True).count()
+    ahead = Order.query.filter(Order.status.in_(ACTIVE_ORDER_STATUSES))
+    if order is not None and order.id:
+        ahead = ahead.filter(Order.id != order.id, Order.created_at <= order.created_at)
+    dispatched = order.dispatched_at if order is not None and order.status == 'out_for_delivery' else None
+    est = delivery_eta.estimate(datetime.utcnow(), km, riders, ahead.count(), dispatched_at=dispatched)
+    est.update(distance_km=km, basis=basis, riders_on_duty=riders)
+    return est
+
+def _eta_json(est):
+    return {'label': est['label'], 'note': est['note'], 'method': est['method'],
+            'distance_km': est['distance_km'], 'basis': est['basis'],
+            'earliest': est['earliest'].isoformat(), 'latest': est['latest'].isoformat()}
+
+def shop_highlights(products):
+    """Per product: units sold in the last 30 days, 'hot' (the top 3 sellers with
+    at least 2 sold) and 'low_price' (the cheapest quarter of the shop)."""
+    since = datetime.utcnow() - timedelta(days=HOT_DAYS)
+    rows = db.session.query(OrderItem.product_id, func.sum(OrderItem.quantity)) \
+        .join(Order, Order.id == OrderItem.order_id) \
+        .filter(Order.status != 'cancelled', Order.created_at >= since) \
+        .group_by(OrderItem.product_id).all()
+    sold = {pid: int(n or 0) for pid, n in rows}
+    hot = {pid for pid, n in sorted(sold.items(), key=lambda kv: -kv[1])[:3] if n >= 2}
+    prices = sorted(p.effective_price for p in products)
+    cutoff = prices[(len(prices) - 1) // 4] if len(prices) >= 4 else None
+    return {p.id: {'sold': sold.get(p.id, 0), 'hot': p.id in hot,
+                   'low_price': cutoff is not None and p.effective_price <= cutoff} for p in products}
+
 @app.route('/user/shop')
 @login_required
 def user_shop():
     user = current_account()
     products = get_cached_active_products()
     notifications = _unread_notifs(session.get('user_id'))
+    highlights = shop_highlights(products)
+    on_sale = [p for p in products if p.on_sale and p.stock_quantity > 0]
+    banner = {
+        'sale_count': len(on_sale),
+        'max_discount': max((p.discount_percent for p in on_sale), default=0),
+        'hot': [p.name for p in sorted(products, key=lambda p: -highlights[p.id]['sold'])
+                if highlights[p.id]['hot']][:2],
+        'riders_on_duty': DeliveryRider.query.filter_by(is_active=True, on_duty=True).count(),
+    }
     
     cart_count = 0
     try:
@@ -3094,7 +3491,8 @@ def user_shop():
     except:
         pass
     
-    return render_template('user/shop.html', products=products, cart_count=cart_count, notifications=notifications, user=user)
+    return render_template('user/shop.html', products=products, cart_count=cart_count, notifications=notifications,
+                           user=user, highlights=highlights, banner=banner)
 
 @app.route('/api/products')
 @login_required
@@ -3252,7 +3650,7 @@ def api_get_cart():
     for item in cart_items:
         product = Product.query.get(item.product_id)
         if product and product.is_active:
-            price = float(item.price if item.price else product.price)
+            price = float(product.effective_price)       # today's price, sale included
             subtotal = price * item.quantity
             total += subtotal
             items.append({
@@ -3261,6 +3659,8 @@ def api_get_cart():
                 'product_name': product.name,
                 'quantity': item.quantity,
                 'price': price,
+                'regular_price': float(product.price),
+                'on_sale': product.on_sale,
                 'subtotal': subtotal
             })
     
@@ -3329,10 +3729,10 @@ def api_cart_add():
 
     if cart_item:
         cart_item.quantity += quantity
-        cart_item.price = product.price
+        cart_item.price = product.effective_price
     else:
         db.session.add(CartItem(cart_id=cart.id, product_id=product.id,
-                                quantity=quantity, price=product.price))
+                                quantity=quantity, price=product.effective_price))
     db.session.commit()
 
     cart_count = CartItem.query.filter_by(cart_id=cart.id).count()
@@ -3393,16 +3793,28 @@ def api_cart_clear():
 def api_cart_checkout():
     user_id = session.get('user_id')
     user = db.session.get(Customer, user_id)
-    data = request.get_json(silent=True) or {}
+    # The shop page sends multipart form data (it carries the payment screenshot).
+    data = request.get_json(silent=True) or request.form
 
     payment_method = (data.get('payment_method') or '').strip().lower()
-    gcash_reference = (data.get('gcash_reference') or '').strip()
+    gcash_reference = (data.get('gcash_reference') or '').strip()[:50]
+    proof = request.files.get('payment_proof')
 
     if payment_method not in ('cod', 'gcash'):
         return jsonify({'success': False, 'message': 'Please select a valid payment method.'}), 400
 
-    if payment_method == 'gcash' and not gcash_reference:
-        return jsonify({'success': False, 'message': 'Please enter your GCash reference number.'}), 400
+    proof_ext = None
+    if payment_method == 'gcash':
+        # The screenshot of the successful GCash payment is the proof an admin reviews.
+        if not (proof and proof.filename):
+            return jsonify({'success': False, 'error': 'proof_required',
+                            'message': 'Upload a screenshot of your successful GCash payment.'}), 400
+        proof_ext = proof.filename.rsplit('.', 1)[-1].lower() if '.' in proof.filename else ''
+        if proof_ext not in PAYMENT_PROOF_EXTENSIONS:
+            return jsonify({'success': False, 'message': 'The screenshot must be a JPG or PNG image.'}), 400
+        ok, err = validate_uploaded_file(proof, proof_ext)
+        if not ok:
+            return jsonify({'success': False, 'message': err}), 400
 
     # The delivery address lives on the user's account (single saved address
     # per user, same as the profile page). It must be complete before an
@@ -3455,8 +3867,9 @@ def api_cart_checkout():
                             'message': f'Insufficient stock for {product.name}. Only {max(product.stock_quantity, 0)} available.'}), 400
         products[item.id] = product
 
-    total_amount = sum(item.quantity * products[item.id].price for item in cart_items)
-    
+    total_amount = sum(item.quantity * products[item.id].effective_price for item in cart_items)
+    eta = delivery_estimate(_address_point(user))
+
     order = Order(
         user_id=user_id,
         # order_number is filled in below, after flush(), using the row's
@@ -3480,9 +3893,12 @@ def api_cart_checkout():
         longitude=user.longitude,
         payment_method=payment_method,
         # COD is only confirmed as paid once the order is delivered; GCash
-        # payments sit as pending until an admin verifies the reference
-        # number, same as the existing booking payment flow.
-        payment_status='pending'
+        # payments sit as pending until an admin checks the payment
+        # screenshot, same as the existing booking payment flow.
+        payment_status='pending',
+        distance_km=eta['distance_km'],
+        eta_from=delivery_eta.to_utc_naive(eta['earliest']),
+        eta_to=delivery_eta.to_utc_naive(eta['latest'])
     )
     db.session.add(order)
     db.session.flush()
@@ -3494,7 +3910,7 @@ def api_cart_checkout():
             order_id=order.id,
             product_id=product.id,
             quantity=item.quantity,
-            price=product.price
+            price=product.effective_price
         ))
         product.stock_quantity -= item.quantity
         db.session.delete(item)
@@ -3508,32 +3924,80 @@ def api_cart_checkout():
         amount=total_amount,
         payment_method=payment_method,
         payment_status='pending',
-        gcash_reference=gcash_reference if payment_method == 'gcash' else None
+        gcash_reference=(gcash_reference or None) if payment_method == 'gcash' else None
     )
     db.session.add(transaction)
     db.session.flush()
     assign_transaction_number(transaction)
 
-    db.session.commit()
+    saved_proof = None
+    if proof_ext:
+        receipts_dir = app.config['RECEIPT_UPLOAD_FOLDER']
+        os.makedirs(receipts_dir, exist_ok=True)
+        stamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        name = secure_filename(f"receipt_{transaction.transaction_number}_{stamp}_{secrets.token_hex(4)}.{proof_ext}")
+        saved_proof = os.path.join(receipts_dir, name)
+        try:
+            proof.save(saved_proof)
+        except OSError:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': 'Could not save your screenshot. Please try again.'}), 500
+        transaction.receipt_image = name
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        if saved_proof and os.path.exists(saved_proof):
+            os.remove(saved_proof)
+        raise
     cache.delete('active_products')  # stock just changed
 
     if payment_method == 'gcash':
         notif_message = (
-            f'Your order #{order.order_number} (₱{total_amount:.2f}) has been placed and is '
-            f'awaiting GCash payment confirmation from our team.'
+            f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. Our team is checking '
+            f'your GCash payment screenshot. Estimated delivery: {eta["label"]}.'
         )
+        notify_admins('Payment Awaiting Confirmation',
+                      f'Order {order.order_number}: GCash payment of ₱{total_amount:,.2f} with a screenshot '
+                      f'({transaction.transaction_number}) needs checking.', 'info')
     else:
         notif_message = (
-            f'Your order #{order.order_number} (₱{total_amount:.2f}) has been placed. '
-            f'Pay in cash when your order is delivered.'
+            f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. '
+            f'Pay in cash when it arrives. Estimated delivery: {eta["label"]}.'
         )
     create_notification(user_id, 'Order Placed', notif_message, 'success', role='customer')
-    
+
     return jsonify({
         'success': True,
         'message': 'Order placed successfully!',
         'order_number': order.order_number,
-        'total': float(total_amount)
+        'total': float(total_amount),
+        'eta': eta['label']
+    })
+
+@app.route('/api/checkout/summary')
+@login_required
+def api_checkout_summary():
+    """What the checkout window shows: the amount to pay (worked out here, not
+    trusted from the page), the delivery estimate for the saved address, and the
+    shop's GCash QR with that exact amount in it."""
+    user = db.session.get(Customer, session.get('user_id'))
+    cart = ShoppingCart.query.filter_by(user_id=user.id, status='active').first()
+    items = CartItem.query.filter_by(cart_id=cart.id).all() if cart else []
+    total = sum((i.product.effective_price * i.quantity for i in items if i.product and i.product.is_active), 0)
+    values = _setting_values('gcash_qr_payload', 'gcash_account', 'gcash_name', 'system_name')
+    qr = None
+    if total and values.get('gcash_qr_payload'):
+        try:
+            qr = gcash_qr.qr_svg_data_uri(gcash_qr.with_amount(values['gcash_qr_payload'], total))
+        except gcash_qr.InvalidQrPayload:
+            app.logger.warning('The saved GCash QR code is not valid; re-upload it in Settings.')
+    return jsonify({
+        'total': float(total),
+        'eta': _eta_json(delivery_estimate(_address_point(user))),
+        'gcash': {'qr': qr, 'amount': f'{total:,.2f}', 'account': values.get('gcash_account', ''),
+                  'name': values.get('gcash_name') or values.get('system_name') or 'DEVTech Computer Services'},
     })
 # Add this to app.py - Order Cancellation with Stock Restoration
 
@@ -3548,18 +4012,15 @@ def user_orders():
     base_query = Order.query.filter_by(user_id=user_id)
     all_orders = base_query.order_by(Order.created_at.desc()).all()
 
-    status_counts = {
-        'all': len(all_orders),
-        'pending': sum(1 for o in all_orders if o.status == 'pending'),
-        'processing': sum(1 for o in all_orders if o.status == 'processing'),
-        'completed': sum(1 for o in all_orders if o.status == 'completed'),
-        'cancelled': sum(1 for o in all_orders if o.status == 'cancelled'),
-    }
+    status_counts = {key: sum(1 for o in all_orders if o.status == key) for key in ORDER_STATUS_LABELS}
+    status_counts['all'] = len(all_orders)
 
     if status_filter != 'all':
         orders = [o for o in all_orders if o.status == status_filter]
     else:
         orders = all_orders
+    etas = {o.id: delivery_estimate(_address_point(o), o)['label']
+            for o in orders if o.status in ACTIVE_ORDER_STATUSES}
 
     notifications = _unread_notifs(user_id)
     return render_template(
@@ -3567,11 +4028,35 @@ def user_orders():
         orders=orders,
         status_filter=status_filter,
         status_counts=status_counts,
+        status_labels=ORDER_STATUS_LABELS,
+        etas=etas,
         notifications=notifications,
         user=user
     )
 
-def _cancel_order(order, cancelled_by='system'):
+ORDER_STATUS_LABELS = {'pending': 'Pending', 'processing': 'Preparing', 'out_for_delivery': 'Out for delivery',
+                       'completed': 'Delivered', 'cancelled': 'Cancelled'}
+app.jinja_env.globals['order_status_labels'] = ORDER_STATUS_LABELS
+
+def _order_paid_transactions(order):
+    """Payments on the order that were confirmed or that the customer sent proof for."""
+    return [t for t in order.transactions
+            if t.payment_status == 'confirmed' or
+            (t.payment_status in ('pending', 'rejected') and (t.receipt_image or t.gcash_reference or t.reference_number))]
+
+def customer_cancel_block(order):
+    """Why the customer may not cancel this order themselves, or None if they may."""
+    if order.status in ('completed', 'cancelled'):
+        return 'This order cannot be cancelled.'
+    if order.status == 'out_for_delivery':
+        return 'This order is already on its way. Please contact support if you need to return it.'
+    if order.payment_status == 'confirmed' and order.status != 'pending':
+        return 'This paid order is already being prepared. Please contact support to cancel it.'
+    return None
+
+GCASH_NUMBER_RE = re.compile(r'(09\d{9}|\+639\d{9})')
+
+def _cancel_order(order, cancelled_by='system', payout_account=None):
     """Cancel an order: restore its stock, close unpaid payments, and open a refund
     for any payment that was confirmed or that the customer sent proof for.
     Commits. Returns the refunds it opened. Callers check whether the order may
@@ -3598,10 +4083,11 @@ def _cancel_order(order, cancelled_by='system'):
     for txn in to_refund:
         why = (f'Order {order.order_number} cancelled after the payment was confirmed.'
                if txn.payment_status == 'confirmed' else
-               f'Order {order.order_number} cancelled after the customer sent a GCash reference. '
+               f'Order {order.order_number} cancelled after the customer sent GCash payment proof. '
                f'Check the money arrived before refunding.')
         refund, created = open_refund(txn, why, created_by=cancelled_by, order=order)
         if created:
+            refund.payout_account = payout_account
             opened.append(refund)
     db.session.commit()
     cache.delete('active_products')
@@ -3621,23 +4107,27 @@ def api_order_cancel(order_id):
     # Check if order belongs to user
     if order.user_id != user_id:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
-    # Check if order can be cancelled
-    if order.status in ['completed', 'cancelled']:
-        return jsonify({'success': False, 'message': 'This order cannot be cancelled'}), 400
 
     # A paid order can be cancelled by the customer only before it is being
     # prepared; the payment then goes to Refunds. Later, they contact support.
-    if order.payment_status == 'confirmed' and order.status != 'pending':
-        return jsonify({
-            'success': False,
-            'message': 'This paid order is already being prepared. Please contact support to cancel it.'
-        }), 400
+    blocked = customer_cancel_block(order)
+    if blocked:
+        return jsonify({'success': False, 'message': blocked}), 400
 
-    refunds = _cancel_order(order, cancelled_by=f'customer #{user_id}')
+    # Money already sent by GCash is returned in full to the number they give.
+    data = request.get_json(silent=True) or {}
+    paid = _order_paid_transactions(order)
+    payout = re.sub(r'[\s-]', '', str(data.get('refund_to') or ''))
+    if paid and not GCASH_NUMBER_RE.fullmatch(payout):
+        return jsonify({'success': False, 'error': 'refund_number_required',
+                        'message': 'Enter the GCash number (09XXXXXXXXX) where we should send your refund.'}), 400
+
+    refunds = _cancel_order(order, cancelled_by=f'customer #{user_id}', payout_account=payout or None)
     msg = f'Your order #{order.order_number} has been cancelled.'
     if refunds:
-        msg += ' A refund has been opened; you can follow it on your Transactions page.'
+        amount = sum(r.amount for r in refunds)
+        msg += (f' ₱{amount:,.2f} will be refunded to GCash {payout} once our team confirms the payment; '
+                f'you can follow it in My Orders and on your Transactions page.')
     create_notification(user_id, 'Order Cancelled', msg, 'warning', role='customer')
     return jsonify({'success': True, 'message': msg, 'refund_opened': bool(refunds)})
 
@@ -3650,17 +4140,43 @@ def api_order_detail(order_id):
     
     if order.user_id != user_id:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
-    
+
     has_pin = order.latitude is not None and order.longitude is not None
+    paid = _order_paid_transactions(order)
+    txn = order.transactions[0] if order.transactions else None
+    eta = None
+    if order.status in ACTIVE_ORDER_STATUSES:
+        eta = _eta_json(delivery_estimate(_address_point(order), order))
+    blocked = customer_cancel_block(order)
+    customer = db.session.get(Customer, user_id)
 
     return jsonify({
         'id': order.id,
         'order_number': order.order_number,
         'total_amount': float(order.total_amount),
         'status': order.status,
-        'can_cancel': order.status in ('pending', 'processing') and not (
-            order.payment_method == 'gcash' and order.payment_status == 'confirmed'
-        ),
+        'status_label': ORDER_STATUS_LABELS.get(order.status, order.status.title()),
+        'can_cancel': blocked is None,
+        'cancel_blocked_reason': blocked if order.status not in ('completed', 'cancelled') else None,
+        'refund_on_cancel': float(sum(t.amount for t in paid)) if paid else 0,
+        'refund_to_suggestion': customer.phone if customer and customer.phone else '',
+        'eta': eta,
+        'delivered_at': _ph_time(order.delivered_at),
+        'tracking': _order_tracking(order, txn),
+        'rider': ({'name': order.rider.name, 'phone': order.rider.phone or ''}
+                  if order.rider and order.status in ('out_for_delivery', 'completed') else None),
+        'payment': {
+            'proof_url': receipt_url(txn) if txn else '',
+            'reference': (txn.gcash_reference or txn.reference_number or '') if txn else '',
+            'rejection_reason': txn.rejection_reason if txn and txn.payment_status == 'rejected' else '',
+            'transaction_status': txn.payment_status if txn else '',
+        },
+        'refunds': [{
+            'amount': float(r.amount), 'status': r.status, 'method': r.method or '',
+            'reference': r.reference or '', 'payout_account': r.payout_account or '',
+            'note': (r.note or '') if r.status == 'declined' else '',
+            'created_at': _ph_time(r.created_at), 'processed_at': _ph_time(r.processed_at),
+        } for t in order.transactions for r in t.refunds],
         # Legacy single-line string, still returned for compatibility.
         'shipping_address': order.shipping_address,
         # Structured address snapshot captured at checkout time.
@@ -3680,12 +4196,39 @@ def api_order_detail(order_id):
         'payment_status': order.payment_status,
         'created_at': order.created_at.strftime('%Y-%m-%d %H:%M:%S'),
         'items': [{
-            'product_name': item.product.name,
+            'product_name': item.product.name if item.product else 'Removed product',
             'quantity': item.quantity,
             'price': float(item.price),
             'subtotal': float(item.price * item.quantity)
         } for item in order.items]
     })
+
+def _ph_time(dt):
+    """'Oct 30, 2026 2:15 PM' in Philippine time, or None."""
+    return delivery_eta.to_ph(dt).strftime('%b %d, %Y %I:%M %p').replace(' 0', ' ') if dt else None
+
+def _order_tracking(order, txn):
+    """The order's progress, step by step, for the customer's tracking timeline."""
+    rank = {'pending': 0, 'processing': 1, 'out_for_delivery': 2, 'completed': 3}.get(order.status, -1)
+    steps = [{'key': 'placed', 'label': 'Order placed', 'done': True, 'at': _ph_time(order.created_at)}]
+    if order.payment_method == 'gcash':
+        state = txn.payment_status if txn else 'pending'
+        steps.append({'key': 'payment', 'done': order.payment_status in ('confirmed', 'refunded'),
+                      'problem': state == 'rejected',
+                      'label': {'confirmed': 'GCash payment verified', 'refunded': 'GCash payment verified',
+                                'rejected': 'Payment screenshot rejected'}.get(state, 'Checking your GCash payment'),
+                      'at': _ph_time(txn.reviewed_at) if txn and state in ('confirmed', 'rejected') else None})
+    steps += [
+        {'key': 'processing', 'label': 'Preparing your order', 'done': rank >= 1, 'at': None},
+        {'key': 'out_for_delivery', 'label': 'Out for delivery', 'done': rank >= 2,
+         'at': _ph_time(order.dispatched_at)},
+        {'key': 'completed', 'label': 'Delivered', 'done': rank >= 3, 'at': _ph_time(order.delivered_at)},
+    ]
+    if order.status == 'cancelled':
+        steps = [st for st in steps if st['done']]
+        steps.append({'key': 'cancelled', 'label': 'Order cancelled', 'done': True, 'problem': True,
+                      'at': _ph_time(order.updated_at)})
+    return steps
 # ==================== TROUBLESHOOTING ROUTE ====================
 
 @app.route('/user/troubleshooting')
@@ -3851,8 +4394,10 @@ def _is_me(account):
     return session.get('role') == account.role and session.get('user_id') == account.id
 
 def _next_tech_id():
-    nums = [int(t.username[5:]) for t in Technician.query.filter(Technician.username.like('TECH-%')).all()
-            if t.username[5:].isdigit()]
+    """Next free TECH-#### across accounts and the employee roster."""
+    taken = [t.username for t in Technician.query.filter(Technician.username.like('TECH-%')).all()]
+    taken += [e.tech_id for e in TechnicianEmployee.query.filter(TechnicianEmployee.tech_id.like('TECH-%')).all()]
+    nums = [int(x[5:]) for x in taken if x[5:].isdigit()]
     return f"TECH-{(max(nums) + 1 if nums else 1):04d}"
 
 @app.route('/admin/users')
@@ -3942,20 +4487,16 @@ def api_admin_verify_technician_id(role, user_id):
     if not re.fullmatch(r'[A-Za-z0-9\- ]{4,50}', id_number):
         return jsonify({'success': False, 'message': 'ID number looks invalid - letters, numbers, spaces, and dashes only.'}), 400
 
+    from services.technician_service import decide_verification
     user.id_type = id_type
     user.id_number = id_number
-    user.id_verified = True
-    user.id_verified_at = datetime.utcnow()
-    db.session.commit()
+    # Checked in person, so no uploaded document is needed here.
+    ok, message = decide_verification(user, 'approve', current_account(), require_document=False)
+    if not ok:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': message}), 400
 
     log_activity(session.get('user_id'), 'technician_verify', f'Verified identity for technician: {user.full_name} ({id_type})')
-    create_notification(
-        user.id,
-        'Identity Verified',
-        'Your identity document has been verified by an administrator. You can now be assigned to service bookings.',
-        'success', role='technician'
-    )
-
     return jsonify({'success': True, 'message': f"{user.full_name}'s identity has been verified."})
 
 @app.route('/api/admin/users/<role>/<int:user_id>/verify-id', methods=['DELETE'])
@@ -3966,8 +4507,11 @@ def api_admin_revoke_technician_verification(role, user_id):
     user = _admin_target(role, user_id)
     if user.role != 'technician':
         return jsonify({'success': False, 'message': 'Only technicians have ID verification.'}), 400
-    user.id_verified = False
-    db.session.commit()
+    from services.technician_service import decide_verification
+    ok, message = decide_verification(user, 'suspend', current_account(),
+                                      'Verification revoked by an administrator in User Management.')
+    if not ok:
+        return jsonify({'success': False, 'message': message}), 400
     log_activity(session.get('user_id'), 'technician_verify_revoke', f'Revoked identity verification for: {user.full_name}')
     return jsonify({'success': True, 'message': f"{user.full_name}'s verification has been revoked."})
 
@@ -4116,6 +4660,8 @@ def api_booking_detail(booking_id):
         'status': booking.status,
         'status_note': status_note,
         'device_type': booking.device_type,
+        'device_brand': booking.device_brand,
+        'device_model': booking.device_model,
         'description': booking.description,
         'address': booking.address,
         'is_in_shop': booking.is_in_shop,
@@ -4206,8 +4752,9 @@ def admin_request_status(booking_id):
         if not tech:
             flash('Please select a technician before approving.', 'danger')
             return redirect(url_for('admin_requests'))
-        if not tech.id_verified:
-            flash(f'{tech.full_name} is not identity-verified yet. Verify them in User Management first.', 'danger')
+        if not tech.can_take_jobs:
+            flash(f'{tech.full_name} cannot take jobs ({tech.verification_label}). '
+                  'Only verified technicians can be assigned.', 'danger')
             return redirect(url_for('admin_requests'))
         booking.technician_id = tech.id
         booking.assigned_at = now
@@ -4247,6 +4794,138 @@ def admin_request_status(booking_id):
 
 REASSIGNABLE_STATUSES = ('confirmed', 'diagnosis_pending', 'in_progress', 'on_hold')
 
+@app.route('/admin/technician-verification')
+@admin_required
+def admin_tech_verification():
+    """Technician registrations by verification status; waiting ones first."""
+    status = request.args.get('status', 'pending')
+    if status != 'all' and status not in TECH_VERIFICATION_STATUSES:
+        status = 'pending'
+    q = (request.args.get('q') or '').strip()[:100]
+    query = Technician.query
+    if status != 'all':
+        query = query.filter(Technician.verification_status == status)
+    if q:
+        like = f'%{q}%'
+        query = query.filter(or_(Technician.full_name.ilike(like), Technician.username.ilike(like),
+                                 Technician.email.ilike(like)))
+    submitted = Technician.verification_submitted_at
+    # Waiting registrations: oldest first. Everything else: most recent first.
+    order = submitted.asc() if status == 'pending' else submitted.desc()
+    techs, pager = paginate(query.order_by(submitted.is_(None), order, Technician.id.desc()),
+                            request.args.get('page', 1, type=int))
+    counts = dict(db.session.query(Technician.verification_status, func.count(Technician.id))
+                  .group_by(Technician.verification_status).all())
+    return render_template('admin/technician_verification.html', techs=techs, pager=pager, counts=counts,
+                           status=status, q=q, statuses=TECH_VERIFICATION_STATUSES)
+
+@app.route('/admin/technician-verification/<int:tech_id>')
+@admin_required
+def admin_tech_verification_detail(tech_id):
+    """One technician's submitted details, ID document, decision buttons and history."""
+    from services.technician_service import DECISIONS, id_document_path
+    tech = Technician.query.get_or_404(tech_id)
+    has_document = bool(id_document_path(tech))
+    actions = [a for a, d in DECISIONS.items() if tech.verification_status in d[1]
+               and (a != 'approve' or has_document)]
+    age = None
+    if tech.birth_date:
+        today = datetime.utcnow().date()
+        age = today.year - tech.birth_date.year - ((today.month, today.day) < (tech.birth_date.month, tech.birth_date.day))
+    open_jobs = Booking.query.filter(Booking.technician_id == tech.id,
+                                     Booking.status.in_(REASSIGNABLE_STATUSES)).count()
+    return render_template('admin/technician_verification_detail.html', tech=tech, actions=actions,
+                           has_document=has_document, age=age, open_jobs=open_jobs,
+                           statuses=TECH_VERIFICATION_STATUSES)
+
+@app.route('/admin/technician-verification/<int:tech_id>/document')
+@admin_required
+def admin_tech_verification_document(tech_id):
+    """The technician's ID document. Admins only; every view is logged."""
+    from services.technician_service import send_id_document
+    tech = Technician.query.get_or_404(tech_id)
+    resp = send_id_document(tech)
+    log_activity(session.get('user_id'), 'id_document_view', f'Viewed the ID document of {tech.username}')
+    return resp
+
+def _roster_page(form=None, errors=None, edit=None, status_code=200):
+    from services.technician_service import ID_TYPES
+    status = request.args.get('status', 'all')
+    if status not in ('all', 'waiting', 'registered'):
+        status = 'all'
+    q = (request.args.get('q') or '').strip()[:100]
+    query = TechnicianEmployee.query
+    if status == 'waiting':
+        query = query.filter(TechnicianEmployee.technician_id.is_(None))
+    elif status == 'registered':
+        query = query.filter(TechnicianEmployee.technician_id.isnot(None))
+    if q:
+        like = f'%{q}%'
+        query = query.filter(or_(TechnicianEmployee.tech_id.ilike(like), TechnicianEmployee.full_name.ilike(like)))
+    records, pager = paginate(query.order_by(TechnicianEmployee.tech_id), request.args.get('page', 1, type=int))
+    total = TechnicianEmployee.query.count()
+    registered = TechnicianEmployee.query.filter(TechnicianEmployee.technician_id.isnot(None)).count()
+    return render_template('admin/technician_roster.html', records=records, pager=pager, q=q, status=status,
+                           id_types=ID_TYPES, next_id=_next_tech_id(), edit=edit, form=form or {},
+                           errors=errors or {}, stats={'total': total, 'registered': registered,
+                                                       'waiting': total - registered}), status_code
+
+@app.route('/admin/technician-roster')
+@admin_required
+def admin_tech_roster():
+    """Hired technicians, recorded by an admin. Only these Tech IDs can register,
+    and only with an ID whose details match the record."""
+    edit = db.session.get(TechnicianEmployee, request.args.get('edit', type=int)) if request.args.get('edit') else None
+    return _roster_page(edit=edit)
+
+@app.route('/admin/technician-roster', methods=['POST'])
+@app.route('/admin/technician-roster/<int:record_id>', methods=['POST'])
+@admin_required
+def admin_tech_roster_save(record_id=None):
+    from services.technician_service import save_employee
+    record = TechnicianEmployee.query.get_or_404(record_id) if record_id else None
+    ok, result = save_employee(request.form, current_account().full_name, record)
+    if not ok:
+        return _roster_page(form=request.form, errors=result, edit=record, status_code=400)
+    log_activity(session.get('user_id'), 'technician_roster_save',
+                 f'{"Updated" if record else "Added"} employee record {result.tech_id}')
+    flash(f'{result.tech_id} {"updated" if record else "added"}. '
+          + ('' if result.technician_id else 'Give this Tech ID to the technician so they can register.'), 'success')
+    return redirect(url_for('admin_tech_roster'))
+
+@app.route('/admin/technician-roster/<int:record_id>/delete', methods=['POST'])
+@admin_required
+def admin_tech_roster_delete(record_id):
+    record = TechnicianEmployee.query.get_or_404(record_id)
+    if record.technician_id:
+        flash(f'{record.tech_id} has already registered, so its record stays. '
+              'Deactivate the account in User Management instead.', 'danger')
+        return redirect(url_for('admin_tech_roster'))
+    tech_id = record.tech_id
+    db.session.delete(record)
+    db.session.commit()
+    log_activity(session.get('user_id'), 'technician_roster_delete', f'Removed employee record {tech_id}')
+    flash(f'{tech_id} removed.', 'success')
+    return redirect(url_for('admin_tech_roster'))
+
+TECH_DECISION_LOG = {'approve': 'Approved', 'reject': 'Rejected', 'correction': 'Requested a correction from',
+                     'suspend': 'Suspended'}
+
+@app.route('/admin/technician-verification/<int:tech_id>/decide', methods=['POST'])
+@admin_required
+def admin_tech_verification_decide(tech_id):
+    """Approve / reject / request a correction / suspend. Reason required except to approve."""
+    from services.technician_service import decide_verification
+    tech = Technician.query.get_or_404(tech_id)
+    action = request.form.get('action', '')
+    ok, message = decide_verification(tech, action, current_account(), request.form.get('reason', ''),
+                                      expected=request.form.get('expected') or None)
+    if ok:
+        log_activity(session.get('user_id'), f'technician_verification_{action}',
+                     f'{TECH_DECISION_LOG[action]} technician {tech.username}')
+    flash(message, 'success' if ok else 'danger')
+    return redirect(url_for('admin_tech_verification_detail', tech_id=tech.id))
+
 @app.route('/admin/requests/<int:booking_id>/assign', methods=['POST'])
 @admin_required
 def admin_request_reassign(booking_id):
@@ -4260,8 +4939,9 @@ def admin_request_reassign(booking_id):
     if not tech:
         flash('Please choose an active technician.', 'danger')
         return redirect(url_for('admin_requests'))
-    if not tech.id_verified:
-        flash(f'{tech.full_name} is not identity-verified yet. Verify them in User Management first.', 'danger')
+    if not tech.can_take_jobs:
+        flash(f'{tech.full_name} cannot take jobs ({tech.verification_label}). '
+              'Only verified technicians can be assigned.', 'danger')
         return redirect(url_for('admin_requests'))
     if tech.id == booking.technician_id:
         flash(f'{booking.booking_number} is already assigned to {tech.full_name}.', 'info')
@@ -4311,6 +4991,8 @@ def api_admin_booking_detail(booking_id):
         'booking_number': booking.booking_number,
         'status': booking.status,
         'device_type': booking.device_type,
+        'device_brand': booking.device_brand,
+        'device_model': booking.device_model,
         'description': booking.description,
         'address': booking.address,
         'is_in_shop': booking.is_in_shop,
@@ -4353,7 +5035,8 @@ def api_admin_booking_detail(booking_id):
 
 ORDER_TRANSITIONS = {  # current status -> statuses an admin may move it to
     'pending': ('processing', 'cancelled'),
-    'processing': ('completed', 'cancelled'),
+    'processing': ('out_for_delivery', 'completed', 'cancelled'),
+    'out_for_delivery': ('completed', 'cancelled'),
 }
 
 @app.route('/admin/orders')
@@ -4365,8 +5048,11 @@ def admin_orders():
         q = q.filter_by(status=status_filter)
     orders = q.order_by(Order.created_at.desc()).all()
     counts = dict(db.session.query(Order.status, func.count(Order.id)).group_by(Order.status).all())
+    riders = DeliveryRider.query.order_by(DeliveryRider.is_active.desc(), DeliveryRider.name).all()
+    etas = {o.id: delivery_estimate(_address_point(o), o) for o in orders if o.status in ACTIVE_ORDER_STATUSES}
     return render_template('admin/orders.html', orders=orders, counts=counts,
-                           status_filter=status_filter, transitions=ORDER_TRANSITIONS)
+                           status_filter=status_filter, transitions=ORDER_TRANSITIONS,
+                           riders=riders, etas=etas, shop=shop_location())
 
 @app.route('/admin/orders/<int:order_id>/status', methods=['POST'])
 @admin_required
@@ -4377,14 +5063,33 @@ def admin_order_status(order_id):
         flash(f'An order that is {order.status} cannot be moved to {new_status}.', 'danger')
         return redirect(url_for('admin_orders'))
 
+    rider = None
+    if new_status == 'out_for_delivery':
+        if order.payment_method == 'gcash' and order.payment_status != 'confirmed':
+            flash(f'Confirm the GCash payment for {order.order_number} (Payments) before sending it out.', 'danger')
+            return redirect(url_for('admin_orders', status=request.args.get('filter', 'all')))
+        rider = DeliveryRider.query.filter_by(id=request.form.get('rider_id', type=int),
+                                              is_active=True, on_duty=True).first()
+        if not rider:
+            flash('Choose a rider who is on duty to send this order out.', 'danger')
+            return redirect(url_for('admin_orders', status=request.args.get('filter', 'all')))
+
     if new_status == 'cancelled':
         refunds = _cancel_order(order, cancelled_by=_reviewer_label())
         msg = f'Your order #{order.order_number} was cancelled by our team.'
         if refunds:
-            msg += ' A refund has been opened; you can follow it on your Transactions page.'
+            msg += ' A refund has been opened; you can follow it in My Orders and on your Transactions page.'
     else:
         order.status = new_status
         order.updated_at = datetime.utcnow()
+        if rider:
+            order.rider_id = rider.id
+            order.dispatched_at = datetime.utcnow()
+            eta = delivery_estimate(_address_point(order), order)
+            order.eta_from = delivery_eta.to_utc_naive(eta['earliest'])
+            order.eta_to = delivery_eta.to_utc_naive(eta['latest'])
+        if new_status == 'completed':
+            order.delivered_at = datetime.utcnow()
         # Cash on delivery is paid when the order is handed over.
         if new_status == 'completed' and order.payment_method == 'cod':
             order.payment_status = 'confirmed'
@@ -4394,13 +5099,49 @@ def admin_order_status(order_id):
                     txn.updated_at = datetime.utcnow()
         db.session.commit()
         msg = {'processing': f'Your order #{order.order_number} is being prepared.',
-               'completed': f'Your order #{order.order_number} has been completed.'}[new_status]
+               'out_for_delivery': (f'Your order #{order.order_number} is out for delivery with '
+                                    f'{rider.name if rider else "our rider"}. Estimated arrival: '
+                                    f'{delivery_eta.label_for(order.eta_from, order.eta_to)}.'),
+               'completed': f'Your order #{order.order_number} has been delivered.'}[new_status]
     create_notification(order.user_id, 'Order Update', msg, 'warning' if new_status == 'cancelled' else 'info',
                         role='customer')
     log_activity(session.get('user_id'), 'order_status', f'Order {order.order_number} -> {new_status}')
     flash(f'Order {order.order_number} marked {new_status}.', 'success')
     return redirect(url_for('admin_orders', status=request.args.get('filter', 'all')))
 
+
+@app.route('/admin/riders', methods=['POST'])
+@admin_required
+def admin_rider_create():
+    name = (request.form.get('name') or '').strip()
+    phone = (request.form.get('phone') or '').strip()
+    if not name or len(name) > 100:
+        flash('Rider name is required (100 characters at most).', 'danger')
+    elif phone and not re.fullmatch(r'[0-9+()\- ]{7,20}', phone):
+        flash('Enter a valid phone number for the rider.', 'danger')
+    else:
+        db.session.add(DeliveryRider(name=name, phone=phone or None, is_active=True, on_duty=True))
+        db.session.commit()
+        log_activity(session.get('user_id'), 'rider_create', f'Added delivery rider {name}')
+        flash(f'{name} added and on duty.', 'success')
+    return redirect(url_for('admin_orders'))
+
+@app.route('/admin/riders/<int:rider_id>/<action>', methods=['POST'])
+@admin_required
+def admin_rider_update(rider_id, action):
+    rider = DeliveryRider.query.get_or_404(rider_id)
+    if action == 'duty' and rider.is_active:
+        rider.on_duty = not rider.on_duty
+        done = 'is on duty' if rider.on_duty else 'is off duty'
+    elif action == 'active':
+        rider.is_active = not rider.is_active
+        rider.on_duty = rider.on_duty and rider.is_active
+        done = 'is active again' if rider.is_active else 'was removed from the rider list'
+    else:
+        abort(404)
+    db.session.commit()
+    flash(f'{rider.name} {done}.', 'success')
+    return redirect(url_for('admin_orders'))
 
 # ==================== ADMIN: PRODUCTS ====================
 
@@ -4441,7 +5182,15 @@ def _product_from_form(form):
     image_url = (form.get('image_url') or '').strip()
     if image_url and not (image_url.startswith('https://') or image_url.startswith('/static/')):
         return None, 'Image URL must start with https:// or /static/.'
+    sale_price = None
+    if (form.get('sale_price') or '').strip():
+        sale_price, err = _decimal_field(form.get('sale_price'), 'Sale price', minimum=0.01)
+        if err:
+            return None, err
+        if sale_price >= price:
+            return None, 'The sale price must be lower than the regular price (leave it empty for no sale).'
     return {
+        'sale_price': sale_price,
         'name': name,
         'description': (form.get('description') or '').strip()[:2000] or None,
         'price': price,
@@ -4644,7 +5393,8 @@ def admin_inquiry_status(inquiry_id):
 def admin_messages():
     conv = request.args.get('conv')
     conversations, selected, thread = _load_inbox(current_account(), _account_from_key(conv))
-    if not selected and conversations and not conv:
+    # ?list=1: just the list (narrow screens show one pane at a time).
+    if not selected and conversations and not conv and not request.args.get('list'):
         return redirect(url_for('admin_messages', conv=conversations[0]['key']))
     return render_template('admin/messages.html', conversations=conversations,
                            selected_conversation=selected, messages=thread)
@@ -4652,6 +5402,8 @@ def admin_messages():
 @app.route('/admin/messages/send', methods=['POST'])
 @admin_required
 def admin_message_send():
+    """Form post (new conversation by email) or a background send from the chat
+    (X-Requested-With: XMLHttpRequest -> JSON, like the customer chat)."""
     me = current_account()
     content = (request.form.get('content') or '').strip()
     recipient = None
@@ -4659,17 +5411,24 @@ def admin_message_send():
         recipient = _account_from_key(request.form['recipient_key'])
     elif request.form.get('recipient_email'):
         recipient = find_account_by_email(request.form['recipient_email'])
+
+    def fail(msg, code=400):
+        if wants_json():
+            return jsonify({'success': False, 'message': msg}), code
+        flash(msg, 'danger')
+        return redirect(url_for('admin_messages', conv=recipient.key) if recipient else url_for('admin_messages'))
+
     if not recipient or recipient.key == me.key:
-        flash('Recipient not found.', 'danger')
-        return redirect(url_for('admin_messages'))
+        recipient = None
+        return fail('Recipient not found.', 404)
     checked, file_error = check_message_attachment(request.files.get('attachment'))
     if file_error:
-        flash(file_error, 'danger')
-        return redirect(url_for('admin_messages', conv=recipient.key))
+        return fail(file_error)
     if (not content and not checked) or len(content) > MAX_MESSAGE_LENGTH:
-        flash(f'Write a message (up to {MAX_MESSAGE_LENGTH} characters) or attach a file.', 'danger')
-        return redirect(url_for('admin_messages', conv=recipient.key))
-    send_message(me, recipient, content, checked=checked)
+        return fail(f'Write a message (up to {MAX_MESSAGE_LENGTH} characters) or attach a file.')
+    _, attachment = send_message(me, recipient, content, checked=checked)
+    if wants_json():
+        return sent_message_json(attachment)
     return redirect(url_for('admin_messages', conv=recipient.key))
 
 @app.route('/admin/notifications')
@@ -4680,7 +5439,8 @@ def admin_notifications():
     unread_ids = {n.id for n in rows if not n.is_read}
     _notifications_for('admin', uid).filter_by(is_read=False).update({'is_read': True})
     db.session.commit()
-    return render_template('admin/notifications.html', rows=rows, unread_ids=unread_ids)
+    return render_template('admin/notifications.html', rows=rows, unread_ids=unread_ids,
+                           total=_notifications_for('admin', uid).count())
 
 @app.route('/admin/notifications/clear', methods=['POST'])
 @admin_required
@@ -4860,6 +5620,9 @@ def admin_refund_complete(refund_id):
     paid = Decimal(str(refund.transaction.amount))
     if amount is None or amount <= 0 or amount > paid:
         flash(f'The refunded amount must be more than ₱0 and at most ₱{paid:,.2f}.', 'danger')
+        return redirect(url_for('admin_refunds'))
+    if refund.order_id and amount != paid:
+        flash(f'A cancelled shop order is refunded in full: ₱{paid:,.2f}.', 'danger')
         return redirect(url_for('admin_refunds'))
 
     refund = _claim_refund(refund.id, 'refunded', amount=amount, method=method,
@@ -5287,36 +6050,72 @@ def admin_analytics():
                          returning_customers=returning_customers,
                          top_customers=top_customers)
     
+# Groups for one technician's jobs on the Technician Activity page.
+TECH_JOB_GROUPS = [
+    ('working', 'Working on now', ('diagnosis_pending', 'in_progress')),
+    ('not_started', 'Assigned, not started', ('confirmed',)),
+    ('on_hold', 'On hold (waiting for the customer)', ('on_hold',)),
+    ('ready', 'Ready for collection', ('completed',)),
+    ('released', 'Released (latest 20)', ('released',)),
+]
+
 @app.route('/admin/technician-activity')
 @admin_required
 def admin_technician_activity():
+    """Every technician's workload at a glance; ?tech=<id> narrows the page to
+    one technician: their jobs by stage, reports, incidents, requests, ratings."""
     from models.technician_models import IncidentReport, ServiceReport, ServiceRating, ApprovalRequest
     from blueprints.technician import incident_files
 
-    incidents = IncidentReport.query.order_by(IncidentReport.reported_at.desc()).limit(100).all()
-    approvals = ApprovalRequest.query.order_by((ApprovalRequest.status == 'pending').desc(),
-                                               ApprovalRequest.id.desc()).limit(50).all()
-    reports = ServiceReport.query.filter_by(status='submitted')\
-        .order_by(ServiceReport.submitted_at.desc()).limit(50).all()
-    ratings = ServiceRating.query.order_by(ServiceRating.submitted_at.desc()).limit(50).all()
+    selected = Technician.query.get_or_404(request.args.get('tech', type=int)) \
+        if request.args.get('tech') else None
+
+    # ---- roster: job counts per technician and stage ----
+    counts = {}
+    for tid, status, n in db.session.query(Booking.technician_id, Booking.status, func.count(Booking.id))\
+            .filter(Booking.technician_id.isnot(None)).group_by(Booking.technician_id, Booking.status):
+        counts.setdefault(tid, {})[status] = n
+    rated = {tid: (round(float(avg), 1), n) for tid, avg, n in
+             db.session.query(ServiceRating.technician_id, func.avg(ServiceRating.stars), func.count(ServiceRating.id))
+             .group_by(ServiceRating.technician_id)}
+    open_incidents = dict(db.session.query(IncidentReport.technician_id, func.count(IncidentReport.id))
+                          .filter(IncidentReport.status != 'resolved').group_by(IncidentReport.technician_id).all())
+    roster = []
+    for t in Technician.query.filter(~Technician.username.like('deleted-%'))\
+            .order_by(Technician.is_active.desc(), Technician.full_name).all():
+        c = counts.get(t.id, {})
+        row = {'tech': t, 'rating': rated.get(t.id, (None, 0)), 'open_incidents': open_incidents.get(t.id, 0)}
+        for key, _, statuses in TECH_JOB_GROUPS:
+            row[key] = sum(c.get(st, 0) for st in statuses)
+        row['assigned'] = row['working'] + row['not_started'] + row['on_hold'] + row['ready']
+        roster.append(row)
+    roster.sort(key=lambda r: (not r['tech'].is_active, -r['assigned'], r['tech'].full_name))
+
+    # ---- activity sections (all technicians, or the selected one) ----
+    def scoped(query, model):
+        return query.filter(model.technician_id == selected.id) if selected else query
+    incidents = scoped(IncidentReport.query, IncidentReport).order_by(IncidentReport.reported_at.desc()).limit(100).all()
+    approvals = scoped(ApprovalRequest.query, ApprovalRequest).order_by((ApprovalRequest.status == 'pending').desc(),
+                                                                          ApprovalRequest.id.desc()).limit(50).all()
+    report_q = scoped(ServiceReport.query, ServiceReport)
+    if not selected:
+        report_q = report_q.filter_by(status='submitted')        # one technician: drafts too
+    reports = report_q.order_by(ServiceReport.id.desc()).limit(50).all()
+    ratings = scoped(ServiceRating.query, ServiceRating).order_by(ServiceRating.submitted_at.desc()).limit(50).all()
+
+    job_groups = []
+    if selected:
+        for key, label, statuses in TECH_JOB_GROUPS:
+            jobs = Booking.query.filter(Booking.technician_id == selected.id, Booking.status.in_(statuses))\
+                .order_by(Booking.updated_at.desc()).limit(20 if key == 'released' else 200).all()
+            job_groups.append((key, label, jobs))
 
     tech_ids, customer_ids, bids = set(), set(), set()
-    for i in incidents:
-        tech_ids.add(i.technician_id)
-        if i.booking_id:
-            bids.add(i.booking_id)
-    for r in reports:
-        tech_ids.add(r.technician_id)
-        if r.booking_id:
-            bids.add(r.booking_id)
-    for r in ratings:
-        tech_ids.add(r.technician_id)
-        customer_ids.add(r.customer_id)
-        if r.booking_id:
-            bids.add(r.booking_id)
-    for a in approvals:
-        tech_ids.add(a.technician_id)
-        bids.add(a.booking_id)
+    for item in incidents + reports + ratings + approvals:
+        tech_ids.add(item.technician_id)
+        if item.booking_id:
+            bids.add(item.booking_id)
+    customer_ids.update(r.customer_id for r in ratings)
 
     technicians = {t.id: t for t in Technician.query.filter(Technician.id.in_(tech_ids)).all()} if tech_ids else {}
     customers = {c.id: c for c in Customer.query.filter(Customer.id.in_(customer_ids)).all()} if customer_ids else {}
@@ -5324,6 +6123,8 @@ def admin_technician_activity():
 
     return render_template(
         'admin/technician_activity.html',
+        roster=roster, selected=selected, job_groups=job_groups,
+        selected_row=next((r for r in roster if selected and r['tech'].id == selected.id), None),
         incidents=incidents, reports=reports, ratings=ratings, approvals=approvals,
         technicians=technicians, customers=customers, bookings=bookings,
         incident_files=incident_files([i.id for i in incidents])
@@ -5367,6 +6168,19 @@ def admin_incident_review(incident_id):
     flash('Incident updated.', 'success')
     return redirect(url_for('admin_technician_activity'))
 
+def _float_between(value, low, high):
+    try:
+        return low <= float(value) <= high
+    except ValueError:
+        return False
+
+def _valid_gcash_qr(value):
+    try:
+        gcash_qr.validate_payload(value)
+        return True
+    except gcash_qr.InvalidQrPayload:
+        return False
+
 # Settings the admin Settings page may write, with their validators.
 # Anything else in the request (including csrf_token) is ignored.
 EDITABLE_SETTINGS = {
@@ -5385,6 +6199,13 @@ EDITABLE_SETTINGS = {
     'contact_address':  lambda v: len(v) <= 200,
     'business_hours':   lambda v: len(v) <= 100,
     'gcash_name':       lambda v: len(v) <= 100,
+    # The shop's GCash QR as QR Ph text (the page decodes the uploaded QR image).
+    'gcash_qr_payload': lambda v: v == '' or _valid_gcash_qr(v),
+    # Where deliveries start from: used for distance and delivery estimates.
+    'shop_latitude':    lambda v: v == '' or _float_between(v, -90, 90),
+    'shop_longitude':   lambda v: v == '' or _float_between(v, -180, 180),
+    'shop_city':        lambda v: len(v) <= 50,
+    'shop_province':    lambda v: len(v) <= 50,
 }
 
 @app.route('/admin/settings')
@@ -5485,37 +6306,19 @@ def init_db():
         add_service_category_columns()
         add_profile_columns()
         add_workflow_columns()
+        add_technician_verification_columns()
+        add_booking_device_columns()
+        add_shop_delivery_columns()
         
         # No default admin is ever created here. Create one with
         # `flask --app app create-admin` (or /setup/first-admin with SETUP_TOKEN).
         if not Admin.query.first():
             print("No admin account exists yet. Create one with: flask --app app create-admin")
 
-        # Add service categories
+        # Service categories and services (services/service_catalog.py) for a new database.
         if ServiceCategory.query.count() == 0:
-            categories = [
-                ServiceCategory(name='Hardware Repair', description='Physical hardware issues and repairs', icon='fa-server'),
-                ServiceCategory(name='Software Fix', description='Software issues and optimization', icon='fa-code'),
-                ServiceCategory(name='Hardware Upgrade', description='Component upgrades and installation', icon='fa-microchip'),
-                ServiceCategory(name='Data Recovery', description='Recover lost or corrupted data', icon='fa-search-plus'),
-                ServiceCategory(name='Storage Upgrade', description='SSD and HDD upgrades', icon='fa-hdd'),
-                ServiceCategory(name='Accessory Replacement', description='Replace damaged accessories', icon='fa-plug')
-            ]
-            db.session.add_all(categories)
-            db.session.flush()
-            
-            services = [
-                Service(category_id=categories[0].id, name='Laptop Screen Replacement', description='Replace cracked or damaged laptop screen', price=3500.00, estimated_hours=2),
-                Service(category_id=categories[0].id, name='Battery Replacement', description='Replace faulty laptop or desktop battery', price=1800.00, estimated_hours=1),
-                Service(category_id=categories[1].id, name='Virus Removal', description='Remove viruses and malware', price=1500.00, estimated_hours=2),
-                Service(category_id=categories[1].id, name='System Optimization', description='Optimize system performance', price=1200.00, estimated_hours=1),
-                Service(category_id=categories[2].id, name='RAM Upgrade', description='Install new RAM modules', price=2500.00, estimated_hours=1),
-                Service(category_id=categories[2].id, name='SSD Installation', description='Install new SSD drive', price=3200.00, estimated_hours=2),
-                Service(category_id=categories[3].id, name='Data Recovery', description='Recover lost files from hard drives', price=5000.00, estimated_hours=3),
-                Service(category_id=categories[4].id, name='HDD to SSD Migration', description='Migrate data from HDD to SSD', price=3200.00, estimated_hours=2),
-                Service(category_id=categories[5].id, name='Charger Adapter Replacement', description='Replace faulty charger adapter', price=1200.00, estimated_hours=1)
-            ]
-            db.session.add_all(services)
+            from services.service_catalog import sync_service_catalog
+            sync_service_catalog(db, ServiceCategory, Service)
             print("Default services added successfully!")
         
         # No sample products: the shop's real inventory is added in Admin > Products.

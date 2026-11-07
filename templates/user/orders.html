@@ -20,7 +20,6 @@
     </div>
 </div>
 
-<!-- Flash Messages -->
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
         <div class="flash-messages">
@@ -37,67 +36,56 @@
 
 <!-- Filter Tabs -->
 <div class="usr-filter-tabs" style="display:flex; gap:0.5rem; margin-bottom:1.5rem; flex-wrap:wrap;">
-    <a href="{{ url_for('user_orders', status='all') }}" class="usr-filter-tab {% if status_filter == 'all' %}active{% endif %}">
-        All <span class="badge">{{ status_counts.all }}</span>
+    {% for key in ['all', 'pending', 'processing', 'out_for_delivery', 'completed', 'cancelled'] %}
+    <a href="{{ url_for('user_orders', status=key) }}" class="usr-filter-tab {% if status_filter == key %}active{% endif %}">
+        {{ 'All' if key == 'all' else status_labels[key] }} <span class="badge">{{ status_counts.get(key, 0) }}</span>
     </a>
-    <a href="{{ url_for('user_orders', status='pending') }}" class="usr-filter-tab {% if status_filter == 'pending' %}active{% endif %}">
-        Pending <span class="badge">{{ status_counts.pending }}</span>
-    </a>
-    <a href="{{ url_for('user_orders', status='processing') }}" class="usr-filter-tab {% if status_filter == 'processing' %}active{% endif %}">
-        Processing <span class="badge">{{ status_counts.processing }}</span>
-    </a>
-    <a href="{{ url_for('user_orders', status='completed') }}" class="usr-filter-tab {% if status_filter == 'completed' %}active{% endif %}">
-        Completed <span class="badge">{{ status_counts.completed }}</span>
-    </a>
-    <a href="{{ url_for('user_orders', status='cancelled') }}" class="usr-filter-tab {% if status_filter == 'cancelled' %}active{% endif %}">
-        Cancelled <span class="badge">{{ status_counts.cancelled }}</span>
-    </a>
+    {% endfor %}
 </div>
 
 {% if orders %}
-<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:1.5rem;">
+<div class="ord-grid">
     {% for order in orders %}
-    <div class="user-product-card" style="cursor:default;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.6rem;">
+    <article class="user-product-card ord-card" data-order-id="{{ order.id }}" data-order-number="{{ order.order_number }}">
+        <div class="ord-card-head">
             <div>
-                <h4 style="margin:0; color:var(--user-text-primary);">{{ order.order_number }}</h4>
-                <span style="font-size:0.8rem; color:var(--user-text-muted);">
-                    <i class="fas fa-calendar"></i> {{ order.created_at.strftime('%b %d, %Y') if order.created_at else 'N/A' }}
-                </span>
+                <h4>{{ order.order_number }}</h4>
+                <span class="ord-muted"><i class="fas fa-calendar"></i> {{ order.created_at.strftime('%b %d, %Y') if order.created_at else 'N/A' }}</span>
             </div>
-            <span class="user-status-badge {{ order.status }}">{{ order.status|title }}</span>
+            <span class="ord-status ord-status--{{ order.status }}">{{ status_labels.get(order.status, order.status|title) }}</span>
         </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin:0.6rem 0;">
-            <span style="font-size:1.2rem; font-weight:700; color:var(--user-primary);">₱{{ "%.2f"|format(order.total_amount) }}</span>
-            <span style="font-size:0.85rem; color:var(--user-text-muted);">{{ order.items|length }} item{{ 's' if order.items|length != 1 else '' }}</span>
+        <div class="ord-card-total">
+            <span class="ord-amount">₱{{ "{:,.2f}".format(order.total_amount) }}</span>
+            <span class="ord-muted">{{ order.items|length }} item{{ 's' if order.items|length != 1 else '' }}</span>
         </div>
 
-        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.8rem;">
+        <div class="ord-card-tags">
             <span class="user-payment-badge {{ order.payment_status }}">
                 {% if order.payment_method == 'gcash' %}<i class="fas fa-mobile-alt"></i> GCash{% elif order.payment_method == 'cod' %}<i class="fas fa-money-bill-wave"></i> COD{% else %}No Payment{% endif %}
                 &middot; {{ order.payment_status|title }}
             </span>
         </div>
 
-        <div style="display:flex; gap:0.5rem;">
-            <button class="user-action-btn-sm view-btn" style="flex:1; justify-content:center;" onclick="viewOrderDetails({{ order.id }})">
-                <i class="fas fa-eye"></i> View Details
+        {% if etas.get(order.id) %}
+        <p class="ord-eta"><i class="fas fa-truck-fast" aria-hidden="true"></i> <span>Arrives <strong>{{ etas[order.id] }}</strong></span></p>
+        {% elif order.status == 'completed' and order.delivered_at %}
+        <p class="ord-eta ord-eta--done"><i class="fas fa-circle-check" aria-hidden="true"></i> <span>Delivered {{ order.delivered_at.strftime('%b %d') }}</span></p>
+        {% endif %}
+
+        <div class="ord-card-actions">
+            <button type="button" class="user-action-btn-sm view-btn" onclick="viewOrderDetails({{ order.id }})">
+                <i class="fas fa-location-crosshairs"></i> View details &amp; track
             </button>
-            {% if order.status in ['pending', 'processing'] %}
-            <button class="user-action-btn-sm cancel-btn" style="flex:1; justify-content:center;" onclick="cancelOrder({{ order.id }}, '{{ order.order_number }}')">
-                <i class="fas fa-times"></i> Cancel
-            </button>
-            {% endif %}
         </div>
-    </div>
+    </article>
     {% endfor %}
 </div>
 {% else %}
 <div class="user-empty-state">
     <i class="fas fa-box-open" style="font-size:3rem; opacity:0.3;"></i>
     <h3>No Orders Found</h3>
-    <p>{% if status_filter != 'all' %}You don't have any {{ status_filter }} orders.{% else %}You haven't placed any orders yet.{% endif %}</p>
+    <p>{% if status_filter != 'all' %}You don't have any {{ status_labels.get(status_filter, status_filter)|lower }} orders.{% else %}You haven't placed any orders yet.{% endif %}</p>
     <a href="{{ url_for('user_shop') }}" class="user-btn-primary" style="margin-top:1rem;">
         <i class="fas fa-store"></i> Browse the Shop
     </a>
@@ -106,196 +94,300 @@
 
 <!-- Order Details Modal -->
 <div class="user-modal" id="orderDetailsModal">
-    <div class="user-modal-content" style="max-width: 620px;">
+    <div class="user-modal-content ord-modal" role="dialog" aria-modal="true" aria-labelledby="orderDetailsTitle">
         <div class="user-modal-header">
-            <h2><i class="fas fa-file-invoice"></i> Order Details</h2>
-            <button class="user-modal-close" onclick="closeOrderDetailsModal()">&times;</button>
+            <h2 id="orderDetailsTitle"><i class="fas fa-file-invoice"></i> <span>Order Details</span></h2>
+            <button type="button" class="user-modal-close" onclick="closeOrderDetailsModal()" aria-label="Close">&times;</button>
         </div>
-        <div class="user-modal-body" id="orderDetailsBody">
-            <div class="booking-detail-loading">
-                <i class="fas fa-spinner fa-spin"></i>
-                <p>Loading order details...</p>
-            </div>
-        </div>
-        <div class="user-modal-footer">
-            <button class="user-btn-secondary" onclick="closeOrderDetailsModal()">Close</button>
+        <div class="user-modal-body" id="orderDetailsBody" aria-live="polite"></div>
+        <div class="user-modal-footer" id="orderDetailsFooter">
+            <button type="button" class="user-btn-secondary" onclick="closeOrderDetailsModal()">Close</button>
         </div>
     </div>
 </div>
 
-<!-- Toast Container -->
+<!-- Cancel Order Dialog -->
+<div class="user-modal" id="cancelOrderModal">
+    <div class="user-modal-content" style="max-width:460px;" role="dialog" aria-modal="true" aria-labelledby="cancelTitle">
+        <div class="user-modal-header">
+            <h2 id="cancelTitle"><i class="fas fa-ban"></i> Cancel order <span id="cancelOrderNumber"></span>?</h2>
+            <button type="button" class="user-modal-close" onclick="closeCancelModal()" aria-label="Close">&times;</button>
+        </div>
+        <div class="user-modal-body">
+            <p class="ord-cancel-text">Your items go back on the shelf and the order stops here. This cannot be undone.</p>
+            <div class="ord-refund-box" id="cancelRefundBox" hidden>
+                <p><i class="fas fa-rotate-left" aria-hidden="true"></i>
+                    You paid <strong id="cancelRefundAmount"></strong> by GCash. We will refund the <strong>full amount</strong>.</p>
+                <label for="cancelRefundTo">GCash number for your refund</label>
+                <input type="tel" id="cancelRefundTo" inputmode="tel" maxlength="16" placeholder="09XXXXXXXXX" autocomplete="tel">
+                <small>Our team sends it after confirming your payment was received. You can follow it in this order's details.</small>
+            </div>
+            <p class="ord-form-error" id="cancelError" role="alert" hidden></p>
+        </div>
+        <div class="user-modal-footer">
+            <button type="button" class="user-btn-secondary" onclick="closeCancelModal()">Keep order</button>
+            <button type="button" class="user-btn-danger" id="cancelConfirmBtn" onclick="confirmCancelOrder()">
+                <i class="fas fa-times"></i> Cancel order
+            </button>
+        </div>
+    </div>
+</div>
+
 <div id="toastContainer"></div>
 
 <script>
-    function showUserToast(message, type = 'info', duration = 4000) {
-        let container = document.getElementById('toastContainer');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'toastContainer';
-            container.style.cssText = `
-                position: fixed; top: 20px; right: 20px; z-index: 10000;
-                display: flex; flex-direction: column; gap: 10px;
-                max-width: 400px; width: 100%; pointer-events: none;
-            `;
-            document.body.appendChild(container);
-        }
+(function () {
+    'use strict';
+    const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    const modal = document.getElementById('orderDetailsModal');
+    const body = document.getElementById('orderDetailsBody');
+    const footer = document.getElementById('orderDetailsFooter');
+    let loadToken = 0;           // only the latest request may fill the modal
+    let controller = null;
+    let currentOrder = null;
 
-        const colors = { success: '#22c55e', error: '#ef4444', warning: '#f59e0b', info: '#2563eb' };
-        const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
-
-        const toast = document.createElement('div');
-        toast.style.cssText = `
-            pointer-events: auto; background: var(--user-card); padding: 12px 20px;
-            border-radius: 12px; border-left: 4px solid ${colors[type] || '#2563eb'};
-            box-shadow: 0 10px 40px rgba(0,0,0,0.15); display: flex; align-items: center;
-            gap: 12px; font-size: 0.9rem; font-weight: 500; color: var(--user-text-primary);
-            transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            width: 100%;
-        `;
-        toast.innerHTML = `
-            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color:${colors[type] || '#2563eb'}; font-size:1.2rem;"></i>
-            <span style="flex:1;">${message}</span>
-            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
-        `;
-        container.appendChild(toast);
-        requestAnimationFrame(() => { toast.style.transform = 'translateX(0)'; });
-        setTimeout(() => {
-            toast.style.transform = 'translateX(120%)';
-            setTimeout(() => { if (toast.parentElement) toast.remove(); }, 400);
-        }, duration);
+    function toast(message, type) {
+        const box = document.getElementById('toastContainer');
+        const t = document.createElement('div');
+        t.className = 'shop-toast';
+        t.style.borderLeftColor = {success: '#22c55e', error: '#ef4444', info: '#2563eb'}[type] || '#2563eb';
+        t.setAttribute('role', type === 'error' ? 'alert' : 'status');
+        const span = document.createElement('span');
+        span.textContent = message;
+        t.append(span);
+        box.append(t);
+        requestAnimationFrame(() => t.classList.add('show'));
+        setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 350); }, 5000);
     }
 
-    function viewOrderDetails(orderId) {
-        const modal = document.getElementById('orderDetailsModal');
-        const body = document.getElementById('orderDetailsBody');
-        body.innerHTML = `
-            <div class="booking-detail-loading">
-                <i class="fas fa-spinner fa-spin"></i>
-                <p>Loading order details...</p>
-            </div>
-        `;
-        modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
+    function skeleton() {
+        return `<div class="ord-skel" aria-label="Loading order details">
+            <span class="shop-skeleton" style="width:55%;height:1.2rem;"></span>
+            <span class="shop-skeleton" style="width:100%;height:4.5rem;border-radius:12px;"></span>
+            <div class="ord-skel-steps">${'<span class="shop-skeleton" style="width:100%;height:2.1rem;"></span>'.repeat(4)}</div>
+            <span class="shop-skeleton" style="width:100%;height:6rem;border-radius:12px;"></span>
+        </div>`;
+    }
 
-        fetch(`/api/order/${orderId}`)
-            .then(response => {
-                if (!response.ok) throw new Error('Failed to load order');
-                return response.json();
+    function openModal(el) {
+        el.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+    function closeModal(el) {
+        el.classList.remove('active');
+        if (!document.querySelector('.user-modal.active')) document.body.style.overflow = '';
+    }
+
+    function setFooter(order) {
+        footer.innerHTML = '';
+        if (order && order.can_cancel) {
+            const c = document.createElement('button');
+            c.type = 'button';
+            c.className = 'user-btn-danger';
+            c.innerHTML = '<i class="fas fa-times"></i> Cancel this order';
+            c.addEventListener('click', () => openCancelModal(order));
+            footer.append(c);
+        }
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'user-btn-secondary';
+        close.textContent = 'Close';
+        close.addEventListener('click', closeOrderDetailsModal);
+        footer.append(close);
+    }
+
+    function render(o) {
+        const a = o.address || {};
+        const payLabel = o.payment_method === 'gcash' ? 'GCash' : (o.payment_method === 'cod' ? 'Cash on delivery' : 'Not set');
+        const steps = (o.tracking || []).map((st, i, all) => {
+            const current = !st.done && (i === 0 || all[i - 1].done) && o.status !== 'cancelled';
+            const cls = st.problem ? 'is-problem' : (st.done ? 'is-done' : (current ? 'is-current' : ''));
+            const icon = st.problem ? 'fa-xmark' : (st.done ? 'fa-check' : (current ? 'fa-circle-dot' : 'fa-circle'));
+            return `<li class="ord-step ${cls}"><span class="ord-step-dot"><i class="fas ${icon}"></i></span>
+                <span class="ord-step-text"><strong>${esc(st.label)}</strong>${st.at ? `<small>${esc(st.at)}</small>` : (current ? '<small>In progress</small>' : '')}</span></li>`;
+        }).join('');
+
+        let etaHtml = '';
+        if (o.eta) {
+            etaHtml = `<div class="shop-eta ord-eta-box"><i class="fas fa-truck-fast" aria-hidden="true"></i><div>
+                <span class="shop-eta-title">${o.status === 'out_for_delivery' ? 'Arriving' : 'Estimated delivery'}</span>
+                <strong>${esc(o.eta.label)}</strong>
+                <small>${esc(o.eta.note || (o.eta.distance_km ? `About ${o.eta.distance_km} km from our shop.` : ''))}</small></div></div>`;
+        } else if (o.status === 'completed') {
+            etaHtml = `<div class="shop-eta ord-eta-box ord-eta-box--done"><i class="fas fa-circle-check" aria-hidden="true"></i><div>
+                <span class="shop-eta-title">Delivered</span><strong>${esc(o.delivered_at || 'Completed')}</strong></div></div>`;
+        }
+        const rider = o.rider ? `<p class="ord-rider"><i class="fas fa-motorcycle" aria-hidden="true"></i>
+            Rider: <strong>${esc(o.rider.name)}</strong>${o.rider.phone ? ` · <a href="tel:${esc(o.rider.phone)}">${esc(o.rider.phone)}</a>` : ''}</p>` : '';
+
+        const items = (o.items || []).map(it => `<tr><td>${esc(it.product_name)}</td><td class="c">${Number(it.quantity)}</td>
+            <td class="r">${peso(it.price)}</td><td class="r b">${peso(it.subtotal)}</td></tr>`).join('');
+
+        const p = o.payment || {};
+        let payExtra = '';
+        if (p.proof_url) payExtra += `<a href="${esc(p.proof_url)}" target="_blank" rel="noopener"><i class="fas fa-image"></i> View your payment screenshot</a>`;
+        if (p.rejection_reason) payExtra += `<p class="ord-warn"><i class="fas fa-triangle-exclamation"></i> Screenshot rejected: ${esc(p.rejection_reason)}.
+            Upload a new one on your <a href="{{ url_for('user_transactions') }}">Transactions</a> page.</p>`;
+
+        const refunds = (o.refunds || []).map(r => {
+            const state = {pending: 'Being processed', refunded: 'Refunded', declined: 'Declined'}[r.status] || r.status;
+            const detail = r.status === 'refunded'
+                ? `Sent via ${esc(r.method)}${r.reference ? ` · ref ${esc(r.reference)}` : ''}${r.processed_at ? ` · ${esc(r.processed_at)}` : ''}`
+                : (r.status === 'declined' ? esc(r.note) : `To GCash ${esc(r.payout_account || 'on file')} · opened ${esc(r.created_at)}`);
+            return `<div class="ord-refund ord-refund--${esc(r.status)}"><i class="fas fa-rotate-left" aria-hidden="true"></i>
+                <div><strong>Refund ${peso(r.amount)} · ${esc(state)}</strong><small>${detail}</small></div></div>`;
+        }).join('');
+
+        const address = (a.address_line || a.city) ? `${a.recipient_name ? esc(a.recipient_name) + ' · ' : ''}${a.recipient_phone ? esc(a.recipient_phone) : ''}<br>
+            ${esc([a.address_line, a.city, a.province, a.postal_code].filter(Boolean).join(', '))}
+            ${a.has_pin ? `<br><a href="${esc(a.map_url)}" target="_blank" rel="noopener"><i class="fas fa-map-marker-alt"></i> Pinned location</a>` : ''}`
+            : esc(o.shipping_address || '—');
+
+        document.querySelector('#orderDetailsTitle span').textContent = o.order_number;
+        body.innerHTML = `
+            <div class="ord-detail-head">
+                <span class="ord-status ord-status--${esc(o.status)}">${esc(o.status_label)}</span>
+                <span class="ord-muted">Placed ${esc((o.tracking[0] || {}).at || o.created_at)}</span>
+            </div>
+            ${etaHtml}${rider}
+            <h3 class="ord-section">Tracking</h3>
+            <ol class="ord-steps">${steps}</ol>
+            ${refunds ? `<h3 class="ord-section">Refund</h3>${refunds}` : ''}
+            <h3 class="ord-section">Items</h3>
+            <div class="ord-table-wrap"><table class="user-table ord-table">
+                <thead><tr><th>Product</th><th class="c">Qty</th><th class="r">Price</th><th class="r">Subtotal</th></tr></thead>
+                <tbody>${items}</tbody>
+                <tfoot><tr><td colspan="3" class="r b">Total</td><td class="r b ord-total">${peso(o.total_amount)}</td></tr></tfoot>
+            </table></div>
+            <div class="ord-info-grid">
+                <div><h3 class="ord-section">Payment</h3><p>${esc(payLabel)} · <span class="ord-cap">${esc(o.payment_status)}</span></p>${payExtra}</div>
+                <div><h3 class="ord-section">Delivery address</h3><p>${address}</p></div>
+            </div>
+            ${o.cancel_blocked_reason ? `<p class="ord-muted ord-note"><i class="fas fa-circle-info"></i> ${esc(o.cancel_blocked_reason)}</p>` : ''}`;
+        setFooter(o);
+    }
+
+    function showError(orderId, message) {
+        body.innerHTML = `<div class="ord-error"><i class="fas fa-wifi" aria-hidden="true"></i>
+            <p>${esc(message)}</p><button type="button" class="user-btn-primary" id="orderRetryBtn"><i class="fas fa-rotate-right"></i> Try again</button></div>`;
+        document.getElementById('orderRetryBtn').addEventListener('click', () => viewOrderDetails(orderId));
+        setFooter(null);
+    }
+
+    window.viewOrderDetails = function (orderId) {
+        const token = ++loadToken;
+        if (controller) controller.abort();
+        controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        currentOrder = null;
+        document.querySelector('#orderDetailsTitle span').textContent = 'Order Details';
+        body.innerHTML = skeleton();
+        setFooter(null);
+        openModal(modal);
+
+        fetch(`/api/order/${orderId}`, {signal: controller.signal, headers: {'Accept': 'application/json'}})
+            .then(r => {
+                if (r.status === 401 || r.redirected) throw new Error('Your session has ended. Please sign in again.');
+                if (!r.ok) throw new Error('We could not load this order.');
+                return r.json();
             })
             .then(order => {
-                const itemsHtml = order.items.map(item => `
-                    <tr>
-                        <td>${item.product_name}</td>
-                        <td style="text-align:center;">${item.quantity}</td>
-                        <td style="text-align:right;">₱${item.price.toFixed(2)}</td>
-                        <td style="text-align:right; font-weight:600;">₱${item.subtotal.toFixed(2)}</td>
-                    </tr>
-                `).join('');
-
-                const paymentLabel = order.payment_method === 'gcash' ? 'GCash' : (order.payment_method === 'cod' ? 'Cash on Delivery' : 'Not set');
-
-                const addr = order.address || {};
-                const hasStructuredAddress = addr.address_line || addr.city;
-                const addressHtml = hasStructuredAddress ? `
-                    <div style="grid-column:1 / -1;">
-                        <span style="font-size:0.8rem; color:var(--user-text-muted);">Delivery Address</span>
-                        <p style="font-weight:600; margin:0.2rem 0;">
-                            ${addr.recipient_name ? addr.recipient_name + ' &middot; ' : ''}${addr.recipient_phone ? addr.recipient_phone + '<br>' : ''}
-                            ${[addr.address_line, addr.city, addr.province, addr.postal_code].filter(Boolean).join(', ')}
-                        </p>
-                        ${addr.has_pin ? `<a href="${addr.map_url}" target="_blank" rel="noopener" style="font-size:0.82rem;"><i class="fas fa-map-marker-alt"></i> View pinned location on map</a>` : ''}
-                    </div>
-                ` : (order.shipping_address ? `
-                    <div style="grid-column:1 / -1;">
-                        <span style="font-size:0.8rem; color:var(--user-text-muted);">Delivery Address</span>
-                        <p style="font-weight:600; margin:0.2rem 0;">${order.shipping_address}</p>
-                    </div>
-                ` : '');
-
-                body.innerHTML = `
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1.2rem;">
-                        <div>
-                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Order Number</span>
-                            <p style="font-weight:600; margin:0.2rem 0;">${order.order_number}</p>
-                        </div>
-                        <div>
-                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Date Placed</span>
-                            <p style="font-weight:600; margin:0.2rem 0;">${order.created_at}</p>
-                        </div>
-                        <div>
-                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Status</span>
-                            <p style="font-weight:600; margin:0.2rem 0; text-transform:capitalize;">${order.status}</p>
-                        </div>
-                        <div>
-                            <span style="font-size:0.8rem; color:var(--user-text-muted);">Payment</span>
-                            <p style="font-weight:600; margin:0.2rem 0;">${paymentLabel} &middot; <span style="text-transform:capitalize;">${order.payment_status}</span></p>
-                        </div>
-                        ${addressHtml}
-                    </div>
-                    <table class="user-table" style="width:100%;">
-                        <thead>
-                            <tr>
-                                <th>Product</th>
-                                <th style="text-align:center;">Qty</th>
-                                <th style="text-align:right;">Price</th>
-                                <th style="text-align:right;">Subtotal</th>
-                            </tr>
-                        </thead>
-                        <tbody>${itemsHtml}</tbody>
-                        <tfoot>
-                            <tr>
-                                <td colspan="3" style="text-align:right; font-weight:700; padding-top:0.6rem;">Total</td>
-                                <td style="text-align:right; font-weight:700; color:var(--user-primary); padding-top:0.6rem;">₱${order.total_amount.toFixed(2)}</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                    ${order.can_cancel ? `
-                    <div style="margin-top:1.2rem; text-align:right;">
-                        <button class="user-btn-danger" onclick="closeOrderDetailsModal(); cancelOrder(${order.id}, '${order.order_number}');">
-                            <i class="fas fa-times"></i> Cancel This Order
-                        </button>
-                    </div>` : ''}
-                `;
+                if (token !== loadToken) return;
+                currentOrder = order;
+                render(order);
             })
-            .catch(() => {
-                body.innerHTML = `<p style="color:var(--danger); text-align:center; padding:2rem;">Could not load order details. Please try again.</p>`;
-            });
+            .catch(err => {
+                if (token !== loadToken) return;
+                showError(orderId, err.name === 'AbortError' ? 'This is taking too long. Check your connection.' : err.message);
+            })
+            .finally(() => clearTimeout(timer));
+    };
+
+    window.closeOrderDetailsModal = function () {
+        loadToken++;
+        if (controller) controller.abort();
+        closeModal(modal);
+    };
+
+    // ---------------- cancel ----------------
+    const cancelModal = document.getElementById('cancelOrderModal');
+    let cancelling = null;
+
+    function openCancelModal(order) {
+        cancelling = order;
+        document.getElementById('cancelOrderNumber').textContent = order.order_number;
+        const needsRefund = order.refund_on_cancel > 0;
+        document.getElementById('cancelRefundBox').hidden = !needsRefund;
+        document.getElementById('cancelRefundAmount').textContent = peso(order.refund_on_cancel);
+        const input = document.getElementById('cancelRefundTo');
+        input.value = needsRefund ? (order.refund_to_suggestion || '') : '';
+        document.getElementById('cancelError').hidden = true;
+        const btn = document.getElementById('cancelConfirmBtn');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-times"></i> Cancel order';
+        openModal(cancelModal);
+        (needsRefund ? input : btn).focus();
     }
 
-    function closeOrderDetailsModal() {
-        document.getElementById('orderDetailsModal').classList.remove('active');
-        document.body.style.overflow = '';
-    }
+    window.closeCancelModal = function () { closeModal(cancelModal); cancelling = null; };
 
-    function cancelOrder(orderId, orderNumber) {
-        if (!confirm(`Cancel order ${orderNumber}? This cannot be undone.`)) return;
-
-        fetch(`/api/order/${orderId}/cancel`, {
+    window.confirmCancelOrder = function () {
+        if (!cancelling) return;
+        const err = document.getElementById('cancelError');
+        const refundTo = document.getElementById('cancelRefundTo').value.replace(/[\s-]/g, '');
+        if (cancelling.refund_on_cancel > 0 && !/^(09\d{9}|\+639\d{9})$/.test(refundTo)) {
+            err.textContent = 'Enter a GCash number like 09171234567 so we know where to send your refund.';
+            err.hidden = false;
+            return;
+        }
+        const btn = document.getElementById('cancelConfirmBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cancelling…';
+        const order = cancelling;
+        fetch(`/api/order/${order.id}/cancel`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({refund_to: refundTo})
         })
-        .then(response => response.json())
+        .then(r => r.json().catch(() => ({success: false, message: 'Something went wrong. Please try again.'})))
         .then(data => {
-            if (data.success) {
-                showUserToast(data.message || 'Order cancelled', 'success');
-                setTimeout(() => location.reload(), 1200);
-            } else {
-                showUserToast(data.message || 'Failed to cancel order', 'error');
-            }
+            if (!data.success) throw new Error(data.message || 'Could not cancel the order.');
+            closeCancelModal();
+            toast(data.message, 'success');
+            viewOrderDetails(order.id);                 // show the cancelled order and its refund
+            modal.dataset.reloadOnClose = '1';
         })
-        .catch(() => showUserToast('An error occurred while cancelling', 'error'));
+        .catch(e => {
+            err.textContent = e.message;
+            err.hidden = false;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-times"></i> Cancel order';
+        });
+    };
+
+    // ---------------- page events ----------------
+    const reloadIfChanged = () => { if (modal.dataset.reloadOnClose) location.reload(); };
+    modal.addEventListener('click', e => { if (e.target === modal) { closeOrderDetailsModal(); reloadIfChanged(); } });
+    cancelModal.addEventListener('click', e => { if (e.target === cancelModal) closeCancelModal(); });
+    footer.addEventListener('click', e => {
+        if (e.target.closest('.user-btn-secondary')) reloadIfChanged();
+    });
+    document.querySelector('#orderDetailsModal .user-modal-close').addEventListener('click', reloadIfChanged);
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        if (cancelModal.classList.contains('active')) closeCancelModal();
+        else if (modal.classList.contains('active')) { closeOrderDetailsModal(); reloadIfChanged(); }
+    });
+    document.querySelectorAll('.flash-close').forEach(b => b.addEventListener('click', function () { this.parentElement.remove(); }));
+
+    // Just placed an order in the shop: open it straight away.
+    const placed = new URLSearchParams(location.search).get('placed');
+    if (placed) {
+        const card = document.querySelector(`.ord-card[data-order-number="${CSS.escape(placed)}"]`);
+        if (card) viewOrderDetails(card.dataset.orderId);
+        history.replaceState(null, '', location.pathname + location.search.replace(/([?&])placed=[^&]*&?/, '$1').replace(/[?&]$/, ''));
     }
-
-    document.getElementById('orderDetailsModal').addEventListener('click', function(e) {
-        if (e.target === this) closeOrderDetailsModal();
-    });
-
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') closeOrderDetailsModal();
-    });
-
-    document.querySelectorAll('.flash-close').forEach(btn => {
-        btn.addEventListener('click', function() { this.parentElement.remove(); });
-    });
+})();
 </script>
 {% endblock %}

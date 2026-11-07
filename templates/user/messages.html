@@ -1,20 +1,18 @@
 {% extends "base/user_base.html" %}
+{% from 'partials/avatar.html' import avatar %}
 
 {% block title %}Messages{% endblock %}
 
 {% block content %}
 <!-- Top Bar -->
-<div class="user-top-bar">
+<div class="user-top-bar msgr-top-bar">
     <div class="user-page-title">
         <h1>Messages</h1>
-        <p>Communicate with our support team</p>
+        <p>Chat with our team and your technician</p>
     </div>
     <div class="user-top-actions">
         <button class="user-btn-primary" onclick="openNewMessage()" style="font-size:0.8rem; padding:0.4rem 1rem;">
-            <i class="fas fa-plus"></i> New Message
-        </button>
-        <button class="user-icon-btn" onclick="window.location.reload()">
-            <i class="fas fa-sync-alt"></i>
+            <i class="fas fa-pen-to-square"></i> New Message
         </button>
     </div>
 </div>
@@ -34,42 +32,42 @@
     {% endif %}
 {% endwith %}
 
-<!-- Messages Layout -->
-<div class="user-messages-layout">
-    <!-- Sidebar - Conversation List -->
-    <div class="user-messages-sidebar">
+<!-- Messages Layout: one fixed-height frame; only the list and the thread scroll -->
+<div class="user-messages-layout msgr {% if selected_conversation %}has-thread{% endif %}">
+    <!-- Conversation list -->
+    <aside class="user-messages-sidebar" aria-label="Conversations">
         <div class="user-messages-search">
             <div class="user-search-box">
                 <i class="fas fa-search"></i>
-                <input type="text" placeholder="Search conversations..." onkeyup="searchConversations(this.value)">
+                <input type="text" placeholder="Search Messages" aria-label="Search conversations"
+                       onkeyup="searchConversations(this.value)">
             </div>
         </div>
 
         <div class="user-conversation-list" id="conversationList" data-live-region="list">
             {% if conversations %}
                 {% for conv in conversations %}
-                <div class="user-conversation-item {% if conv.is_active %}active{% endif %}" 
-                     data-search="{{ conv.name }} {{ conv.last_message }}" 
-                     onclick="selectConversation('{{ conv.key }}')">
-                    <div class="user-conversation-avatar">
-                        <i class="fas fa-user-circle"></i>
-                        {% if conv.unread_count > 0 %}
-                            <span class="user-unread-dot"></span>
-                        {% endif %}
-                    </div>
-                    <div class="user-conversation-info">
-                        <div class="user-conversation-header">
+                <a class="user-conversation-item {% if conv.is_active %}active{% endif %} {% if conv.unread_count > 0 %}is-unread{% endif %}"
+                   href="{{ url_for('messages', conv=conv.key) }}"
+                   data-search="{{ conv.name }} {{ conv.last_message }}"
+                   {% if conv.is_active %}aria-current="true"{% endif %}>
+                    <span class="msgr-avatar-wrap">
+                        {{ avatar(conv.account, 'md') }}
+                        {% if conv.is_online %}<span class="msgr-online-dot" title="Active now"></span>{% endif %}
+                    </span>
+                    <span class="user-conversation-info">
+                        <span class="user-conversation-header">
                             <span class="user-conversation-name">{{ conv.name }}</span>
-                            <span class="user-conversation-time">{{ conv.last_time.strftime('%I:%M %p') if conv.last_time else '' }}</span>
-                        </div>
-                        <div class="user-conversation-preview">
-                            <span class="user-conversation-last">{{ conv.last_message|truncate(40) }}</span>
+                            <span class="user-conversation-time" data-ts="{{ conv.last_time.isoformat() }}Z">{{ conv.last_time.strftime('%b %d') if conv.last_time else '' }}</span>
+                        </span>
+                        <span class="user-conversation-preview">
+                            <span class="user-conversation-last">{% if conv.last_from_me %}You: {% endif %}{{ conv.last_message|truncate(48) }}</span>
                             {% if conv.unread_count > 0 %}
-                                <span class="user-unread-badge">{{ conv.unread_count }}</span>
+                                <span class="user-unread-badge" aria-label="{{ conv.unread_count }} unread">{{ conv.unread_count }}</span>
                             {% endif %}
-                        </div>
-                    </div>
-                </div>
+                        </span>
+                    </span>
+                </a>
                 {% endfor %}
             {% else %}
                 <div class="user-empty-state" style="padding:2rem 1rem;">
@@ -79,90 +77,86 @@
                 </div>
             {% endif %}
         </div>
-    </div>
+    </aside>
 
-    <!-- Main - Chat Area -->
-    <div class="user-messages-main">
+    <!-- Thread -->
+    <section class="user-messages-main" aria-label="Conversation">
         {% if selected_conversation %}
-            <!-- Chat Header -->
+            {% set them = selected_conversation.account %}
             <div class="user-chat-header">
+                <a class="msgr-back" href="{{ url_for('messages', list=1) }}" aria-label="Back to all chats">
+                    <i class="fas fa-arrow-left"></i>
+                </a>
                 <div class="user-chat-header-info" id="chatHeaderInfo" data-live-region="header">
-                    <div class="user-chat-avatar">
-                        <i class="fas fa-user-circle"></i>
-                    </div>
-                    <div>
+                    <span class="msgr-avatar-wrap">
+                        {{ avatar(them, 'sm') }}
+                        {% if selected_conversation.is_online %}<span class="msgr-online-dot"></span>{% endif %}
+                    </span>
+                    <div class="msgr-head-text">
                         <h4 class="user-chat-name">{{ selected_conversation.name }}</h4>
                         <span class="user-chat-status {% if selected_conversation.is_online %}online{% endif %}">
-                            {% if selected_conversation.is_online %}
-                                <i class="fas fa-circle"></i> Online
-                            {% else %}
-                                <i class="fas fa-circle"></i> Offline
-                            {% endif %}
+                            {% if selected_conversation.is_online %}Active now{% else %}Offline{% endif %}
+                            · {{ {'admin': 'DEVTech Support', 'technician': 'Technician', 'customer': 'Customer'}.get(selected_conversation.role, '') }}
                         </span>
                     </div>
                 </div>
-                <div class="user-chat-actions">
-                    <button class="user-icon-btn" onclick="showUserToast('Conversation options')">
-                        <i class="fas fa-ellipsis-v"></i>
-                    </button>
+            </div>
+
+            <div class="user-chat-messages" id="chatMessages" data-live-region="chat" role="log" aria-live="polite"
+                 aria-label="Messages with {{ selected_conversation.name }}">
+                {% for msg in messages %}
+                <div class="user-chat-message {{ 'sent' if msg.is_sent else 'received' }}"
+                     data-ts="{{ msg.created_at.isoformat() }}Z" {% if msg.is_sent %}data-read="{{ 1 if msg.is_read else 0 }}"{% endif %}>
+                    {% if not msg.is_sent %}<span class="msgr-msg-avatar" aria-hidden="true">{{ avatar(them, 'xs') }}</span>{% endif %}
+                    <div class="user-chat-bubble">
+                        {% if msg.content %}<p>{{ msg.content }}</p>{% endif %}
+                        {% for f in msg.attachments %}
+                            {% if f.is_image %}
+                            <a class="msg-attachment" href="{{ f.url }}" target="_blank" rel="noopener"><img src="{{ f.url }}" alt="{{ f.name }}"></a>
+                            {% else %}
+                            <a class="msg-attachment msg-attachment-file" href="{{ f.url }}"><i class="fas fa-file-pdf"></i> {{ f.name }}</a>
+                            {% endif %}
+                        {% endfor %}
+                        <span class="user-chat-time">{{ msg.created_at.strftime('%I:%M %p') }}</span>
+                    </div>
                 </div>
-            </div>
-
-            <!-- Chat Messages -->
-            <div class="user-chat-messages" id="chatMessages" data-live-region="chat">
-                {% if messages %}
-                    {% for msg in messages %}
-                    <div class="user-chat-message {% if msg.is_sent %}sent{% else %}received{% endif %}">
-                        <div class="user-chat-bubble">
-                            {% if msg.content %}<p>{{ msg.content }}</p>{% endif %}
-                            {% for f in msg.attachments %}
-                                {% if f.is_image %}
-                                <a class="msg-attachment" href="{{ f.url }}" target="_blank" rel="noopener"><img src="{{ f.url }}" alt="{{ f.name }}"></a>
-                                {% else %}
-                                <a class="msg-attachment msg-attachment-file" href="{{ f.url }}"><i class="fas fa-file-pdf"></i> {{ f.name }}</a>
-                                {% endif %}
-                            {% endfor %}
-                            <span class="user-chat-time">{{ msg.created_at.strftime('%I:%M %p') }}</span>
-                        </div>
-                    </div>
-                    {% endfor %}
                 {% else %}
-                    <div class="user-empty-state" style="padding:3rem 1rem;">
-                        <i class="fas fa-comment-dots"></i>
-                        <h4>No Messages Yet</h4>
-                        <p>Start the conversation by sending a message below.</p>
+                    <div class="user-empty-state msgr-intro">
+                        {{ avatar(them, 'lg') }}
+                        <h4>{{ selected_conversation.name }}</h4>
+                        <p>Say hello! Messages you send here go straight to them.</p>
                     </div>
-                {% endif %}
+                {% endfor %}
             </div>
 
-            <!-- Chat Input -->
+            <!-- Composer -->
             <div class="msg-attachment-chip" id="attachmentChip" style="display:none;">
                 <i class="fas fa-paperclip"></i> <span id="attachmentName"></span>
-                <button type="button" onclick="clearAttachment()" title="Remove attachment">&times;</button>
+                <button type="button" onclick="clearAttachment()" title="Remove attachment" aria-label="Remove attachment">&times;</button>
             </div>
-            <div class="user-chat-input">
+            <form class="user-chat-input" id="chatComposer" onsubmit="event.preventDefault(); sendMessage();">
+                <label class="user-chat-attach" for="messageAttachment" title="Attach a photo or PDF (max 5 MB)">
+                    <i class="fas fa-circle-plus"></i><span class="visually-hidden">Attach a file</span>
+                </label>
+                <input type="file" id="messageAttachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+                       style="display:none;" onchange="showAttachmentChip()">
                 <div class="user-chat-input-wrapper">
-                    <label class="user-chat-attach" for="messageAttachment" title="Attach an image or PDF (max 5 MB)">
-                        <i class="fas fa-paperclip"></i>
-                    </label>
-                    <input type="file" id="messageAttachment" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-                           style="display:none;" onchange="showAttachmentChip()">
-                    <input type="text" class="user-chat-input-field" placeholder="Type your message here..." 
-                           onkeydown="if(event.key==='Enter') sendMessage()" id="messageInput">
-                    <button class="user-chat-send" onclick="sendMessage()">
-                        <i class="fas fa-paper-plane"></i>
-                    </button>
+                    <textarea class="user-chat-input-field" id="messageInput" rows="1" maxlength="5000"
+                              placeholder="Aa" aria-label="Message {{ selected_conversation.name }}"></textarea>
                 </div>
-            </div>
+                <button type="submit" class="user-chat-send" aria-label="Send">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </form>
         {% else %}
             <!-- No Conversation Selected -->
-            <div class="user-empty-state" style="padding:4rem 2rem;">
+            <div class="user-empty-state msgr-pick">
                 <i class="fas fa-comment-dots" style="font-size:4rem; opacity:0.3;"></i>
-                <h3>Select a Conversation</h3>
-                <p>Choose a conversation from the sidebar or start a new one.</p>
+                <h3>Select a conversation</h3>
+                <p>Choose a chat from the list or start a new one.</p>
             </div>
         {% endif %}
-    </div>
+    </section>
 </div>
 
 <!-- New Message Modal -->
@@ -208,21 +202,104 @@
     // ============================================
 
     let selectedConversationId = {{ selected_conversation.key|tojson if selected_conversation else 'null' }};
+    const GROUP_GAP_MS = 5 * 60 * 1000;      // same-sender messages closer than this form one group
+    const DIVIDER_GAP_MS = 20 * 60 * 1000;   // a time divider after this long a pause
 
     function selectConversation(convId) {
         window.location.href = `/messages?conv=${encodeURIComponent(convId)}`;
     }
 
-    // Live updates replace the conversation list; keep the search filter applied.
+    function chatBox() { return document.getElementById('chatMessages'); }
+
+    function scrollToBottom(smooth) {
+        const box = chatBox();
+        if (box) box.scrollTo({ top: box.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    }
+
+    function sameDay(a, b) { return a.toDateString() === b.toDateString(); }
+
+    // Times are stored in UTC; show them in the viewer's own time zone, Messenger-style.
+    function dividerLabel(d) {
+        const now = new Date();
+        const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        if (sameDay(d, now)) return time;
+        if (now - d < 6 * 24 * 3600 * 1000) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' }) + ', ' + time;
+    }
+
+    function listLabel(d) {
+        const now = new Date();
+        if (sameDay(d, now)) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        if (now - d < 6 * 24 * 3600 * 1000) return d.toLocaleDateString([], { weekday: 'short' });
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+
+    // Groups consecutive messages, adds time dividers, the other person's avatar on
+    // the last bubble of each of their groups, and Sent / Seen under your last message.
+    // Runs on load, after each send, and after every live update of the thread.
+    function decorateThread() {
+        const box = chatBox();
+        if (!box) return;
+        box.querySelectorAll('.msgr-divider, .msgr-receipt').forEach(el => el.remove());
+        const items = Array.from(box.querySelectorAll('.user-chat-message'));
+        items.forEach((el, i) => {
+            const prev = items[i - 1], next = items[i + 1];
+            const t = new Date(el.dataset.ts);
+            const side = el.classList.contains('sent');
+            const joinsPrev = prev && prev.classList.contains('sent') === side && t - new Date(prev.dataset.ts) < GROUP_GAP_MS;
+            const joinsNext = next && next.classList.contains('sent') === side && new Date(next.dataset.ts) - t < GROUP_GAP_MS;
+            el.classList.toggle('is-first', !joinsPrev);
+            el.classList.toggle('is-last', !joinsNext);
+            if (!isNaN(t)) {
+                el.querySelector('.user-chat-bubble').title = t.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+                if (!prev || t - new Date(prev.dataset.ts) > DIVIDER_GAP_MS) {
+                    const div = document.createElement('div');
+                    div.className = 'msgr-divider';
+                    div.textContent = dividerLabel(t);
+                    el.before(div);
+                }
+            }
+        });
+        const mine = items.filter(el => el.classList.contains('sent'));
+        const last = mine[mine.length - 1];
+        if (last) {
+            const receipt = document.createElement('div');
+            receipt.className = 'msgr-receipt';
+            if (last.classList.contains('is-failed')) {
+                receipt.classList.add('is-failed');
+                receipt.textContent = 'Not sent';
+            } else if (last.classList.contains('is-pending')) {
+                receipt.textContent = 'Sending…';
+            } else {
+                receipt.textContent = last.dataset.read === '1' ? 'Seen' : 'Sent';
+            }
+            last.after(receipt);
+        }
+        box.classList.add('msgr-ready');
+    }
+
+    function localizeListTimes() {
+        document.querySelectorAll('.user-conversation-time[data-ts]').forEach(el => {
+            const d = new Date(el.dataset.ts);
+            if (!isNaN(d)) el.textContent = listLabel(d);
+        });
+    }
+
+    // Live updates replace the conversation list and the thread; redo the extras.
     document.addEventListener('devtech:live-updated', function () {
         const box = document.querySelector('.user-messages-search input');
         if (box && box.value) searchConversations(box.value);
+        localizeListTimes();
+        const chat = chatBox();
+        const nearBottom = chat && chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60;
+        decorateThread();
+        if (nearBottom) scrollToBottom(false);
     });
 
     function searchConversations(query) {
         const items = document.querySelectorAll('.user-conversation-item');
         const search = query.toLowerCase().trim();
-        
+
         items.forEach(item => {
             const data = item.dataset.search.toLowerCase();
             if (search === '' || data.includes(search)) {
@@ -244,6 +321,7 @@
         }
         document.getElementById('attachmentName').textContent = file.name;
         chip.style.display = 'flex';
+        document.getElementById('messageInput')?.focus();
     }
 
     function clearAttachment() {
@@ -265,6 +343,7 @@
                 const img = document.createElement('img');
                 img.src = f.url;
                 img.alt = f.name;
+                img.addEventListener('load', () => scrollToBottom(false));
                 a.appendChild(img);
             } else {
                 const icon = document.createElement('i');
@@ -276,22 +355,38 @@
         });
     }
 
+    function autosize(field) {
+        field.style.height = 'auto';
+        field.style.height = Math.min(field.scrollHeight, 132) + 'px';
+    }
+
+    // Shows the message straight away (like Messenger), then confirms or flags it.
     function sendMessage() {
         const input = document.getElementById('messageInput');
-        if (!input) return;
+        if (!input || !selectedConversationId) return;
 
         const content = input.value.trim();
         const picker = document.getElementById('messageAttachment');
         const file = picker && picker.files[0];
+        if (!content && !file) { input.focus(); return; }
 
-        if ((!content && !file) || !selectedConversationId) {
-            showUserToast('Type a message or attach a file', 'warning');
-            return;
-        }
+        const box = chatBox();
+        box.querySelector('.user-empty-state')?.remove();
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'user-chat-message sent is-pending';
+        messageDiv.dataset.ts = new Date().toISOString();
+        messageDiv.dataset.read = '0';
+        messageDiv.innerHTML = '<div class="user-chat-bubble"><p></p><span class="user-chat-time"></span></div>';
+        const bubble = messageDiv.querySelector('.user-chat-bubble');
+        const textEl = bubble.querySelector('p');
+        if (content) { textEl.textContent = content; } else { textEl.textContent = 'Sending ' + file.name + '…'; textEl.classList.add('msgr-file-note'); }
+        box.appendChild(messageDiv);
+        decorateThread();
+        scrollToBottom(true);
 
-        input.disabled = true;
-        const sendBtn = document.querySelector('.user-chat-send');
-        sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        input.value = '';
+        autosize(input);
+        input.focus();
 
         let body, headers = { 'X-Requested-With': 'XMLHttpRequest' };
         if (file) {
@@ -302,51 +397,49 @@
             headers['Content-Type'] = 'application/json';
             body = JSON.stringify({ content: content });
         }
+        clearAttachment();
 
-        fetch(`/messages/${selectedConversationId}/send`, {
-            method: 'POST',
-            headers: headers,
-            body: body
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                const messagesContainer = document.getElementById('chatMessages');
-                const emptyState = messagesContainer.querySelector('.user-empty-state');
-                if (emptyState) emptyState.remove();
-
-                const messageDiv = document.createElement('div');
-                messageDiv.className = 'user-chat-message sent';
-                messageDiv.innerHTML = `
-                    <div class="user-chat-bubble">
-                        <p></p>
-                        <span class="user-chat-time"></span>
-                    </div>
-                `;
-                const textEl = messageDiv.querySelector('p');
-                if (content) { textEl.textContent = content; } else { textEl.remove(); }
-                const timeEl = messageDiv.querySelector('.user-chat-time');
-                timeEl.textContent = data.time || 'Just now';
-                appendAttachments(messageDiv.querySelector('.user-chat-bubble'), data.attachments, timeEl);
-                messagesContainer.appendChild(messageDiv);
-
-                input.value = '';
-                clearAttachment();
-                showUserToast('Message sent!', 'success');
-                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-            } else {
-                showUserToast(data.message || 'Failed to send message', 'error');
-            }
-        })
-        .catch(error => {
-            showUserToast('An error occurred', 'error');
-        })
-        .finally(() => {
-            input.disabled = false;
-            sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';
-            input.focus();
-        });
+        fetch(`/messages/${selectedConversationId}/send`, { method: 'POST', headers: headers, body: body })
+            .then(response => response.json().catch(() => ({})).then(data => ({ ok: response.ok, data: data })))
+            .then(({ ok, data }) => {
+                if (!messageDiv.isConnected) return;     // a live update already showed the saved copy
+                if (ok && data.success) {
+                    messageDiv.classList.remove('is-pending');
+                    if (data.sent_at) messageDiv.dataset.ts = data.sent_at;
+                    if (!content) textEl.remove();
+                    bubble.querySelector('.user-chat-time').textContent = data.time || '';
+                    appendAttachments(bubble, data.attachments, bubble.querySelector('.user-chat-time'));
+                    window.DevtechLive && window.DevtechLive.poll();
+                } else {
+                    messageDiv.classList.remove('is-pending');
+                    messageDiv.classList.add('is-failed');
+                    if (content && !input.value) input.value = content;
+                    showUserToast(data.message || 'Your message was not sent. Try again.', 'error');
+                }
+                decorateThread();
+                scrollToBottom(false);
+            })
+            .catch(() => {
+                messageDiv.classList.remove('is-pending');
+                messageDiv.classList.add('is-failed');
+                if (content && !input.value) input.value = content;
+                decorateThread();
+                showUserToast('No connection. Your message was not sent.', 'error');
+            });
     }
+
+    // Enter sends, Shift+Enter starts a new line; the box grows with the text.
+    (function () {
+        const input = document.getElementById('messageInput');
+        if (!input) return;
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        input.addEventListener('input', function () { autosize(input); });
+    })();
 
     function openNewMessage() {
         document.getElementById('newMessageModal').classList.add('active');
@@ -361,7 +454,7 @@
 
     function submitNewMessage(event) {
         event.preventDefault();
-        
+
         const recipient = document.getElementById('messageRecipient').value;
         const subject = document.getElementById('messageSubject').value;
         const content = document.getElementById('messageContent').value;
@@ -381,10 +474,10 @@
                 'Content-Type': 'application/json',
                 'X-Requested-With': 'XMLHttpRequest'
             },
-            body: JSON.stringify({ 
-                recipient: recipient, 
-                subject: subject, 
-                content: content 
+            body: JSON.stringify({
+                recipient: recipient,
+                subject: subject,
+                content: content
             })
         })
         .then(response => response.json())
@@ -406,12 +499,12 @@
         });
     }
 
-    // Scroll chat to bottom on load
+    // Group the thread, show local times and start at the newest message.
     document.addEventListener('DOMContentLoaded', function() {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (messagesContainer) {
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }
+        localizeListTimes();
+        decorateThread();
+        scrollToBottom(false);
+        document.querySelector('.user-conversation-item.active')?.scrollIntoView({ block: 'nearest' });
     });
 
     // Auto-resize textarea
@@ -458,4 +551,4 @@
         }, 3000);
     }
 </script>
-{% endblock %}  
+{% endblock %}

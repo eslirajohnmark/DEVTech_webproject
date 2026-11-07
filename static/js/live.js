@@ -51,12 +51,25 @@
     }
 
     // ---------- counts ----------
+    // Sidebar badges: messages / notifications come from mu / nu, every other
+    // data-live-count name (jobs, requests, payments, ...) from s.c. A badge
+    // whose number goes up pulses once so the change is noticed.
     function setCounts(s) {
+        var c = s.c || {};
         $all('[data-live-count]').forEach(function (el) {
-            var v = el.getAttribute('data-live-count') === 'messages' ? s.mu : s.nu;
-            el.textContent = v > 99 ? '99+' : String(v || 0);
+            var key = el.getAttribute('data-live-count');
+            var v = key === 'messages' ? s.mu : key === 'notifications' ? s.nu : c[key];
+            if (v === undefined) return;            // this update didn't carry that count
+            v = v || 0;
+            var before = el.hidden ? 0 : (parseInt(el.textContent, 10) || 0);
+            el.textContent = v > 99 ? '99+' : String(v);
             el.hidden = !v;
             if (el.style.display === 'none' && v) el.style.display = '';
+            if (v > before) {
+                el.classList.remove('live-bump');
+                void el.offsetWidth;                 // restart the animation
+                el.classList.add('live-bump');
+            }
         });
         var total = (s.mu || 0) + (s.nu || 0);
         document.title = (total ? '(' + (total > 99 ? '99+' : total) + ') ' : '') + baseTitle;

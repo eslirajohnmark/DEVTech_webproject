@@ -77,3 +77,28 @@ def test_background_polls_are_not_rate_limited(app, customer_logged_in):
         assert codes == {200}
     finally:
         app.config["RATELIMIT_ENABLED"] = False
+
+
+def _thread(customer, technician):
+    from app import Message
+    db.session.add(Message(sender_role='technician', sender_id=technician.id, recipient_role='customer',
+                           recipient_id=customer.id, content='Your laptop is ready'))
+    db.session.add(Message(sender_role='customer', sender_id=customer.id, recipient_role='technician',
+                           recipient_id=technician.id, content='Thanks!', is_read=True))
+    db.session.commit()
+
+
+def test_customer_chat_has_what_the_messenger_view_needs(customer_logged_in, customer, technician):
+    _thread(customer, technician)
+    html = customer_logged_in.get(f'/messages?conv={technician.key}').get_data(as_text=True)
+    assert 'class="user-messages-layout msgr has-thread"' in html
+    assert 'You: Thanks!' in html                                   # last message was mine
+    assert 'data-read="1"' in html and 'data-ts="' in html          # Seen receipt + local times
+    assert 'pf-avatar' in html and 'id="messageInput"' in html
+
+
+def test_chat_list_view_does_not_jump_into_a_thread(customer_logged_in, customer, technician):
+    _thread(customer, technician)
+    assert customer_logged_in.get('/messages').status_code == 302    # desktop: opens the newest chat
+    r = customer_logged_in.get('/messages?list=1')                    # phones: back arrow shows the list
+    assert r.status_code == 200 and 'has-thread' not in r.get_data(as_text=True)

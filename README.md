@@ -116,7 +116,8 @@ email and password, so an account's type can't be changed later; create a new
 account of the other type instead. An email can belong to only one account.
 
 - **Admin:** created with `flask --app app create-admin`.
-- **Technicians:** register at `/technician/register`; an admin activates them in User Management (or an admin adds them there directly).
+- **Technicians:** register at `/technician/register` with their details and a photo or scan of a valid ID. They stay inactive until an admin approves them in **Technician Verification** (`/admin/technician-verification`), where the admin can also reject the registration or ask for a correction (both need a reason). The technician sees the result and fixes their details at `/technician/register/status`. Only active, verified technicians can be assigned jobs; this is checked on the server whenever a job is approved or reassigned. Admins can also add technicians in User Management and verify them in person there.
+  ID documents are stored in `instance/uploads/id_documents/` (outside `static/`, git-ignored) under random names, served only to admins and to the technician they belong to, with location data stripped from JPEG photos. Every admin view of an ID is recorded in the activity log, and deleting the account deletes the file.
 - **Customers:** sign up at `/register`.
 
 ## Shop data
@@ -171,7 +172,7 @@ If you ran an older version of this app, do these once:
 1. **Default admin.** Older versions created `admin@devtech.com` / `admin123` automatically. If that account exists, change its password now (`flask --app app reset-admin-password admin@devtech.com`) or deactivate it.
 2. **Cart stock.** Stock used to be taken when an item was added to a cart; it is now taken at checkout. Return what open carts were holding with `flask --app app release-cart-stock` (runs once; `python app.py` also does it automatically).
 3. **Receipts.** Payment receipts moved from `static/uploads/receipts/` (publicly reachable) to `instance/uploads/receipts/`. `python app.py` moves existing files automatically; on a server that only runs `wsgi.py`, move the folder by hand.
-4. **Technician sign-up.** Self-registered technicians now start inactive. Admins get a notification and activate them in User Management.
+4. **Technician sign-up.** Self-registered technicians start inactive and upload a valid ID; admins approve them in Technician Verification. `upgrade-db` adds the verification columns and keeps technicians who were already verified as verified.
 5. **`.env`.** `DATABASE_URL` is now required (no built-in fallback), and `/setup/first-admin` is disabled unless `SETUP_TOKEN` is set.
 6. **Separate account tables.** Older databases kept everyone in one `users` table. Copy such a database into the new layout with
    `python -m scripts.migrate_split_accounts --source mysql+pymysql://root@127.0.0.1:3306/devtech_db --target mysql+pymysql://root@127.0.0.1:3306/devtech`

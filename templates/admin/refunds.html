@@ -83,6 +83,12 @@
                 {% if r.status == 'refunded' and r.amount != t.amount %}<small>of ₱{{ "{:,.2f}".format(t.amount) }} paid</small>{% endif %}
             </div>
             <p class="refund-reason">{{ r.reason }}</p>
+            {% if r.payout_account %}
+            <p class="refund-reason"><i class="fas fa-mobile-alt"></i> Send to the customer's GCash <strong>{{ r.payout_account }}</strong></p>
+            {% endif %}
+            {% if receipt_url(t) %}
+            <p class="admin-muted refund-meta"><a href="{{ receipt_url(t) }}" target="_blank" rel="noopener"><i class="fas fa-image"></i> Customer's payment screenshot</a></p>
+            {% endif %}
             <p class="admin-muted refund-meta">
                 Paid by {{ payment_method_label(t.payment_method) }}{% if t.gcash_reference or t.reference_number %}, ref {{ t.gcash_reference or t.reference_number }}{% endif %}
                 · opened {{ r.created_at.strftime('%b %d, %Y %I:%M %p') if r.created_at else '' }} by {{ r.created_by }}
@@ -114,8 +120,9 @@
                     <label>Reference (not needed for cash)
                         <input type="text" name="reference" maxlength="80" placeholder="e.g. GCash ref number">
                     </label>
-                    <label>Amount returned (₱)
-                        <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f'|format(t.amount) }}" value="{{ '%.2f'|format(r.amount) }}" required>
+                    <label>Amount returned (₱){% if r.order_id %} · full payment for a cancelled order{% endif %}
+                        <input type="number" name="amount" step="0.01" min="0.01" max="{{ '%.2f'|format(t.amount) }}" value="{{ '%.2f'|format(r.amount) }}" required
+                               {% if r.order_id %}readonly{% endif %}>
                     </label>
                     <label class="refund-form-wide">Note (optional)
                         <input type="text" name="note" maxlength="1000">

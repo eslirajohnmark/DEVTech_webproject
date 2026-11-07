@@ -43,6 +43,23 @@
         return out;
     }
 
+    // The technician's certificates / achievements, each opening in a new tab.
+    function credentialsBlock(list) {
+        if (!list || !list.length) return '';
+        return '<div class="usr-contact-title">Certificates &amp; achievements</div>' +
+            '<ul class="usr-cred-list">' +
+            list.map(function (c) {
+                return '<li><a href="' + esc(c.url) + '" target="_blank" rel="noopener">' +
+                    (c.isImage
+                        ? '<img src="' + esc(c.url) + '" alt="" loading="lazy">'
+                        : '<span class="usr-cred-icon"><i class="fas fa-file-pdf"></i></span>') +
+                    '<span><strong>' + esc(c.title) + '</strong>' +
+                    '<small>' + esc([c.issuer, c.issued].filter(Boolean).join(' · ')) + '</small></span>' +
+                    '</a></li>';
+            }).join('') +
+            '</ul>';
+    }
+
     function render(data) {
         var b = data.booking;
 
@@ -146,9 +163,15 @@
                       '</h3>' +
                   '</div>' +
 
-                  '<div class="usr-tech-pic">' +
-                      esc(data.technician.initials) +
-                  '</div>' +
+                  // Their profile photo when they have one, otherwise initials.
+                  (data.technician.avatar
+                      ? '<div class="usr-tech-pic usr-tech-pic--photo">' +
+                            '<img src="' + esc(data.technician.avatar) + '" alt="Photo of ' +
+                            esc(data.technician.name) + '">' +
+                        '</div>'
+                      : '<div class="usr-tech-pic">' +
+                            esc(data.technician.initials) +
+                        '</div>') +
 
                   '<div class="usr-tech-name">' +
                       esc(data.technician.name) +
@@ -159,23 +182,19 @@
                   '</div>' +
 
                   '<div class="usr-tech-stars">' +
-
-                      '<span class="stars">' +
-                          stars(data.technician.rating) +
-                      '</span>' +
-
-                      '<span>' +
-                          Number(
-                              data.technician.rating || 0
-                          ).toFixed(1) +
-
-                          ' (' +
-                          (data.technician.rating_count || 0) +
-                          ')' +
-
-                      '</span>' +
-
+                      (data.technician.rating_count
+                          ? '<span class="stars" aria-hidden="true">' +
+                                stars(data.technician.rating) +
+                            '</span>' +
+                            '<span>' +
+                                Number(data.technician.rating).toFixed(1) +
+                                ' (' + data.technician.rating_count + ' rating' +
+                                (data.technician.rating_count === 1 ? '' : 's') + ')' +
+                            '</span>'
+                          : '<span>No ratings yet</span>') +
                   '</div>' +
+
+                  credentialsBlock(data.technician.credentials) +
 
                   '<div class="usr-contact-title">' +
                       'Contact' +
@@ -260,6 +279,10 @@
                     'Device type',
                     b.deviceType
                 ) +
+
+                (b.deviceBrandModel
+                    ? devRow('fa-barcode', 'Brand / model', b.deviceBrandModel)
+                    : '') +
 
                 devRow(
                     'fa-tag',
@@ -623,7 +646,15 @@
 
                       '</section>'
 
-                    : ''
+                    : (data.rateLater
+                        ? '<section class="usr-rating-section usr-rating-later">' +
+                              '<div class="usr-rating-head">' +
+                                  '<h2><i class="fas fa-star"></i> Rate ' + esc(data.technician.name) + '</h2>' +
+                              '</div>' +
+                              '<p>You can rate your technician once your device is ready for collection. ' +
+                              'Your notification will tell you when it is time.</p>' +
+                          '</section>'
+                        : '')
             );
 
         var ap = data.approval;

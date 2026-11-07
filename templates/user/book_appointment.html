@@ -69,22 +69,40 @@
                     <h4 class="user-step-title">Device Type <span class="user-required-star">*</span></h4>
                 </div>
                 <div class="user-device-grid">
-                    <label class="user-device-card" for="device-desktop">
-                        <input type="radio" name="device_type" id="device-desktop" value="Desktop" checked />
-                        <div class="user-device-content">
-                            <i class="fas fa-desktop"></i><span>Desktop</span>
-                        </div>
-                    </label>
                     <label class="user-device-card" for="device-laptop">
-                        <input type="radio" name="device_type" id="device-laptop" value="Laptop" />
+                        <input type="radio" name="device_type" id="device-laptop" value="Laptop" checked />
                         <div class="user-device-content">
                             <i class="fas fa-laptop"></i><span>Laptop</span>
                         </div>
                     </label>
-                    <label class="user-device-card" for="device-mac">
-                        <input type="radio" name="device_type" id="device-mac" value="Mac" />
+                    <label class="user-device-card" for="device-desktop">
+                        <input type="radio" name="device_type" id="device-desktop" value="Desktop PC" />
                         <div class="user-device-content">
-                            <i class="fab fa-apple"></i><span>Mac</span>
+                            <i class="fas fa-desktop"></i><span>Desktop PC</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-aio">
+                        <input type="radio" name="device_type" id="device-aio" value="All-in-One PC" />
+                        <div class="user-device-content">
+                            <i class="fas fa-display"></i><span>All-in-One PC</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-monitor">
+                        <input type="radio" name="device_type" id="device-monitor" value="Monitor" />
+                        <div class="user-device-content">
+                            <i class="fas fa-tv"></i><span>Monitor</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-peripheral">
+                        <input type="radio" name="device_type" id="device-peripheral" value="Printer / Peripheral" />
+                        <div class="user-device-content">
+                            <i class="fas fa-print"></i><span>Printer / Peripheral</span>
+                        </div>
+                    </label>
+                    <label class="user-device-card" for="device-storage">
+                        <input type="radio" name="device_type" id="device-storage" value="Storage Device" />
+                        <div class="user-device-content">
+                            <i class="fas fa-hard-drive"></i><span>Storage Device</span>
                         </div>
                     </label>
                     <label class="user-device-card" for="device-other">
@@ -99,6 +117,18 @@
                     <input type="text" id="custom_device" name="custom_device" class="user-form-input"
                            placeholder="Enter your device type...">
                 </div>
+                <div class="user-device-details">
+                    <div class="user-form-group">
+                        <label for="device_brand">Brand <span class="user-optional">(optional)</span></label>
+                        <input type="text" id="device_brand" name="device_brand" class="user-form-input" maxlength="50"
+                               placeholder="e.g. Acer, Asus, HP, Lenovo, Epson" autocomplete="off">
+                    </div>
+                    <div class="user-form-group">
+                        <label for="device_model">Model <span class="user-optional">(if known)</span></label>
+                        <input type="text" id="device_model" name="device_model" class="user-form-input" maxlength="80"
+                               placeholder="e.g. Aspire 5 A515-56" autocomplete="off">
+                    </div>
+                </div>
             </div>
 
             <div class="user-form-step">
@@ -112,16 +142,31 @@
                     </label>
                     <select class="user-form-input" name="service_id" id="service_id" required>
                         <option value="">-- Select a service --</option>
+                        {% set wanted = request.args.get('service', '') %}
                         {% for service in services %}
                         <option value="{{ service.id }}"
                                 data-price="{{ service.price }}"
-                                data-hours="{{ service.estimated_hours }}">
-                            {{ service.name }}{% if service.price and service.price > 0 %} - ₱{{ "%.2f"|format(service.price) }}{% endif %}
+                                data-hours="{{ service.estimated_hours }}"
+                                data-description="{{ service.description or '' }}"
+                                {% if wanted == service.id|string %}selected{% endif %}>
+                            {{ service.name }} - {% if service.price and service.price > 0 %}₱{{ "{:,.2f}".format(service.price) }}{% else %}Price upon diagnosis{% endif %}
                         </option>
                         {% endfor %}
                         <option value="other">Other Service (Custom)</option>
                     </select>
                 </div>
+                <div class="user-service-info" id="serviceInfo" hidden aria-live="polite">
+                    <p id="serviceInfoText"></p>
+                    <ul>
+                        <li><i class="fas fa-tag"></i> <span id="serviceInfoPrice"></span></li>
+                        <li><i class="fas fa-clock"></i> <span id="serviceInfoHours"></span></li>
+                    </ul>
+                    <small>Final cost and repair time depend on your device model, the diagnosis, parts availability
+                        and how complex the repair is. Nothing extra is charged without your approval.</small>
+                </div>
+                {% if category and category.tagline %}
+                <p class="user-service-note"><i class="fas fa-circle-info"></i> {{ category.tagline }}</p>
+                {% endif %}
                 <div class="user-form-group" id="customServiceGroup" style="display:none;margin-top:0.5rem;">
                     <label for="custom_service">Describe your requirement <span class="user-required-star">*</span></label>
                     <input type="text" id="custom_service" name="custom_service" class="user-form-input"

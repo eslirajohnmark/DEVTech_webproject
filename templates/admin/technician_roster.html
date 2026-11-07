@@ -1,0 +1,164 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Technician Roster{% endblock %}
+
+{% block content %}
+{% macro err(name) %}{% if errors.get(name) %}<small class="tr-error">{{ errors[name] }}</small>{% endif %}{% endmacro %}
+{% set locked = edit and edit.technician_id %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Technician Roster</h1>
+        <p>Technicians DEVTech has hired. Only these Tech IDs can register, with an ID that matches the record.</p>
+    </div>
+    <div class="admin-top-actions">
+        {% include 'admin/_notification_bell.html' %}
+    </div>
+</div>
+
+<div class="admin-stats-grid">
+    {% for key, label, icon, tone in [('total', 'Hired technicians', 'fa-id-badge', 'primary'),
+                                      ('waiting', 'Not registered yet', 'fa-hourglass-half', 'warning'),
+                                      ('registered', 'Registered', 'fa-user-check', 'primary')] %}
+    <a class="admin-stat-card tv-stat {% if status == key or (key == 'total' and status == 'all') %}is-current{% endif %}"
+       href="{{ url_for('admin_tech_roster', status='all' if key == 'total' else key) }}">
+        <div class="admin-stat-icon tv-tone-{{ tone }}"><i class="fas {{ icon }}"></i></div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ stats[key] }}</span>
+            <span class="admin-stat-label">{{ label }}</span>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+<div class="tr-layout">
+    {# ---- Add / edit form ---- #}
+    <section class="tv-panel tr-form-panel" id="rosterForm">
+        <header class="tv-panel-head">
+            <h2>{% if edit %}Edit {{ edit.tech_id }}{% else %}Add a hired technician{% endif %}</h2>
+            {% if edit %}<a class="admin-btn admin-btn-sm admin-btn-secondary" href="{{ url_for('admin_tech_roster') }}">Cancel</a>{% endif %}
+        </header>
+        {% if locked %}
+        <p class="admin-muted tv-small" style="margin-top:0;">
+            <i class="fas fa-lock"></i> {{ edit.tech_id }} has registered, so the name, birth date and ID stay as matched.
+            Only the hire date and note can change.
+        </p>
+        {% else %}
+        <p class="admin-muted tv-small" style="margin-top:0;">Copy the name, birth date and ID number exactly as printed on their valid ID.</p>
+        {% endif %}
+        {% if errors %}<div class="tr-error-box" role="alert"><i class="fas fa-circle-exclamation"></i> Please fix the highlighted fields.</div>{% endif %}
+
+        <form method="POST" action="{{ url_for('admin_tech_roster_save', record_id=edit.id) if edit else url_for('admin_tech_roster_save') }}" class="tr-form" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="admin-form-group">
+                <label for="trTechId">Tech ID</label>
+                <input id="trTechId" name="tech_id" maxlength="12" required {% if locked %}disabled{% endif %}
+                       value="{{ form.get('tech_id') or (edit.tech_id if edit else next_id) }}" class="tr-mono">
+                {% if not edit %}<small class="admin-muted">Next free ID suggested. Give this to the technician.</small>{% endif %}
+                {{ err('tech_id') }}
+            </div>
+            <div class="admin-form-group">
+                <label for="trName">Full name (as on their ID)</label>
+                <input id="trName" name="full_name" maxlength="100" required {% if locked %}disabled{% endif %}
+                       value="{{ form.get('full_name') or (edit.full_name if edit else '') }}" placeholder="e.g. Juan Santos Dela Cruz">
+                {{ err('full_name') }}
+            </div>
+            <div class="admin-form-group">
+                <label for="trDob">Date of birth</label>
+                <input id="trDob" name="birth_date" type="date" required {% if locked %}disabled{% endif %}
+                       value="{{ form.get('birth_date') or (edit.birth_date.isoformat() if edit else '') }}">
+                {{ err('birth_date') }}
+            </div>
+            <div class="admin-form-group">
+                <label for="trIdType">ID type</label>
+                <select id="trIdType" name="id_type" required {% if locked %}disabled{% endif %}>
+                    <option value="">Select ID type</option>
+                    {% set chosen = form.get('id_type') or (edit.id_type if edit else '') %}
+                    {% for t in id_types %}<option value="{{ t }}" {% if chosen == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+                </select>
+                {{ err('id_type') }}
+            </div>
+            <div class="admin-form-group">
+                <label for="trIdNumber">ID number</label>
+                <input id="trIdNumber" name="id_number" maxlength="50" required {% if locked %}disabled{% endif %} class="tr-mono"
+                       value="{{ form.get('id_number') or (edit.id_number if edit else '') }}" placeholder="As printed on the ID">
+                {{ err('id_number') }}
+            </div>
+            <div class="admin-form-group">
+                <label for="trHired">Hire date (optional)</label>
+                <input id="trHired" name="hired_on" type="date"
+                       value="{{ form.get('hired_on') or (edit.hired_on.isoformat() if edit and edit.hired_on else '') }}">
+                {{ err('hired_on') }}
+            </div>
+            <div class="admin-form-group tr-wide">
+                <label for="trNote">Note (optional)</label>
+                <input id="trNote" name="note" maxlength="255"
+                       value="{{ form.get('note') or (edit.note if edit and edit.note else '') }}" placeholder="e.g. Tacloban branch, hardware team">
+            </div>
+            <button type="submit" class="admin-btn admin-btn-primary tr-wide">
+                <i class="fas fa-{{ 'floppy-disk' if edit else 'plus' }}"></i> {{ 'Save changes' if edit else 'Add to roster' }}
+            </button>
+        </form>
+    </section>
+
+    {# ---- Roster ---- #}
+    <section class="tr-list">
+        <form class="admin-payment-filters" method="GET" action="{{ url_for('admin_tech_roster') }}">
+            <div class="admin-search-wrapper">
+                <i class="fas fa-search"></i>
+                <input type="search" name="q" value="{{ q }}" maxlength="100" aria-label="Search the roster"
+                       placeholder="Search by Tech ID or name... (Enter)">
+            </div>
+            <input type="hidden" name="status" value="{{ status }}">
+        </form>
+
+        <div class="admin-table-container"><table class="admin-table">
+            <thead><tr><th>Tech ID</th><th>Name</th><th>Birth date</th><th>ID</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for e in records %}
+            <tr>
+                <td class="tr-mono">{{ e.tech_id }}</td>
+                <td>{{ e.full_name }}{% if e.note %}<br><span class="admin-muted">{{ e.note }}</span>{% endif %}</td>
+                <td>{{ e.birth_date.strftime('%b %d, %Y') }}</td>
+                <td>{{ e.id_type }}<br><span class="admin-muted tr-mono">{{ e.id_number }}</span></td>
+                <td>
+                    {% if e.technician_id %}
+                    <a class="tv-status tv-status--verified" href="{{ url_for('admin_tech_verification_detail', tech_id=e.technician_id) }}">Registered</a>
+                    <br><span class="admin-muted">{{ e.registered_at.strftime('%b %d, %Y') if e.registered_at else '' }}</span>
+                    {% else %}
+                    <span class="tv-status">Not registered</span>
+                    {% endif %}
+                    {% if e.hired_on %}<br><span class="admin-muted">Hired {{ e.hired_on.strftime('%b %d, %Y') }}</span>{% endif %}
+                </td>
+                <td class="tr-actions">
+                    <a class="admin-btn admin-btn-sm admin-btn-secondary" href="{{ url_for('admin_tech_roster', edit=e.id) }}#rosterForm">Edit</a>
+                    {% if not e.technician_id %}
+                    <form method="POST" action="{{ url_for('admin_tech_roster_delete', record_id=e.id) }}"
+                          onsubmit="return confirm('Remove {{ e.tech_id }} from the roster?');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-reject">Remove</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" style="text-align:center;padding:1.5rem;">
+                {% if q or status != 'all' %}No technicians match.{% else %}No hired technicians recorded yet. Add the first one with the form.{% endif %}
+            </td></tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+
+        <div class="admin-pagination">
+            {% if pager.page > 1 %}
+            <a class="admin-page-btn" href="{{ url_for('admin_tech_roster', page=pager.page - 1, status=status, q=q or None) }}" aria-label="Previous page"><i class="fas fa-chevron-left"></i></a>
+            {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-left"></i></span>{% endif %}
+            <span class="admin-page-info">
+                {% if pager.total %}{{ pager.first }}–{{ pager.last }} of {{ pager.total }} · {% endif %}Page {{ pager.page }} of {{ pager.pages }}
+            </span>
+            {% if pager.page < pager.pages %}
+            <a class="admin-page-btn" href="{{ url_for('admin_tech_roster', page=pager.page + 1, status=status, q=q or None) }}" aria-label="Next page"><i class="fas fa-chevron-right"></i></a>
+            {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-right"></i></span>{% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}

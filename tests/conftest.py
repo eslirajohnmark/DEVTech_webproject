@@ -9,7 +9,7 @@ os.environ['FLASK_ENV'] = 'testing'
 os.environ['SECRET_KEY'] = 'test-secret-not-for-production'
 
 from app import (app as flask_app, db, Customer, Technician, Admin,  # noqa: E402
-                 Booking, ServiceCategory, Service)
+                 Booking, ServiceCategory, Service, limiter)
 from models.technician_models import (  # noqa: E402
     IntakeRecord, ServiceReport, IncidentReport,
     ApprovalRequest, JobLog, UploadedFile, ServiceRating,
@@ -25,8 +25,14 @@ def app(tmp_path):
     flask_app.config['TECH_UPLOAD_FOLDER'] = str(tmp_path / 'tech')
     flask_app.config['RECEIPT_UPLOAD_FOLDER'] = str(tmp_path / 'receipts')
     flask_app.config['MESSAGE_UPLOAD_FOLDER'] = str(tmp_path / 'messages')
-    for key in ('TECH_UPLOAD_FOLDER', 'RECEIPT_UPLOAD_FOLDER', 'MESSAGE_UPLOAD_FOLDER'):
+    flask_app.config['ID_UPLOAD_FOLDER'] = str(tmp_path / 'id_documents')
+    flask_app.config['CREDENTIAL_UPLOAD_FOLDER'] = str(tmp_path / 'credentials')
+    for key in ('TECH_UPLOAD_FOLDER', 'RECEIPT_UPLOAD_FOLDER', 'MESSAGE_UPLOAD_FOLDER', 'ID_UPLOAD_FOLDER',
+                'CREDENTIAL_UPLOAD_FOLDER'):
         os.makedirs(flask_app.config[key], exist_ok=True)
+
+    # Rate-limit counters live for the whole run; start each test from zero.
+    limiter.reset()
 
     with flask_app.app_context():
         db.drop_all()

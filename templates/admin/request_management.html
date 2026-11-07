@@ -206,9 +206,9 @@
                     <label for="assignTechnicianSelect">Technician</label>
                     <select name="technician_id" id="assignTechnicianSelect" required>
                         <option value="" disabled selected>Select a technician...</option>
-                        {% for tech in technicians %}
-                        <option value="{{ tech.id }}" {% if not tech.id_verified %}disabled{% endif %}>
-                            {{ tech.full_name }}{% if tech.id_verified %} - Verified ✓{% else %} - Not Verified (cannot assign){% endif %}
+                        {% for tech in technicians if tech.is_active %}
+                        <option value="{{ tech.id }}" {% if not tech.can_take_jobs %}disabled{% endif %}>
+                            {{ tech.full_name }}{% if tech.can_take_jobs %} - Verified ✓{% else %} - {{ tech.verification_label }} (cannot assign){% endif %}
                         </option>
                         {% endfor %}
                     </select>
@@ -216,9 +216,9 @@
                     <small style="color:var(--warning); display:block; margin-top:0.5rem;">
                         <i class="fas fa-exclamation-triangle"></i> No technician accounts exist yet. Create one in User Management first.
                     </small>
-                    {% elif technicians|selectattr('id_verified')|list|length == 0 %}
+                    {% elif technicians|selectattr('can_take_jobs')|list|length == 0 %}
                     <small style="color:var(--warning); display:block; margin-top:0.5rem;">
-                        <i class="fas fa-exclamation-triangle"></i> No technicians have completed identity verification yet. Verify one in User Management before approving requests.
+                        <i class="fas fa-exclamation-triangle"></i> No technicians have completed identity verification yet. Review them in <a href="{{ url_for('admin_tech_verification') }}">Technician Verification</a> before approving requests.
                     </small>
                     {% endif %}
                 </div>
@@ -253,8 +253,8 @@
                     <select name="technician_id" id="reassignTechnicianSelect" required>
                         <option value="" disabled selected>Select a technician...</option>
                         {% for tech in technicians if tech.is_active %}
-                        <option value="{{ tech.id }}" {% if not tech.id_verified %}disabled{% endif %}>
-                            {{ tech.full_name }}{% if tech.id_verified %} - Verified ✓{% else %} - Not Verified (cannot assign){% endif %}
+                        <option value="{{ tech.id }}" {% if not tech.can_take_jobs %}disabled{% endif %}>
+                            {{ tech.full_name }}{% if tech.can_take_jobs %} - Verified ✓{% else %} - {{ tech.verification_label }} (cannot assign){% endif %}
                         </option>
                         {% endfor %}
                     </select>
@@ -329,6 +329,9 @@
         footer.innerHTML = `<button class="admin-btn admin-btn-secondary" onclick="closeAdminModal('requestDetailsModal')">Close</button>`;
         openAdminModal('requestDetailsModal');
 
+        // Customer-typed text (description, address, names, references) is escaped before
+        // it goes into the page, so it can never run as HTML or script here.
+        const h = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
         fetch(`/api/admin/booking/${bookingId}`)
             .then(response => {
                 if (!response.ok) throw new Error('Failed to load booking');
@@ -341,7 +344,7 @@
                     <div class="admin-detail-grid">
                         <div class="admin-detail-item">
                             <label>Transaction No.</label>
-                            <span>${b.transaction.transaction_number}</span>
+                            <span>${h(b.transaction.transaction_number)}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Amount</label>
@@ -349,16 +352,16 @@
                         </div>
                         <div class="admin-detail-item">
                             <label>Method</label>
-                            <span style="text-transform:uppercase;">${b.transaction.payment_method || 'N/A'}</span>
+                            <span style="text-transform:uppercase;">${h(b.transaction.payment_method || 'N/A')}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Payment Status</label>
-                            <span style="text-transform:capitalize;">${b.transaction.payment_status}</span>
+                            <span style="text-transform:capitalize;">${h(b.transaction.payment_status)}</span>
                         </div>
                         ${b.transaction.gcash_reference ? `
                         <div class="admin-detail-item">
                             <label>GCash Reference</label>
-                            <span>${b.transaction.gcash_reference}</span>
+                            <span>${h(b.transaction.gcash_reference)}</span>
                         </div>` : ''}
                     </div>
                 ` : `
@@ -371,7 +374,7 @@
                     <div class="admin-detail-grid">
                         <div class="admin-detail-item">
                             <label>Booking Number</label>
-                            <span>${b.booking_number}</span>
+                            <span>${h(b.booking_number)}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Status</label>
@@ -379,15 +382,15 @@
                         </div>
                         <div class="admin-detail-item">
                             <label>Date</label>
-                            <span>${b.booking_date || 'N/A'}</span>
+                            <span>${h(b.booking_date || 'N/A')}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Time</label>
-                            <span>${b.booking_time || 'N/A'}</span>
+                            <span>${h(b.booking_time || 'N/A')}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Device Type</label>
-                            <span>${b.device_type}</span>
+                            <span>${h(b.device_type)}${(b.device_brand || b.device_model) ? ' · ' + h([b.device_brand, b.device_model].filter(Boolean).join(' ')) : ''}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Service Location</label>
@@ -395,12 +398,12 @@
                         </div>
                         <div class="admin-detail-item" style="grid-column: 1 / -1;">
                             <label>Description</label>
-                            <p>${b.description || 'No description provided.'}</p>
+                            <p>${h(b.description || 'No description provided.')}</p>
                         </div>
                         ${b.address ? `
                         <div class="admin-detail-item" style="grid-column: 1 / -1;">
                             <label>Address</label>
-                            <p>${b.address}</p>
+                            <p>${h(b.address)}</p>
                         </div>` : ''}
                     </div>
 
@@ -408,19 +411,19 @@
                     <div class="admin-detail-grid">
                         <div class="admin-detail-item">
                             <label>Full Name</label>
-                            <span>${b.customer.full_name}</span>
+                            <span>${h(b.customer.full_name)}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Email</label>
-                            <span>${b.customer.email || 'N/A'}</span>
+                            <span>${h(b.customer.email || 'N/A')}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Phone</label>
-                            <span>${b.customer.phone || 'N/A'}</span>
+                            <span>${h(b.customer.phone || 'N/A')}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Address on File</label>
-                            <span>${b.customer.address || 'N/A'}</span>
+                            <span>${h(b.customer.address || 'N/A')}</span>
                         </div>
                     </div>
 
@@ -428,7 +431,7 @@
                     <div class="admin-detail-grid">
                         <div class="admin-detail-item">
                             <label>Service Name</label>
-                            <span>${b.service.name}</span>
+                            <span>${h(b.service.name)}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Price</label>
@@ -440,7 +443,7 @@
                         </div>
                         <div class="admin-detail-item">
                             <label>Requested On</label>
-                            <span>${b.created_at || 'N/A'}</span>
+                            <span>${h(b.created_at || 'N/A')}</span>
                         </div>
                     </div>
 
@@ -449,15 +452,15 @@
                     <div class="admin-detail-grid">
                         <div class="admin-detail-item">
                             <label>Name</label>
-                            <span>${b.technician.full_name} ${b.technician.id_verified ? '<span style="color:var(--success); font-size:0.8em;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:var(--warning); font-size:0.8em;">Not Verified</span>'}</span>
+                            <span>${h(b.technician.full_name)} ${b.technician.id_verified ? '<span style="color:var(--success); font-size:0.8em;"><i class="fas fa-check-circle"></i> Verified</span>' : '<span style="color:var(--warning); font-size:0.8em;">Not Verified</span>'}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Contact</label>
-                            <span>${b.technician.phone || 'N/A'}</span>
+                            <span>${h(b.technician.phone || 'N/A')}</span>
                         </div>
                         <div class="admin-detail-item">
                             <label>Assigned On</label>
-                            <span>${b.technician.assigned_at || 'N/A'}</span>
+                            <span>${h(b.technician.assigned_at || 'N/A')}</span>
                         </div>
                     </div>
                     ` : ''}
@@ -469,10 +472,10 @@
 
                 if (b.status === 'pending') {
                     footerHtml += `
-                        <button class="admin-btn admin-btn-reject" onclick="closeAdminModal('requestDetailsModal'); openRejectModal('${b.id}', '${b.customer.full_name}');">
+                        <button class="admin-btn admin-btn-reject" onclick="closeAdminModal('requestDetailsModal'); openRejectModal(${Number(b.id)}, ${h(JSON.stringify(b.customer.full_name))});">
                             <i class="fas fa-times"></i> Reject
                         </button>
-                        <button class="admin-btn admin-btn-approve" onclick="closeAdminModal('requestDetailsModal'); openAssignTechnicianModal('${b.id}', '${b.customer.full_name}');">
+                        <button class="admin-btn admin-btn-approve" onclick="closeAdminModal('requestDetailsModal'); openAssignTechnicianModal(${Number(b.id)}, ${h(JSON.stringify(b.customer.full_name))});">
                             <i class="fas fa-user-check"></i> Approve &amp; Assign
                         </button>`;
                 }

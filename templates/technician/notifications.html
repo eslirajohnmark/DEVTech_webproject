@@ -1,11 +1,22 @@
 {% extends 'base/technician_base.html' %}
+{% from 'partials/notification_feed.html' import feed %}
 {% block title %}Notifications{% endblock %}
 {% block meta_title %}Notifications{% endblock %}
+{% block meta_subtitle %}New jobs, customer answers, ratings and account updates{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{{ url_for('static', filename='css/notifications.css') }}">{% endblock %}
+
 {% block body %}
-<section class="tech-card">
-  {% for n in rows %}
-  <div class="tech-tl-item"><p class="tech-tl-text"><strong>{{ n.title }}</strong> — {{ n.message }}</p>
-    <p class="tech-tl-meta">{{ n.created_at.strftime('%b %d, %I:%M %p') }}</p></div>
-  {% else %}<p class="tech-hint">Nothing new.</p>{% endfor %}
-</section>
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% for category, message in messages %}
+<div class="tech-banner tech-banner--{{ 'ok' if category == 'success' else 'danger' }}" role="status">
+    <i class="fas fa-{{ 'circle-check' if category == 'success' else 'triangle-exclamation' }}"></i><span>{{ message }}</span>
+</div>
+{% endfor %}
+{% endwith %}
+
+{{ feed(rows, unread_ids, 'technician', total) }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/notifications.js') }}" defer></script>
 {% endblock %}

@@ -1,7 +1,10 @@
-<!-- shop.html - Fully Functional Notification System -->
 {% extends "base/user_base.html" %}
 
 {% block title %}Shop{% endblock %}
+
+{% macro product_icon(category) -%}
+fa-{% if category == 'memory' %}memory{% elif category == 'storage' %}hdd{% elif category == 'battery' %}battery-three-quarters{% elif category == 'accessory' %}plug{% elif category == 'cpu' %}microchip{% elif category == 'gpu' %}gamepad{% else %}box{% endif %}
+{%- endmacro %}
 
 {% block content %}
 <!-- Top Bar -->
@@ -11,19 +14,17 @@
         <p>Browse and purchase computer parts &amp; accessories</p>
     </div>
     <div class="user-top-actions">
-        <!-- Notification Bell - Links to notifications page -->
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications" id="notifBtn">
             <i class="fas fa-bell"></i>
             <span class="user-badge" id="notifBadge" data-live-count="notifications">0</span>
         </a>
-        <button class="user-icon-btn" onclick="toggleCart()" title="View cart" id="cartToggleBtn">
+        <button type="button" class="user-icon-btn" onclick="toggleCart()" title="View cart" id="cartToggleBtn" aria-label="View cart">
             <i class="fas fa-shopping-cart"></i>
             <span class="user-badge" id="cartBadge">{{ cart_count if cart_count else 0 }}</span>
         </button>
     </div>
 </div>
 
-<!-- Flash Messages -->
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
         <div class="flash-messages">
@@ -38,10 +39,43 @@
     {% endif %}
 {% endwith %}
 
+{% set count_sale = products|selectattr('on_sale')|list|length %}
+{% set count_hot = highlights.values()|selectattr('hot')|list|length %}
+{% set count_low = highlights.values()|selectattr('low_price')|list|length %}
+
+<!-- Banner: what is on sale / selling most, and how delivery works -->
+<section class="shop-banner" aria-label="Shop highlights">
+    <div class="shop-banner-main">
+        {% if banner.sale_count %}
+        <span class="shop-banner-tag"><i class="fas fa-tags"></i> Sale</span>
+        <h2>Up to {{ banner.max_discount }}% off on {{ banner.sale_count }} item{{ 's' if banner.sale_count != 1 else '' }}</h2>
+        <p>Sale prices are applied in your cart automatically while stocks last.</p>
+        <button type="button" class="shop-banner-btn" data-quick-jump="sale">Shop the sale <i class="fas fa-arrow-right"></i></button>
+        {% elif banner.hot %}
+        <span class="shop-banner-tag"><i class="fas fa-fire"></i> Trending</span>
+        <h2>Best sellers this month: {{ banner.hot|join(' and ') }}</h2>
+        <p>What other DEVTech customers are buying the most right now.</p>
+        <button type="button" class="shop-banner-btn" data-quick-jump="hot">See what's hot <i class="fas fa-arrow-right"></i></button>
+        {% else %}
+        <span class="shop-banner-tag"><i class="fas fa-microchip"></i> Parts &amp; accessories</span>
+        <h2>Parts our technicians install every day</h2>
+        <p>Upgrade or repair your device with tested RAM, storage, batteries and more.</p>
+        {% if count_low %}<button type="button" class="shop-banner-btn" data-quick-jump="low">See budget picks <i class="fas fa-arrow-right"></i></button>{% endif %}
+        {% endif %}
+    </div>
+    <ul class="shop-banner-perks">
+        <li><i class="fas fa-motorcycle"></i>
+            {% if banner.riders_on_duty %}{{ banner.riders_on_duty }} rider{{ 's' if banner.riders_on_duty != 1 else '' }} delivering today{% else %}Riders deliver Monday to Saturday{% endif %}</li>
+        <li><i class="fas fa-clock"></i> Order before 4 PM for same-day delivery nearby</li>
+        {% if site().gcash_enabled %}<li><i class="fas fa-qrcode"></i> Pay by GCash QR{% if site().cod_enabled %} or cash on delivery{% endif %}</li>
+        {% elif site().cod_enabled %}<li><i class="fas fa-money-bill-wave"></i> Cash on delivery</li>{% endif %}
+    </ul>
+</section>
+
 <!-- Filter Bar -->
 <div class="user-shop-filters">
     <div class="user-filter-group">
-        <span class="user-filter-label">Category:</span>
+        <label class="user-filter-label" for="categoryFilter">Category:</label>
         <select class="user-filter-select" id="categoryFilter" onchange="filterProducts()">
             <option value="all">All Products</option>
             <option value="memory">Memory (RAM)</option>
@@ -53,7 +87,7 @@
         </select>
     </div>
     <div class="user-filter-group">
-        <span class="user-filter-label">Sort:</span>
+        <label class="user-filter-label" for="sortFilter">Sort:</label>
         <select class="user-filter-select" id="sortFilter" onchange="filterProducts()">
             <option value="popular">Most Popular</option>
             <option value="price-low">Price: Low to High</option>
@@ -63,48 +97,76 @@
     </div>
     <div class="user-search">
         <i class="fas fa-search"></i>
-        <input type="text" placeholder="Search products..." class="user-search-input" id="searchInput" oninput="filterProducts()" />
+        <input type="search" placeholder="Search products..." class="user-search-input" id="searchInput" oninput="filterProducts()" aria-label="Search products" />
     </div>
+</div>
+<div class="shop-quick" role="toolbar" aria-label="Show">
+    <button type="button" class="shop-quick-chip is-active" data-quick="all" aria-pressed="true">All</button>
+    <button type="button" class="shop-quick-chip" data-quick="sale" aria-pressed="false"><i class="fas fa-tags"></i> On sale <span>{{ count_sale }}</span></button>
+    <button type="button" class="shop-quick-chip" data-quick="low" aria-pressed="false"><i class="fas fa-arrow-down-wide-short"></i> Low price <span>{{ count_low }}</span></button>
+    <button type="button" class="shop-quick-chip" data-quick="hot" aria-pressed="false"><i class="fas fa-fire"></i> Hot <span>{{ count_hot }}</span></button>
 </div>
 
 <!-- Product Grid -->
 <div class="user-shop-grid" id="productGrid">
     {% for product in products %}
-    <div class="user-product-card" 
-         data-category="{{ product.category }}" 
-         data-price="{{ product.price }}" 
-         data-name="{{ product.name }}" 
-         data-id="{{ product.id }}" 
-         data-stock="{{ product.stock_quantity }}">
-        {% if product.stock_quantity > 0 and product.stock_quantity <= 3 %}
-        <div class="user-product-badge sale">Low Stock</div>
-        {% elif product.stock_quantity <= 0 %}
-        <div class="user-product-badge out">Out of Stock</div>
-        {% endif %}
+    {% set hl = highlights[product.id] %}
+    <div class="user-product-card"
+         data-category="{{ product.category }}"
+         data-price="{{ product.effective_price }}"
+         data-name="{{ product.name|lower }} {{ (product.compatibility or '')|lower }} {{ (product.description or '')|lower }}"
+         data-id="{{ product.id }}"
+         data-stock="{{ product.stock_quantity }}"
+         data-sold="{{ hl.sold }}"
+         data-created="{{ product.created_at.strftime('%Y%m%d%H%M%S') if product.created_at else '0' }}"
+         data-sale="{{ 1 if product.on_sale else 0 }}"
+         data-hot="{{ 1 if hl.hot else 0 }}"
+         data-low="{{ 1 if hl.low_price else 0 }}">
+        <div class="shop-badges">
+            {% if product.stock_quantity <= 0 %}
+            <span class="shop-badge out">Out of stock</span>
+            {% else %}
+            {% if product.on_sale %}<span class="shop-badge sale">Sale −{{ product.discount_percent }}%</span>{% endif %}
+            {% if hl.hot %}<span class="shop-badge hot"><i class="fas fa-fire"></i> Hot</span>{% endif %}
+            {% if hl.low_price %}<span class="shop-badge low">Low price</span>{% endif %}
+            {% if product.stock_quantity <= 3 %}<span class="shop-badge stock">Only {{ product.stock_quantity }} left</span>{% endif %}
+            {% endif %}
+        </div>
         <div class="user-product-image">
-            <i class="fas fa-{% if product.category == 'memory' %}memory{% elif product.category == 'storage' %}hdd{% elif product.category == 'battery' %}battery-three-quarters{% elif product.category == 'accessory' %}plug{% elif product.category == 'cpu' %}microchip{% elif product.category == 'gpu' %}gamepad{% else %}box{% endif %}"></i>
+            {% if product.image_url %}<img src="{{ product.image_url }}" alt="" loading="lazy">{% else %}<i class="fas {{ product_icon(product.category) }}"></i>{% endif %}
         </div>
         <h3 class="user-product-name">{{ product.name }}</h3>
         <p class="user-product-desc">{{ (product.description or '')|truncate(80, True, '...') }}</p>
         <div class="user-product-meta">
-            <span class="user-product-price">₱{{ "%.2f"|format(product.price) }}</span>
+            <span class="user-product-price">₱{{ "{:,.2f}".format(product.effective_price) }}
+                {% if product.on_sale %}<s class="shop-was">₱{{ "{:,.2f}".format(product.price) }}</s>{% endif %}</span>
             <span class="user-product-compat">{{ product.compatibility or 'Universal' }}</span>
         </div>
         <div class="user-product-stock">
-            <span class="stock-label">In Stock:</span>
-            <span class="stock-count {% if product.stock_quantity <= 0 %}out{% endif %}" id="stock-{{ product.id }}">{{ product.stock_quantity }}</span>
-            <span class="stock-unit">units</span>
+            {% if product.stock_quantity > 0 %}
+            <span class="stock-label">In stock:</span>
+            <span class="stock-count">{{ product.stock_quantity }}</span>
+            {% else %}
+            <span class="stock-count out">Out of stock</span>
+            {% endif %}
+            {% if hl.sold %}<span class="shop-sold">· {{ hl.sold }} sold this month</span>{% endif %}
         </div>
         <div class="user-product-actions">
-            <button class="user-product-btn view-btn" onclick="showProductDetails('{{ product.id }}')">
-                <span>View Details</span>
+            <button type="button" class="user-product-btn view-btn" onclick="showProductDetails('{{ product.id }}')" aria-label="Details of {{ product.name }}">
+                <i class="fas fa-eye"></i> <span>Details</span>
             </button>
-            <button class="user-product-btn buy-btn" onclick="addToCart('{{ product.id }}')" {% if product.stock_quantity <= 0 %}disabled{% endif %}>
-                <i class="fas fa-cart-plus"></i> <span class="btn-text">Add to Cart</span>
+            <button type="button" class="user-product-btn buy-btn" onclick="addToCart('{{ product.id }}', 1, this)" {% if product.stock_quantity <= 0 %}disabled{% endif %}>
+                <i class="fas {{ 'fa-cart-plus' if product.stock_quantity > 0 else 'fa-ban' }}"></i>
+                <span class="btn-text">{{ 'Add to Cart' if product.stock_quantity > 0 else 'Out of Stock' }}</span>
             </button>
         </div>
     </div>
     {% endfor %}
+</div>
+<div class="user-empty-state" id="shopNoResults" {% if products %}hidden{% endif %}>
+    <i class="fas fa-box-open" style="font-size:2.5rem; opacity:0.35;"></i>
+    <h3>{{ 'No products match' if products else 'The shop is empty right now' }}</h3>
+    <p>{{ 'Try another search, category or filter.' if products else 'Please check back soon.' }}</p>
 </div>
 
 <!-- Logged-in user's saved delivery address (used to pre-fill checkout) -->
@@ -119,21 +181,34 @@
     'longitude': user.longitude | float if user.longitude is not none else None
 } | tojson | safe }}</script>
 
+{% set ns = namespace(items={}) %}
+{% for product in products %}{% set _ = ns.items.update({product.id|string: {
+    'id': product.id,
+    'name': product.name,
+    'price': product.effective_price|float,
+    'regular': product.price|float,
+    'onSale': product.on_sale,
+    'discount': product.discount_percent,
+    'description': product.description or '',
+    'compatibility': product.compatibility or 'Universal',
+    'stock': product.stock_quantity,
+    'category': product.category or ''
+}}) %}{% endfor %}
+<script id="productDataJson" type="application/json">{{ ns.items|tojson }}</script>
+
 <!-- Leaflet (OpenStreetMap) — used for the delivery-address pin picker in checkout -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
 <!-- Cart Sidebar -->
-<div class="user-cart-sidebar" id="cartSidebar">
+<div class="user-cart-sidebar" id="cartSidebar" aria-label="Your cart">
     <div class="user-cart-header">
         <div class="user-cart-header-left">
             <i class="fas fa-shopping-bag"></i>
             <h3>Your Cart</h3>
             <span class="user-cart-count" id="cartCountDisplay">0</span>
         </div>
-        <button class="user-cart-close" onclick="toggleCart()">
+        <button type="button" class="user-cart-close" onclick="toggleCart()" aria-label="Close cart">
             <i class="fas fa-times"></i>
         </button>
     </div>
@@ -144,7 +219,7 @@
             </div>
             <h4>Your cart is empty</h4>
             <p>Looks like you haven't added any items yet.</p>
-            <button class="user-btn-primary" onclick="toggleCart()">Start Shopping</button>
+            <button type="button" class="user-btn-primary" onclick="toggleCart()">Start Shopping</button>
         </div>
         <div class="user-cart-items" id="cartItems" style="display:none;"></div>
     </div>
@@ -155,7 +230,7 @@
                 <span id="cartTotal">₱0.00</span>
             </div>
             <div class="user-cart-shipping">
-                <span>Shipping</span>
+                <span>Delivery</span>
                 <span>Free</span>
             </div>
             <div class="user-cart-total">
@@ -164,32 +239,32 @@
             </div>
         </div>
         <div class="user-cart-actions">
-            <button class="user-btn-primary full" onclick="checkout()">
+            <button type="button" class="user-btn-primary full" onclick="checkout()">
                 <i class="fas fa-credit-card"></i> Proceed to Checkout
             </button>
-            <button class="user-btn-secondary full" onclick="clearCart()">
+            <button type="button" class="user-btn-secondary full" onclick="clearCart()">
                 <i class="fas fa-trash-alt"></i> Clear Cart
             </button>
         </div>
     </div>
 </div>
 
-<!-- Cart Overlay -->
-<div class="user-cart-overlay" id="cartOverlay" onclick="toggleCart()"></div>
+<div class="user-cart-overlay" id="cartOverlay"></div>
 
 <!-- Product Modal -->
 <div class="user-modal" id="productModal">
-    <div class="user-modal-content">
+    <div class="user-modal-content" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="user-modal-header">
             <h2 id="modalTitle">Product Details</h2>
-            <button class="user-modal-close" onclick="closeProductModal()">&times;</button>
+            <button type="button" class="user-modal-close" onclick="closeProductModal()" aria-label="Close">&times;</button>
         </div>
         <div class="user-modal-body" id="productModalBody">
             <div class="user-modal-image">
                 <i class="fas fa-box" id="modalIcon" style="font-size:4rem;"></i>
             </div>
             <h3 id="modalName" style="font-size:1.3rem; font-weight:700;">Product Name</h3>
-            <p class="user-modal-price" id="modalPrice">₱0.00</p>
+            <p class="user-modal-price"><span id="modalPrice">₱0.00</span> <s class="shop-was" id="modalWas" hidden></s>
+                <span class="shop-badge sale" id="modalSale" hidden></span></p>
             <p class="user-modal-desc" id="modalDesc">Description</p>
             <div class="user-modal-compat">
                 <i class="fas fa-check-circle" style="color:var(--success);"></i>
@@ -202,31 +277,31 @@
                 <span> units</span>
             </div>
             <div class="user-modal-quantity">
-                <label>Quantity:</label>
+                <label for="modalQty">Quantity:</label>
                 <div class="user-quantity-control">
-                    <button class="user-qty-btn" onclick="changeModalQty(-1)">-</button>
+                    <button type="button" class="user-qty-btn" onclick="changeModalQty(-1)" aria-label="Fewer">-</button>
                     <input type="number" id="modalQty" value="1" min="1" max="99">
-                    <button class="user-qty-btn" onclick="changeModalQty(1)">+</button>
+                    <button type="button" class="user-qty-btn" onclick="changeModalQty(1)" aria-label="More">+</button>
                 </div>
             </div>
             <div class="user-modal-actions">
-                <button class="user-btn-primary full" onclick="buyProductFromModal()">
-                    <i class="fas fa-shopping-cart"></i> Add to Cart
+                <button type="button" class="user-btn-primary full" id="modalAddBtn" onclick="buyProductFromModal()">
+                    <i class="fas fa-shopping-cart"></i> <span class="btn-text">Add to Cart</span>
                 </button>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Payment Method Modal -->
+<!-- Checkout Modal -->
 <div class="user-modal" id="paymentModal">
-    <div class="user-modal-content" style="max-width: 480px;">
+    <div class="user-modal-content" style="max-width: 520px;" role="dialog" aria-modal="true" aria-labelledby="checkoutTitle">
         <div class="user-modal-header">
-            <h2><i class="fas fa-credit-card"></i> Checkout</h2>
-            <button class="user-modal-close" onclick="closePaymentModal()">&times;</button>
+            <h2 id="checkoutTitle"><i class="fas fa-credit-card"></i> Checkout</h2>
+            <button type="button" class="user-modal-close" onclick="closePaymentModal()" aria-label="Close">&times;</button>
         </div>
         <div class="user-modal-body">
-            <div class="user-cart-summary" style="margin-bottom:1.2rem;">
+            <div class="user-cart-summary" style="margin-bottom:1rem;">
                 <div class="user-cart-total">
                     <span>Total to Pay</span>
                     <span id="paymentModalTotal">₱0.00</span>
@@ -239,7 +314,6 @@
                     <i class="fas fa-map-marker-alt"></i> Delivery Address
                 </div>
 
-                <!-- Saved address on file: shown by default, user can keep it or change it -->
                 <div class="user-address-card" id="addressView" style="display:none;">
                     <div class="user-address-card-icon"><i class="fas fa-location-dot"></i></div>
                     <div class="user-address-card-body">
@@ -255,13 +329,11 @@
                     </button>
                 </div>
 
-                <!-- No usable address on file yet -->
                 <div class="user-address-missing" id="addressMissingNotice" style="display:none;">
                     <i class="fas fa-exclamation-circle"></i>
                     <span>You don't have a delivery address saved yet. Please add one to continue.</span>
                 </div>
 
-                <!-- Add / edit address form -->
                 <div class="user-address-form" id="addressEditForm" style="display:none;">
                     <div class="user-form-row cols-2">
                         <div class="user-form-group">
@@ -292,10 +364,9 @@
                         </div>
                     </div>
 
-                    <!-- Location pin picker (Leaflet / OpenStreetMap) -->
                     <div class="user-form-group">
                         <div class="user-address-map-header">
-                            <label>Pin Your Exact Location <span class="user-field-optional">(optional, helps the rider find you)</span></label>
+                            <label>Pin Your Exact Location <span class="user-field-optional">(optional, gives a more exact delivery time)</span></label>
                             <button type="button" class="user-locate-btn" id="locateMeBtn" onclick="locateMeOnMap()">
                                 <i class="fas fa-crosshairs"></i> Use My Location
                             </button>
@@ -315,6 +386,15 @@
                         </button>
                     </div>
                 </div>
+
+                <div class="shop-eta" id="checkoutEta" aria-live="polite">
+                    <i class="fas fa-truck-fast" aria-hidden="true"></i>
+                    <div>
+                        <span class="shop-eta-title">Estimated delivery</span>
+                        <strong id="checkoutEtaLabel"><span class="shop-skeleton" style="width:12rem;"></span></strong>
+                        <small id="checkoutEtaNote"></small>
+                    </div>
+                </div>
             </div>
 
             <!-- Payment Method -->
@@ -323,7 +403,7 @@
                     <i class="fas fa-wallet"></i> Payment Method
                 </div>
                 <div class="user-payment-options">
-                    <label class="user-payment-option selected" id="paymentOptionCod" onclick="selectPaymentMethod('cod')">
+                    <label class="user-payment-option selected" id="paymentOptionCod">
                         <input type="radio" name="paymentMethod" value="cod" checked onchange="selectPaymentMethod('cod')">
                         <span class="user-payment-option-icon cod"><i class="fas fa-money-bill-wave"></i></span>
                         <span class="user-payment-option-info">
@@ -332,630 +412,358 @@
                         </span>
                         <span class="user-payment-option-check"><i class="fas fa-check-circle"></i></span>
                     </label>
-                    <label class="user-payment-option" id="paymentOptionGcash" onclick="selectPaymentMethod('gcash')">
+                    <label class="user-payment-option" id="paymentOptionGcash">
                         <input type="radio" name="paymentMethod" value="gcash" onchange="selectPaymentMethod('gcash')">
                         <span class="user-payment-option-icon gcash"><i class="fas fa-mobile-alt"></i></span>
                         <span class="user-payment-option-info">
                             <strong>GCash</strong>
-                            <small>Pay via GCash, verified by our team</small>
+                            <small>Scan our QR, then upload your payment screenshot</small>
                         </span>
                         <span class="user-payment-option-check"><i class="fas fa-check-circle"></i></span>
                     </label>
                 </div>
 
-                <div class="user-form-group" id="gcashReferenceGroup" style="display:none; margin-top:1rem;">
-                    <label for="gcashReferenceInput">GCash Reference Number</label>
-                    <input type="text" id="gcashReferenceInput" placeholder="e.g. 1234567890123" maxlength="50" oninput="updatePlaceOrderState()">
-                    <p class="user-field-hint">
-                        Send payment to our GCash number, then enter the reference number from your receipt.
-                    </p>
+                <div class="shop-gcash" id="gcashPayGroup" hidden>
+                    <div class="shop-gcash-top">
+                        <div class="shop-gcash-qr">
+                            <img id="gcashQrImg" alt="GCash QR code with the exact amount to pay" hidden>
+                            <div class="shop-gcash-noqr" id="gcashQrMissing" hidden>
+                                <i class="fas fa-qrcode" aria-hidden="true"></i>
+                                <span>Send the amount to the GCash number shown.</span>
+                            </div>
+                            <span class="shop-skeleton shop-skeleton-qr" id="gcashQrLoading"></span>
+                        </div>
+                        <div class="shop-gcash-info">
+                            <span class="shop-gcash-label">Pay exactly</span>
+                            <strong class="shop-gcash-amount" id="gcashAmount">₱0.00</strong>
+                            <span class="shop-gcash-to">to <strong id="gcashName"></strong></span>
+                            <span class="shop-gcash-number" id="gcashNumber"></span>
+                        </div>
+                    </div>
+                    <ol class="shop-gcash-steps">
+                        <li id="gcashStepScan">Open GCash, tap <b>Pay QR</b> and scan this code. The amount is already filled in.</li>
+                        <li>Check the amount and complete the payment.</li>
+                        <li>Take a screenshot of the successful payment and upload it here.</li>
+                    </ol>
+                    <label class="shop-proof" id="proofDrop">
+                        <input type="file" id="paymentProofInput" accept="image/png,image/jpeg" class="shop-visually-hidden" onchange="pickPaymentProof(this)">
+                        <span class="shop-proof-empty" id="proofEmpty">
+                            <i class="fas fa-cloud-arrow-up" aria-hidden="true"></i>
+                            <strong>Upload payment screenshot</strong>
+                            <small>JPG or PNG, up to 5 MB</small>
+                        </span>
+                        <span class="shop-proof-chosen" id="proofChosen" hidden>
+                            <img id="proofPreview" alt="Your payment screenshot">
+                            <span><strong id="proofName"></strong><small>Tap to choose a different screenshot</small></span>
+                        </span>
+                    </label>
+                    <p class="user-field-hint">Our team checks the screenshot against our GCash account before your order is sent out.</p>
                 </div>
             </div>
         </div>
         <div class="user-modal-footer">
-            <button class="user-btn-secondary" onclick="closePaymentModal()">Cancel</button>
-            <button class="user-btn-primary" id="confirmPaymentBtn" onclick="confirmCheckout()" disabled>
+            <button type="button" class="user-btn-secondary" onclick="closePaymentModal()">Cancel</button>
+            <button type="button" class="user-btn-primary" id="confirmPaymentBtn" onclick="confirmCheckout()" disabled>
                 <i class="fas fa-check"></i> Place Order
             </button>
         </div>
     </div>
 </div>
 
-<!-- Toast Container -->
 <div id="toastContainer"></div>
 
 <script>
 // ============================================
-// PRODUCT DATA - Generated from Server
+// DATA AND STATE
 // ============================================
-
-const productData = {
-    {% for product in products %}
-    "{{ product.id }}": {
-        id: {{ product.id }},
-        name: {{ (product.name)|js_html }},
-        price: {{ product.price }},
-        priceDisplay: "₱{{ "%.2f"|format(product.price) }}",
-        description: {{ (product.description)|js_html }},
-        compatibility: {{ (product.compatibility or 'Universal')|js_html }},
-        stock: {{ product.stock_quantity }},
-        category: {{ (product.category)|js_html }}
-    }{% if not loop.last %},{% endif %}
-    {% endfor %}
-};
-
-// ============================================
-// STATE
-// ============================================
+const productData = JSON.parse(document.getElementById('productDataJson').textContent || '{}');
+const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
 let currentProductId = null;
 let cartItems = [];
 let cartTotal = 0;
 let cartCount = 0;
 let isCartOpen = false;
-let isAddingToCart = false;
 let isProcessingCheckout = false;
-let unreadNotifications = 0;
-let notificationCheckInterval = null;
+let quickFilter = 'all';
+let proofFile = null;
+let checkoutSummaryRequest = 0;
 
 // ============================================
-// TOAST NOTIFICATION
+// TOAST (text only, so product names can never inject markup)
 // ============================================
-
-function showUserToast(message, type = 'info', duration = 4000) {
-    let container = document.getElementById('toastContainer');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'toastContainer';
-        container.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 10000;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            max-width: 400px;
-            width: 100%;
-            pointer-events: none;
-        `;
-        document.body.appendChild(container);
-    }
-    
+function shopToast(message, type = 'info', duration = 4000, action = null) {
+    const container = document.getElementById('toastContainer');
+    const colors = {success: '#22c55e', error: '#ef4444', warning: '#f59e0b', info: '#2563eb'};
+    const icons = {success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle'};
     const toast = document.createElement('div');
-    toast.style.cssText = `
-        pointer-events: auto;
-        background: white;
-        padding: 12px 20px;
-        border-radius: 12px;
-        border-left: 4px solid ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#2563eb'};
-        box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        font-size: 0.9rem;
-        font-weight: 500;
-        color: #0f172a;
-        transform: translateX(120%);
-        transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-        width: 100%;
-    `;
-    
-    const icons = {
-        'success': 'fa-check-circle',
-        'error': 'fa-exclamation-circle',
-        'warning': 'fa-exclamation-triangle',
-        'info': 'fa-info-circle'
-    };
-    
-    const colors = {
-        'success': '#22c55e',
-        'error': '#ef4444',
-        'warning': '#f59e0b',
-        'info': '#2563eb'
-    };
-    
-    toast.innerHTML = `
-        <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
-        <span style="flex:1;">${message}</span>
-        <button onclick="this.parentElement.remove()" style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
-    `;
-    
+    toast.className = 'shop-toast';
+    toast.style.borderLeftColor = colors[type] || colors.info;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    const icon = document.createElement('i');
+    icon.className = 'fas ' + (icons[type] || icons.info);
+    icon.style.color = colors[type] || colors.info;
+    const text = document.createElement('span');
+    text.textContent = message;
+    toast.append(icon, text);
+    if (action) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'shop-toast-action';
+        btn.textContent = action.label;
+        btn.addEventListener('click', () => { action.run(); toast.remove(); });
+        toast.append(btn);
+    }
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'shop-toast-close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.innerHTML = '&times;';
+    close.addEventListener('click', () => toast.remove());
+    toast.append(close);
     container.appendChild(toast);
-    
-    requestAnimationFrame(() => {
-        toast.style.transform = 'translateX(0)';
-    });
-    
+    requestAnimationFrame(() => toast.classList.add('show'));
     setTimeout(() => {
-        toast.style.transform = 'translateX(120%)';
-        setTimeout(() => {
-            if (toast.parentElement) toast.remove();
-        }, 400);
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 350);
     }, duration);
 }
 
 // ============================================
-// NOTIFICATION FUNCTIONS
+// FILTER, QUICK FILTERS AND SORT
 // ============================================
-
-function updateNotificationBadge(count) {
-    const badge = document.getElementById('notifBadge');
-    if (badge) {
-        if (count > 0) {
-            badge.textContent = count;
-            badge.style.display = '';
-            badge.style.background = '#ef4444';
-        } else {
-            badge.textContent = '0';
-            badge.style.display = 'none';
-        }
-    }
-    unreadNotifications = count;
-}
-
-function checkNotifications() {
-    fetch('/api/notifications/unread-count')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.count !== undefined) {
-                updateNotificationBadge(data.count);
-            }
-        })
-        .catch(error => {
-            console.error('Error checking notifications:', error);
-        });
-}
-
-// ============================================
-// PRODUCT FILTERING
-// ============================================
-
 function filterProducts() {
     const category = document.getElementById('categoryFilter').value;
-    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const words = document.getElementById('searchInput').value.toLowerCase().split(/\s+/).filter(Boolean);
     const sort = document.getElementById('sortFilter').value;
-    const cards = document.querySelectorAll('.user-product-card');
+    const grid = document.getElementById('productGrid');
+    const cards = Array.from(grid.querySelectorAll('.user-product-card'));
 
-    let visibleCards = Array.from(cards);
+    const visible = cards.filter(card => {
+        if (category !== 'all' && card.dataset.category !== category) return false;
+        if (quickFilter !== 'all' && card.dataset[quickFilter] !== '1') return false;
+        const text = card.dataset.name || '';
+        return words.every(w => text.includes(w));
+    });
+    const num = (card, key) => parseFloat(card.dataset[key]) || 0;
+    const sorters = {
+        'popular': (a, b) => num(b, 'sold') - num(a, 'sold'),
+        'price-low': (a, b) => num(a, 'price') - num(b, 'price'),
+        'price-high': (a, b) => num(b, 'price') - num(a, 'price'),
+        'newest': (a, b) => num(b, 'created') - num(a, 'created'),
+    };
+    // Re-order the cards in the grid, in-stock items first.
+    cards.sort((a, b) => (num(a, 'stock') > 0 ? 0 : 1) - (num(b, 'stock') > 0 ? 0 : 1) || (sorters[sort] || sorters.popular)(a, b));
+    cards.forEach(card => {
+        card.hidden = !visible.includes(card);
+        grid.appendChild(card);
+    });
+    document.getElementById('shopNoResults').hidden = visible.length > 0;
+}
 
-    if (category !== 'all') {
-        visibleCards = visibleCards.filter(card => card.dataset.category === category);
-    }
-
-    if (search) {
-        visibleCards = visibleCards.filter(card => {
-            const name = card.dataset.name.toLowerCase();
-            return name.includes(search);
-        });
-    }
-
-    if (sort === 'price-low') {
-        visibleCards.sort((a, b) => parseFloat(a.dataset.price) - parseFloat(b.dataset.price));
-    } else if (sort === 'price-high') {
-        visibleCards.sort((a, b) => parseFloat(b.dataset.price) - parseFloat(a.dataset.price));
-    }
-
-    cards.forEach(card => card.style.display = 'none');
-    visibleCards.forEach(card => card.style.display = '');
+function setQuickFilter(name) {
+    quickFilter = name;
+    document.querySelectorAll('.shop-quick-chip').forEach(chip => {
+        const on = chip.dataset.quick === name;
+        chip.classList.toggle('is-active', on);
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    filterProducts();
 }
 
 // ============================================
-// CART FUNCTIONS
+// CART
 // ============================================
-
-function toggleCart() {
-    isCartOpen = !isCartOpen;
+function toggleCart(force) {
+    isCartOpen = typeof force === 'boolean' ? force : !isCartOpen;
     const sidebar = document.getElementById('cartSidebar');
-    const overlay = document.getElementById('cartOverlay');
-    
-    if (isCartOpen) {
-        sidebar.classList.add('open');
-        overlay.classList.add('show');
-        document.body.style.overflow = 'hidden';
-        loadCart();
-    } else {
-        sidebar.classList.remove('open');
-        overlay.classList.remove('show');
-        document.body.style.overflow = '';
-    }
+    sidebar.classList.toggle('open', isCartOpen);
+    // While open it counts as a dialog, so live updates never reload the page under it.
+    if (isCartOpen) sidebar.setAttribute('role', 'dialog'); else sidebar.removeAttribute('role');
+    document.getElementById('cartOverlay').classList.toggle('show', isCartOpen);
+    document.body.style.overflow = isCartOpen ? 'hidden' : '';
+    if (isCartOpen) loadCart();
 }
 
 function loadCart() {
-    fetch('/api/cart')
-        .then(response => response.json())
+    return fetch('/api/cart')
+        .then(r => r.ok ? r.json() : Promise.reject())
         .then(data => {
             cartItems = data.items || [];
             cartTotal = data.total || 0;
             cartCount = data.count || 0;
             renderCart();
+            refreshCardLimits();
         })
-        .catch(error => {
-            console.error('Error loading cart:', error);
-        });
+        .catch(() => shopToast('Could not load your cart. Please try again.', 'error'));
+}
+
+function setCartBadge(count) {
+    const badge = document.getElementById('cartBadge');
+    badge.textContent = count;
+    badge.style.display = count > 0 ? '' : 'none';
+    badge.classList.remove('update');
+    void badge.offsetWidth;
+    badge.classList.add('update');
+    document.getElementById('cartCountDisplay').textContent = count;
 }
 
 function renderCart() {
     const empty = document.getElementById('cartEmpty');
     const items = document.getElementById('cartItems');
     const footer = document.getElementById('cartFooter');
-    const total = document.getElementById('cartTotal');
-    const grandTotal = document.getElementById('cartGrandTotal');
-    const badge = document.getElementById('cartBadge');
-    const countDisplay = document.getElementById('cartCountDisplay');
+    setCartBadge(cartCount);
 
-    if (badge) {
-        badge.textContent = cartCount;
-        if (cartCount > 0) {
-            badge.style.display = '';
-        } else {
-            badge.style.display = 'none';
-        }
-    }
-    if (countDisplay) {
-        countDisplay.textContent = cartCount;
-    }
-
-    if (!cartItems || cartItems.length === 0) {
+    if (!cartItems.length) {
         empty.style.display = 'block';
         items.style.display = 'none';
         footer.style.display = 'none';
         return;
     }
-
     empty.style.display = 'none';
     items.style.display = 'block';
     footer.style.display = 'block';
 
-    let html = '';
+    items.innerHTML = '';
     cartItems.forEach(item => {
-        html += `
-            <div class="user-cart-item" data-id="${item.id}" data-product-id="${item.product_id}">
-                <div class="user-cart-item-info">
-                    <h4>${escapeHtml(item.product_name)}</h4>
-                    <div class="user-cart-item-price">₱${parseFloat(item.price || 0).toFixed(2)}</div>
-                </div>
-                <div class="user-cart-item-controls">
-                    <div class="user-cart-item-qty">
-                        <button class="user-qty-btn-sm" onclick="updateCartItem(${item.id}, -1)" ${item.quantity <= 1 ? 'disabled' : ''}>
-                            <i class="fas fa-minus"></i>
-                        </button>
-                        <span>${item.quantity}</span>
-                        <button class="user-qty-btn-sm" onclick="updateCartItem(${item.id}, 1)">
-                            <i class="fas fa-plus"></i>
-                        </button>
-                    </div>
-                    <button class="user-cart-remove" onclick="removeCartItem(${item.id})">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                </div>
+        const row = document.createElement('div');
+        row.className = 'user-cart-item';
+        row.innerHTML = `
+            <div class="user-cart-item-info">
+                <h4></h4>
+                <div class="user-cart-item-price">${peso(item.price)}${item.on_sale ? ` <s class="shop-was">${peso(item.regular_price)}</s>` : ''}</div>
             </div>
-        `;
+            <div class="user-cart-item-controls">
+                <div class="user-cart-item-qty">
+                    <button type="button" class="user-qty-btn-sm" data-step="-1" aria-label="One fewer" ${item.quantity <= 1 ? 'disabled' : ''}><i class="fas fa-minus"></i></button>
+                    <span>${Number(item.quantity)}</span>
+                    <button type="button" class="user-qty-btn-sm" data-step="1" aria-label="One more"><i class="fas fa-plus"></i></button>
+                </div>
+                <button type="button" class="user-cart-remove" aria-label="Remove"><i class="fas fa-trash-alt"></i></button>
+            </div>`;
+        row.querySelector('h4').textContent = item.product_name;
+        row.querySelectorAll('[data-step]').forEach(b => b.addEventListener('click', () => updateCartItem(item.id, Number(b.dataset.step))));
+        row.querySelector('.user-cart-remove').addEventListener('click', () => removeCartItem(item.id));
+        items.appendChild(row);
     });
-
-    items.innerHTML = html;
-    total.textContent = `₱${parseFloat(cartTotal).toFixed(2)}`;
-    grandTotal.textContent = `₱${parseFloat(cartTotal).toFixed(2)}`;
+    document.getElementById('cartTotal').textContent = peso(cartTotal);
+    document.getElementById('cartGrandTotal').textContent = peso(cartTotal);
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+function inCart(productId) {
+    const item = cartItems.find(i => String(i.product_id) === String(productId));
+    return item ? item.quantity : 0;
 }
 
-// ============================================
-// ADD TO CART
-// ============================================
+// A product's Add button is disabled once the cart holds all of its stock.
+function refreshCardLimits() {
+    document.querySelectorAll('.user-product-card').forEach(card => {
+        const stock = parseInt(card.dataset.stock, 10) || 0;
+        const btn = card.querySelector('.buy-btn');
+        if (!btn || btn.classList.contains('is-busy') || stock <= 0) return;
+        const full = inCart(card.dataset.id) >= stock;
+        btn.disabled = full;
+        btn.querySelector('.btn-text').textContent = full ? 'All in cart' : 'Add to Cart';
+        btn.querySelector('i').className = 'fas ' + (full ? 'fa-check' : 'fa-cart-plus');
+    });
+}
 
-function addToCart(productId) {
-    if (isAddingToCart) return;
-    
-    const product = document.querySelector(`.user-product-card[data-id="${productId}"]`);
-    if (!product) {
-        showUserToast('Product not found', 'error');
-        return;
-    }
-    
-    const stock = parseInt(product.dataset.stock || 0);
-    const buyBtn = product.querySelector('.buy-btn');
-    const btnText = buyBtn?.querySelector('.btn-text');
-    const icon = buyBtn?.querySelector('i');
-    
-    if (stock <= 0) {
-        showUserToast('This product is out of stock!', 'error');
-        return;
-    }
+function setButtonBusy(btn, busy, label) {
+    if (!btn) return;
+    btn.classList.toggle('is-busy', busy);
+    btn.disabled = busy;
+    btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    const icon = btn.querySelector('i');
+    const text = btn.querySelector('.btn-text');
+    if (icon) icon.className = 'fas ' + (busy ? 'fa-spinner fa-spin' : (label === 'Added' ? 'fa-check' : 'fa-cart-plus'));
+    if (text) text.textContent = busy ? 'Adding…' : (label || 'Add to Cart');
+}
 
-    isAddingToCart = true;
-    if (buyBtn) {
-        buyBtn.disabled = true;
-        if (icon) icon.className = 'fas fa-spinner fa-spin';
-        if (btnText) btnText.textContent = 'Adding';
-    }
+// Each button has its own busy state, so adding one product never blocks another.
+function addToCart(productId, qty, btn) {
+    const product = productData[productId];
+    if (!product) { shopToast('Product not found', 'error'); return Promise.resolve(false); }
+    if (btn && btn.classList.contains('is-busy')) return Promise.resolve(false);
+    if (product.stock <= 0) { shopToast('This product is out of stock.', 'error'); return Promise.resolve(false); }
 
-    fetch('/api/cart/add', {
+    setButtonBusy(btn, true);
+    return fetch('/api/cart/add', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ product_id: parseInt(productId), quantity: 1 })
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({product_id: Number(productId), quantity: qty})
     })
-    .then(response => {
-        if (!response.ok) {
-            return response.json().then(data => {
-                throw new Error(data.message || 'Failed to add to cart');
-            });
-        }
-        return response.json();
+    .then(r => r.json().then(data => ({ok: r.ok, data})))
+    .then(({ok, data}) => {
+        if (!ok || !data.success) throw new Error(data.message || 'Could not add to cart.');
+        setButtonBusy(btn, false, 'Added');
+        btn && btn.classList.add('added');
+        setTimeout(() => { if (btn) { btn.classList.remove('added'); refreshCardLimits(); } }, 1200);
+        shopToast(data.message || 'Added to cart', 'success', 3500, {label: 'View cart', run: () => toggleCart(true)});
+        return loadCart().then(() => true);
     })
-    .then(data => {
-        if (data.success) {
-            showUserToast(data.message || 'Added to cart!', 'success');
-            cartCount = data.cart_count || 0;
-            
-            const badge = document.getElementById('cartBadge');
-            if (badge) {
-                badge.textContent = cartCount;
-                if (cartCount > 0) {
-                    badge.style.display = '';
-                }
-                badge.classList.add('update');
-                setTimeout(() => badge.classList.remove('update'), 300);
-            }
-            const countDisplay = document.getElementById('cartCountDisplay');
-            if (countDisplay) {
-                countDisplay.textContent = cartCount;
-            }
-            
-            const newStock = stock - 1;
-            const stockDisplay = document.getElementById(`stock-${productId}`);
-            if (stockDisplay) {
-                stockDisplay.textContent = newStock;
-            }
-            if (product) {
-                product.dataset.stock = newStock;
-            }
-            
-            const badgeEl = product.querySelector('.user-product-badge');
-            if (newStock <= 0) {
-                if (badgeEl) {
-                    badgeEl.className = 'user-product-badge out';
-                    badgeEl.textContent = 'Out of Stock';
-                }
-                if (buyBtn) {
-                    buyBtn.disabled = true;
-                    if (icon) icon.className = 'fas fa-times-circle';
-                    if (btnText) btnText.textContent = 'Out of Stock';
-                }
-                isAddingToCart = false;
-            } else if (newStock <= 3) {
-                if (badgeEl) {
-                    badgeEl.className = 'user-product-badge sale';
-                    badgeEl.textContent = 'Low Stock';
-                }
-            }
-            
-            if (buyBtn && newStock > 0) {
-                if (icon) icon.className = 'fas fa-check';
-                if (btnText) btnText.textContent = 'Added';
-                buyBtn.classList.add('added');
-                
-                if (!isCartOpen) {
-                    toggleCart();
-                } else {
-                    loadCart();
-                }
-                
-                setTimeout(() => {
-                    if (buyBtn) {
-                        if (icon) icon.className = 'fas fa-cart-plus';
-                        if (btnText) btnText.textContent = 'Add to Cart';
-                        buyBtn.classList.remove('added');
-                        buyBtn.disabled = false;
-                    }
-                    isAddingToCart = false;
-                }, 1500);
-            }
-        } else {
-            showUserToast(data.message || 'Failed to add to cart', 'error');
-            if (buyBtn) {
-                buyBtn.disabled = false;
-                if (icon) icon.className = 'fas fa-cart-plus';
-                if (btnText) btnText.textContent = 'Add to Cart';
-            }
-            isAddingToCart = false;
-        }
-    })
-    .catch(error => {
-        showUserToast(error.message || 'Error adding to cart', 'error');
-        if (buyBtn) {
-            buyBtn.disabled = false;
-            if (icon) icon.className = 'fas fa-cart-plus';
-            if (btnText) btnText.textContent = 'Add to Cart';
-        }
-        isAddingToCart = false;
+    .catch(err => {
+        setButtonBusy(btn, false);
+        refreshCardLimits();
+        shopToast(err.message || 'Could not add to cart. Please try again.', 'error');
+        return false;
     });
 }
-
-// ============================================
-// UPDATE CART ITEM
-// ============================================
 
 function updateCartItem(itemId, change) {
     const item = cartItems.find(i => i.id === itemId);
     if (!item) return;
-
-    const newQty = item.quantity + change;
-    if (newQty < 1) {
-        removeCartItem(itemId);
-        return;
-    }
-
+    const qty = item.quantity + change;
+    if (qty < 1) { removeCartItem(itemId); return; }
     fetch('/api/cart/update', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ item_id: itemId, quantity: newQty })
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({item_id: itemId, quantity: qty})
     })
-    .then(response => response.json())
+    .then(r => r.json())
     .then(data => {
-        if (data.success) {
-            loadCart();
-            showUserToast('Cart updated', 'success');
-        } else {
-            showUserToast(data.message || 'Error updating cart', 'error');
-        }
+        if (!data.success) shopToast(data.message || 'Could not update the cart.', 'error');
+        loadCart();
     })
-    .catch(error => {
-        showUserToast('Error updating cart', 'error');
-    });
+    .catch(() => shopToast('Could not update the cart.', 'error'));
 }
-
-// ============================================
-// REMOVE CART ITEM - WITH STOCK RESTORATION
-// ============================================
 
 function removeCartItem(itemId) {
-    if (!confirm('Remove this item from cart?')) return;
-
-    const item = cartItems.find(i => i.id === itemId);
-    if (item) {
-        const productCard = document.querySelector(`.user-product-card[data-id="${item.product_id}"]`);
-        if (productCard) {
-            const currentStock = parseInt(productCard.dataset.stock) || 0;
-            const newStock = currentStock + item.quantity;
-            productCard.dataset.stock = newStock;
-            const stockDisplay = document.getElementById(`stock-${item.product_id}`);
-            if (stockDisplay) {
-                stockDisplay.textContent = newStock;
-            }
-            const badge = productCard.querySelector('.user-product-badge');
-            const buyBtn = productCard.querySelector('.buy-btn');
-            const btnText = buyBtn?.querySelector('.btn-text');
-            const icon = buyBtn?.querySelector('i');
-            
-            if (newStock > 0) {
-                if (badge) {
-                    if (newStock <= 3) {
-                        badge.className = 'user-product-badge sale';
-                        badge.textContent = 'Low Stock';
-                    } else {
-                        badge.remove();
-                    }
-                }
-                if (buyBtn) {
-                    buyBtn.disabled = false;
-                    if (icon) icon.className = 'fas fa-cart-plus';
-                    if (btnText) btnText.textContent = 'Add to Cart';
-                }
-            }
-        }
-    }
-
-    fetch(`/api/cart/remove/${itemId}`, {
-        method: 'DELETE'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
+    fetch(`/api/cart/remove/${itemId}`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) shopToast('Item removed from cart', 'info');
+            else shopToast(data.message || 'Could not remove the item.', 'error');
             loadCart();
-            showUserToast('Item removed from cart', 'info');
-        } else {
-            showUserToast(data.message || 'Error removing item', 'error');
-        }
-    })
-    .catch(error => {
-        showUserToast('Error removing item', 'error');
-    });
+        })
+        .catch(() => shopToast('Could not remove the item.', 'error'));
 }
-
-// ============================================
-// CLEAR CART - WITH STOCK RESTORATION
-// ============================================
 
 function clearCart() {
-    if (!confirm('Clear your entire cart?')) return;
-
-    cartItems.forEach(item => {
-        const productCard = document.querySelector(`.user-product-card[data-id="${item.product_id}"]`);
-        if (productCard) {
-            const currentStock = parseInt(productCard.dataset.stock) || 0;
-            productCard.dataset.stock = currentStock + item.quantity;
-            const stockDisplay = document.getElementById(`stock-${item.product_id}`);
-            if (stockDisplay) {
-                stockDisplay.textContent = currentStock + item.quantity;
-            }
-            const badge = productCard.querySelector('.user-product-badge');
-            const buyBtn = productCard.querySelector('.buy-btn');
-            const btnText = buyBtn?.querySelector('.btn-text');
-            const icon = buyBtn?.querySelector('i');
-            
-            if (currentStock + item.quantity > 0) {
-                if (badge) {
-                    if (currentStock + item.quantity <= 3) {
-                        badge.className = 'user-product-badge sale';
-                        badge.textContent = 'Low Stock';
-                    } else {
-                        badge.remove();
-                    }
-                }
-                if (buyBtn) {
-                    buyBtn.disabled = false;
-                    if (icon) icon.className = 'fas fa-cart-plus';
-                    if (btnText) btnText.textContent = 'Add to Cart';
-                }
-            }
-        }
-    });
-
-    fetch('/api/cart/clear', {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            loadCart();
-            showUserToast('Cart cleared', 'info');
-        }
-    })
-    .catch(error => {
-        showUserToast('Error clearing cart', 'error');
-    });
+    if (!confirm('Remove everything from your cart?')) return;
+    fetch('/api/cart/clear', {method: 'POST'})
+        .then(r => r.json())
+        .then(() => { shopToast('Cart cleared', 'info'); loadCart(); })
+        .catch(() => shopToast('Could not clear the cart.', 'error'));
 }
 
 // ============================================
-// CHECKOUT - WITH STOCK VALIDATION
+// CHECKOUT
 // ============================================
-
 let savedAddress = null;      // last known-good address on the user's account
-let addressConfirmed = false; // true once a complete address is ready to be used for this order
+let addressConfirmed = false; // a complete address is ready for this order
 
 function checkout() {
     if (isProcessingCheckout) return;
+    if (!cartItems.length) { shopToast('Your cart is empty', 'error'); return; }
 
-    if (!cartItems || cartItems.length === 0) {
-        showUserToast('Your cart is empty', 'error');
-        return;
-    }
-
-    document.getElementById('paymentModalTotal').textContent = document.getElementById('cartGrandTotal').textContent;
-
+    document.getElementById('paymentModalTotal').textContent = peso(cartTotal);
+    clearPaymentProof();
     selectPaymentMethod('cod');
-    document.getElementById('gcashReferenceInput').value = '';
-
-    // Show the modal first so the address form (and its map container) has
-    // real dimensions before Leaflet initializes inside initCheckoutAddress().
+    toggleCart(false);
     document.getElementById('paymentModal').classList.add('active');
     document.body.style.overflow = 'hidden';
-
     initCheckoutAddress();
+    loadCheckoutSummary();
 }
 
 function closePaymentModal() {
@@ -963,26 +771,55 @@ function closePaymentModal() {
     document.body.style.overflow = '';
 }
 
-// ============================================
-// CHECKOUT - DELIVERY ADDRESS
-// ============================================
+// Amount, delivery estimate and GCash QR, all worked out by the server.
+function loadCheckoutSummary() {
+    const ticket = ++checkoutSummaryRequest;
+    const etaLabel = document.getElementById('checkoutEtaLabel');
+    etaLabel.innerHTML = '<span class="shop-skeleton" style="width:12rem;"></span>';
+    document.getElementById('checkoutEtaNote').textContent = '';
+    document.getElementById('gcashQrLoading').hidden = false;
+    document.getElementById('gcashQrImg').hidden = true;
+    document.getElementById('gcashQrMissing').hidden = true;
+
+    fetch('/api/checkout/summary')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(data => {
+            if (ticket !== checkoutSummaryRequest) return;      // an older answer arrived late
+            document.getElementById('paymentModalTotal').textContent = peso(data.total);
+            etaLabel.textContent = data.eta.label;
+            document.getElementById('checkoutEtaNote').textContent =
+                data.eta.note || (data.eta.distance_km ? `About ${data.eta.distance_km} km from our shop.` : '');
+            const g = data.gcash;
+            document.getElementById('gcashAmount').textContent = '₱' + g.amount;
+            document.getElementById('gcashName').textContent = g.name;
+            document.getElementById('gcashNumber').textContent = g.account ? 'GCash ' + g.account : '';
+            document.getElementById('gcashQrLoading').hidden = true;
+            const img = document.getElementById('gcashQrImg');
+            if (g.qr) { img.src = g.qr; img.hidden = false; }
+            document.getElementById('gcashQrMissing').hidden = !!g.qr;
+            document.getElementById('gcashStepScan').innerHTML = g.qr
+                ? 'Open GCash, tap <b>Pay QR</b> and scan this code. The amount is already filled in.'
+                : 'Open GCash, tap <b>Send</b> and send the exact amount to the number above.';
+        })
+        .catch(() => {
+            if (ticket !== checkoutSummaryRequest) return;
+            etaLabel.textContent = 'We will confirm it after you order';
+            document.getElementById('gcashQrLoading').hidden = true;
+            document.getElementById('gcashQrMissing').hidden = false;
+        });
+}
 
 function initCheckoutAddress() {
     let data = {};
-    try {
-        data = JSON.parse(document.getElementById('userAddressData').textContent || '{}');
-    } catch (e) {
-        data = {};
-    }
+    try { data = JSON.parse(document.getElementById('userAddressData').textContent || '{}'); } catch (e) { data = {}; }
+    if (savedAddress && savedAddress.address) data = savedAddress;    // saved earlier on this page
     savedAddress = data;
 
     const complete = !!(data.full_name && data.phone && data.address && data.city && data.province && data.postal_code);
     addressConfirmed = complete;
-
     const view = document.getElementById('addressView');
     const missing = document.getElementById('addressMissingNotice');
     const form = document.getElementById('addressEditForm');
-    const cancelBtn = document.getElementById('addressCancelBtn');
 
     if (complete) {
         renderAddressView(data);
@@ -993,24 +830,20 @@ function initCheckoutAddress() {
         view.style.display = 'none';
         missing.style.display = 'flex';
         form.style.display = 'block';
-        cancelBtn.style.display = 'none';
+        document.getElementById('addressCancelBtn').style.display = 'none';
         fillAddressForm(data);
         initAddressMap(data.latitude, data.longitude);
     }
-
     updatePlaceOrderState();
 }
 
 function renderAddressView(data) {
     document.getElementById('addrViewName').textContent = data.full_name;
     document.getElementById('addrViewLine').textContent =
-        [data.address, data.city, data.province].filter(Boolean).join(', ') +
-        (data.postal_code ? ' ' + data.postal_code : '');
+        [data.address, data.city, data.province].filter(Boolean).join(', ') + (data.postal_code ? ' ' + data.postal_code : '');
     document.getElementById('addrViewPhone').textContent = data.phone;
-
-    const pinNote = document.getElementById('addrViewPin');
     const hasPin = typeof data.latitude === 'number' && typeof data.longitude === 'number';
-    if (pinNote) pinNote.style.display = hasPin ? 'flex' : 'none';
+    document.getElementById('addrViewPin').style.display = hasPin ? 'flex' : 'none';
 }
 
 function fillAddressForm(data) {
@@ -1028,9 +861,7 @@ function showAddressEditForm() {
     fillAddressForm(savedAddress || {});
     document.getElementById('addressView').style.display = 'none';
     document.getElementById('addressEditForm').style.display = 'block';
-    // Only offer "Cancel" if there's an existing saved address to go back to
-    document.getElementById('addressCancelBtn').style.display =
-        (savedAddress && savedAddress.address) ? 'inline-flex' : 'none';
+    document.getElementById('addressCancelBtn').style.display = (savedAddress && savedAddress.address) ? 'inline-flex' : 'none';
     addressConfirmed = false;
     initAddressMap(pickedLat, pickedLng); // defined in user.js
     updatePlaceOrderState();
@@ -1045,426 +876,220 @@ function cancelAddressEdit() {
 }
 
 function saveAddress() {
-    const full_name = document.getElementById('addrFullName').value.trim();
-    const phone = document.getElementById('addrPhone').value.trim();
-    const address = document.getElementById('addrLine').value.trim();
-    const city = document.getElementById('addrCity').value.trim();
-    const province = document.getElementById('addrProvince').value.trim();
-    const postal_code = document.getElementById('addrPostal').value.trim();
-
-    if (!full_name || !phone || !address || !city || !province || !postal_code) {
-        showUserToast('Please fill in all delivery address fields', 'error');
+    const val = id => document.getElementById(id).value.trim();
+    const body = {
+        full_name: val('addrFullName'), phone: val('addrPhone'), address: val('addrLine'),
+        city: val('addrCity'), province: val('addrProvince'), postal_code: val('addrPostal'),
+        latitude: pickedLat, longitude: pickedLng
+    };
+    if (!body.full_name || !body.phone || !body.address || !body.city || !body.province || !body.postal_code) {
+        shopToast('Please fill in all delivery address fields', 'error');
         return;
     }
-
     const saveBtn = document.getElementById('addressSaveBtn');
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-
-    fetch('/api/user/address', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            full_name, phone, address, city, province, postal_code,
-            latitude: pickedLat, longitude: pickedLng
+    fetch('/api/user/address', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                savedAddress = data.address;
+                renderAddressView(savedAddress);
+                document.getElementById('addressEditForm').style.display = 'none';
+                document.getElementById('addressView').style.display = 'flex';
+                document.getElementById('addressMissingNotice').style.display = 'none';
+                document.getElementById('addressCancelBtn').style.display = 'inline-flex';
+                addressConfirmed = true;
+                shopToast('Delivery address saved', 'success');
+                loadCheckoutSummary();                 // the delivery estimate depends on it
+            } else {
+                shopToast(data.message || 'Could not save address', 'error');
+            }
         })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            savedAddress = data.address;
-            renderAddressView(savedAddress);
-            document.getElementById('addressEditForm').style.display = 'none';
-            document.getElementById('addressView').style.display = 'flex';
-            document.getElementById('addressMissingNotice').style.display = 'none';
-            document.getElementById('addressCancelBtn').style.display = 'inline-flex';
-            addressConfirmed = true;
-            showUserToast('Delivery address saved', 'success');
-        } else {
-            showUserToast(data.message || 'Could not save address', 'error');
-        }
-        saveBtn.disabled = false;
-        saveBtn.innerHTML = '<i class="fas fa-check"></i> Save Address';
-        updatePlaceOrderState();
-    })
-    .catch(() => {
-        showUserToast('Error saving address', 'error');
-        saveBtn.disabled = false;
-        saveBtn.innerHTML = '<i class="fas fa-check"></i> Save Address';
-    });
+        .catch(() => shopToast('Error saving address', 'error'))
+        .finally(() => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="fas fa-check"></i> Save Address';
+            updatePlaceOrderState();
+        });
 }
-
-// ============================================
-// CHECKOUT - PAYMENT METHOD
-// ============================================
 
 function selectPaymentMethod(method) {
     const input = document.querySelector(`input[name="paymentMethod"][value="${method}"]`);
     if (input) input.checked = true;
     document.getElementById('paymentOptionCod').classList.toggle('selected', method === 'cod');
     document.getElementById('paymentOptionGcash').classList.toggle('selected', method === 'gcash');
-    document.getElementById('gcashReferenceGroup').style.display = (method === 'gcash') ? 'block' : 'none';
+    document.getElementById('gcashPayGroup').hidden = method !== 'gcash';
     updatePlaceOrderState();
 }
 
-function updatePlaceOrderState() {
-    const btn = document.getElementById('confirmPaymentBtn');
-    if (!btn) return;
+function pickPaymentProof(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+        shopToast('The screenshot must be a JPG or PNG image.', 'error');
+        input.value = '';
+        return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+        shopToast('The screenshot is larger than 5 MB.', 'error');
+        input.value = '';
+        return;
+    }
+    proofFile = file;
+    const preview = document.getElementById('proofPreview');
+    if (preview.src) URL.revokeObjectURL(preview.src);
+    preview.src = URL.createObjectURL(file);
+    document.getElementById('proofName').textContent = file.name;
+    document.getElementById('proofEmpty').hidden = true;
+    document.getElementById('proofChosen').hidden = false;
+    document.getElementById('proofDrop').classList.add('has-file');
+    updatePlaceOrderState();
+}
+
+function clearPaymentProof() {
+    proofFile = null;
+    document.getElementById('paymentProofInput').value = '';
+    document.getElementById('proofEmpty').hidden = false;
+    document.getElementById('proofChosen').hidden = true;
+    document.getElementById('proofDrop').classList.remove('has-file');
+}
+
+function selectedPaymentMethod() {
     const checked = document.querySelector('input[name="paymentMethod"]:checked');
-    const method = checked ? checked.value : null;
-    const gcashRef = document.getElementById('gcashReferenceInput').value.trim();
-    const ready = addressConfirmed && !!method && (method !== 'gcash' || gcashRef.length > 0);
-    btn.disabled = !ready;
+    return checked ? checked.value : null;
+}
+
+function updatePlaceOrderState() {
+    const method = selectedPaymentMethod();
+    const ready = addressConfirmed && !!method && (method !== 'gcash' || !!proofFile);
+    document.getElementById('confirmPaymentBtn').disabled = !ready || isProcessingCheckout;
 }
 
 function confirmCheckout() {
     if (isProcessingCheckout) return;
-
     if (!addressConfirmed) {
-        showUserToast('Please add your delivery address to continue', 'error');
+        shopToast('Please add your delivery address to continue', 'error');
         showAddressEditForm();
         return;
     }
-
-    const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked').value;
-    const gcashReference = document.getElementById('gcashReferenceInput').value.trim();
-
-    if (paymentMethod === 'gcash' && !gcashReference) {
-        showUserToast('Please enter your GCash reference number', 'error');
+    const method = selectedPaymentMethod();
+    if (method === 'gcash' && !proofFile) {
+        shopToast('Upload the screenshot of your GCash payment first.', 'error');
         return;
     }
 
+    const form = new FormData();
+    form.append('payment_method', method);
+    if (method === 'gcash') form.append('payment_proof', proofFile);
+
     isProcessingCheckout = true;
-    const confirmBtn = document.getElementById('confirmPaymentBtn');
-    if (confirmBtn) {
-        confirmBtn.disabled = true;
-        confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
-    }
+    const btn = document.getElementById('confirmPaymentBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Placing order…';
 
-    fetch('/api/cart/checkout', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            payment_method: paymentMethod,
-            gcash_reference: gcashReference
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Cart is now empty server-side (checkout deleted the cart items
-            // and created the order) - reflect that immediately instead of
-            // leaving stale items showing in the sidebar.
-            cartItems = [];
-            cartTotal = 0;
-            cartCount = 0;
+    fetch('/api/cart/checkout', {method: 'POST', body: form})
+        .then(r => r.json().catch(() => ({success: false, message: 'Checkout failed. Please try again.'})))
+        .then(data => {
+            if (!data.success) {
+                if (data.error === 'address_required') showAddressEditForm();
+                throw new Error(data.message || 'Checkout failed');
+            }
+            cartItems = []; cartTotal = 0; cartCount = 0;
             renderCart();
-
-            showUserToast(
-                data.order_number
-                    ? `Order ${data.order_number} placed! Taking you to My Orders...`
-                    : (data.message || 'Order placed successfully!'),
-                'success'
-            );
             closePaymentModal();
-
+            shopToast(`Order ${data.order_number} placed! Estimated delivery: ${data.eta || 'to be confirmed'}.`, 'success');
             setTimeout(() => {
-                if (isCartOpen) toggleCart();
-            }, 600);
-            setTimeout(() => {
-                const ordersUrl = "{{ url_for('user_orders') }}";
-                window.location.href = data.order_number
-                    ? `${ordersUrl}?placed=${encodeURIComponent(data.order_number)}`
-                    : ordersUrl;
-            }, 900);
-        } else {
-            if (data.error === 'address_required') {
-                showAddressEditForm();
-            }
-            showUserToast(data.message || 'Checkout failed', 'error');
-            if (confirmBtn) {
-                confirmBtn.disabled = false;
-                confirmBtn.innerHTML = '<i class="fas fa-check"></i> Place Order';
-            }
+                window.location.href = "{{ url_for('user_orders') }}?placed=" + encodeURIComponent(data.order_number || '');
+            }, 1100);
+        })
+        .catch(err => {
+            shopToast(err.message || 'Error during checkout', 'error');
             isProcessingCheckout = false;
+            btn.innerHTML = '<i class="fas fa-check"></i> Place Order';
             updatePlaceOrderState();
-            return;
-        }
-        if (confirmBtn) {
-            confirmBtn.innerHTML = '<i class="fas fa-check"></i> Place Order';
-        }
-        isProcessingCheckout = false;
-    })
-    .catch(error => {
-        showUserToast('Error during checkout', 'error');
-        if (confirmBtn) {
-            confirmBtn.disabled = false;
-            confirmBtn.innerHTML = '<i class="fas fa-check"></i> Place Order';
-        }
-        isProcessingCheckout = false;
-        updatePlaceOrderState();
-    });
+        });
 }
 
 // ============================================
 // PRODUCT MODAL
 // ============================================
-
 function showProductDetails(id) {
     const product = productData[id];
-    if (!product) {
-        showUserToast('Product not found', 'error');
-        return;
-    }
-
+    if (!product) { shopToast('Product not found', 'error'); return; }
     currentProductId = id;
-
     document.getElementById('modalTitle').textContent = product.name;
     document.getElementById('modalName').textContent = product.name;
-    document.getElementById('modalPrice').textContent = product.priceDisplay;
+    document.getElementById('modalPrice').textContent = peso(product.price);
+    const was = document.getElementById('modalWas');
+    const sale = document.getElementById('modalSale');
+    was.hidden = sale.hidden = !product.onSale;
+    was.textContent = peso(product.regular);
+    sale.textContent = `Sale −${product.discount}%`;
     document.getElementById('modalDesc').textContent = product.description || 'No description available';
     document.getElementById('modalCompat').textContent = product.compatibility || 'Universal';
     document.getElementById('modalStock').textContent = product.stock;
-    document.getElementById('modalQty').value = 1;
-
-    const iconMap = {
-        'memory': 'fa-memory',
-        'storage': 'fa-hdd',
-        'battery': 'fa-battery-three-quarters',
-        'accessory': 'fa-plug',
-        'cpu': 'fa-microchip',
-        'gpu': 'fa-gamepad'
-    };
-    document.getElementById('modalIcon').className = `fas ${iconMap[product.category] || 'fa-box'}`;
-
+    const qty = document.getElementById('modalQty');
+    qty.value = 1;
+    qty.max = Math.max(1, Math.min(99, product.stock));
+    const icons = {memory: 'fa-memory', storage: 'fa-hdd', battery: 'fa-battery-three-quarters', accessory: 'fa-plug', cpu: 'fa-microchip', gpu: 'fa-gamepad'};
+    document.getElementById('modalIcon').className = `fas ${icons[product.category] || 'fa-box'}`;
+    const addBtn = document.getElementById('modalAddBtn');
+    addBtn.disabled = product.stock <= 0;
+    addBtn.querySelector('.btn-text').textContent = product.stock > 0 ? 'Add to Cart' : 'Out of Stock';
     document.getElementById('productModal').classList.add('active');
     document.body.style.overflow = 'hidden';
 }
 
 function closeProductModal() {
     document.getElementById('productModal').classList.remove('active');
-    document.body.style.overflow = '';
+    if (!isCartOpen) document.body.style.overflow = '';
 }
 
 function changeModalQty(change) {
     const input = document.getElementById('modalQty');
     const product = productData[currentProductId];
     if (!product) return;
-    
-    let val = parseInt(input.value) + change;
-    if (val < 1) val = 1;
-    if (val > product.stock) val = product.stock;
-    input.value = val;
+    input.value = Math.min(Math.max((parseInt(input.value, 10) || 1) + change, 1), Math.max(product.stock, 1));
 }
 
 function buyProductFromModal() {
-    if (!currentProductId) return;
-    if (isAddingToCart) return;
-    
     const product = productData[currentProductId];
     if (!product) return;
-    
-    const qty = parseInt(document.getElementById('modalQty').value) || 1;
-    const modalBtn = document.querySelector('.user-modal-actions .user-btn-primary');
-    const originalHtml = modalBtn ? modalBtn.innerHTML : '';
-    
-    if (qty > product.stock) {
-        showUserToast(`Only ${product.stock} units available`, 'error');
-        return;
-    }
-
-    isAddingToCart = true;
-    if (modalBtn) {
-        modalBtn.disabled = true;
-        modalBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding';
-    }
-
-    fetch('/api/cart/add', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ product_id: parseInt(currentProductId), quantity: qty })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showUserToast(data.message || 'Added to cart!', 'success');
-            cartCount = data.cart_count || 0;
-            
-            const badge = document.getElementById('cartBadge');
-            if (badge) {
-                badge.textContent = cartCount;
-                if (cartCount > 0) {
-                    badge.style.display = '';
-                }
-            }
-            const countDisplay = document.getElementById('cartCountDisplay');
-            if (countDisplay) {
-                countDisplay.textContent = cartCount;
-            }
-            
-            const newStock = product.stock - qty;
-            product.stock = newStock;
-            
-            const productCard = document.querySelector(`.user-product-card[data-id="${currentProductId}"]`);
-            const stockDisplay = document.getElementById(`stock-${currentProductId}`);
-            if (productCard && stockDisplay) {
-                productCard.dataset.stock = newStock;
-                stockDisplay.textContent = newStock;
-                
-                const badgeEl = productCard.querySelector('.user-product-badge');
-                const buyBtn = productCard.querySelector('.buy-btn');
-                const btnText = buyBtn?.querySelector('.btn-text');
-                const icon = buyBtn?.querySelector('i');
-                
-                if (newStock <= 0) {
-                    if (badgeEl) {
-                        badgeEl.className = 'user-product-badge out';
-                        badgeEl.textContent = 'Out of Stock';
-                    }
-                    if (buyBtn) {
-                        buyBtn.disabled = true;
-                        if (icon) icon.className = 'fas fa-times-circle';
-                        if (btnText) btnText.textContent = 'Out of Stock';
-                    }
-                } else if (newStock <= 3) {
-                    if (badgeEl) {
-                        badgeEl.className = 'user-product-badge sale';
-                        badgeEl.textContent = 'Low Stock';
-                    }
-                }
-            }
-            
-            document.getElementById('modalStock').textContent = newStock;
-            
-            if (modalBtn) {
-                modalBtn.innerHTML = '<i class="fas fa-check"></i> Added';
-                modalBtn.classList.add('added');
-                
-                if (!isCartOpen) {
-                    toggleCart();
-                } else {
-                    loadCart();
-                }
-                
-                setTimeout(() => {
-                    if (modalBtn) {
-                        modalBtn.innerHTML = originalHtml;
-                        modalBtn.disabled = false;
-                        modalBtn.classList.remove('added');
-                    }
-                    isAddingToCart = false;
-                }, 1500);
-            }
-            
-            closeProductModal();
-        } else {
-            showUserToast(data.message || 'Failed to add to cart', 'error');
-            if (modalBtn) {
-                modalBtn.innerHTML = originalHtml;
-                modalBtn.disabled = false;
-            }
-            isAddingToCart = false;
-        }
-    })
-    .catch(error => {
-        showUserToast('Error adding to cart', 'error');
-        if (modalBtn) {
-            modalBtn.innerHTML = originalHtml;
-            modalBtn.disabled = false;
-        }
-        isAddingToCart = false;
-    });
+    const qty = parseInt(document.getElementById('modalQty').value, 10) || 1;
+    if (qty > product.stock) { shopToast(`Only ${product.stock} available`, 'error'); return; }
+    addToCart(currentProductId, qty, document.getElementById('modalAddBtn'))
+        .then(ok => { if (ok) closeProductModal(); });
 }
 
 // ============================================
-// INITIALIZATION
+// START-UP AND EVENTS
 // ============================================
+document.querySelectorAll('.shop-quick-chip').forEach(chip =>
+    chip.addEventListener('click', () => setQuickFilter(chip.dataset.quick)));
+document.querySelectorAll('[data-quick-jump]').forEach(btn => btn.addEventListener('click', () => {
+    setQuickFilter(btn.dataset.quickJump);
+    document.querySelector('.shop-quick').scrollIntoView({behavior: 'smooth', block: 'start'});
+}));
+document.getElementById('cartOverlay').addEventListener('click', () => { if (isCartOpen) toggleCart(false); });
+['productModal', 'paymentModal'].forEach(id => document.getElementById(id).addEventListener('click', e => {
+    if (e.target.id === id) (id === 'productModal' ? closeProductModal : closePaymentModal)();
+}));
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (isCartOpen) toggleCart(false);
+    closeProductModal();
+    closePaymentModal();
+});
+document.querySelectorAll('.flash-close').forEach(btn => btn.addEventListener('click', function () { this.parentElement.remove(); }));
 
-document.addEventListener('DOMContentLoaded', function() {
-    filterProducts();
-    
-    // Hide notification badge if zero
+(function init() {
     const notifBadge = document.getElementById('notifBadge');
-    if (notifBadge && parseInt(notifBadge.textContent) === 0) {
-        notifBadge.style.display = 'none';
-    } else if (notifBadge) {
-        notifBadge.style.display = '';
-        notifBadge.style.background = '#ef4444';
-    }
-    
-    // Hide cart badge if zero
+    if (notifBadge && parseInt(notifBadge.textContent, 10) === 0) notifBadge.style.display = 'none';
     const cartBadge = document.getElementById('cartBadge');
-    if (cartBadge && parseInt(cartBadge.textContent) === 0) {
-        cartBadge.style.display = 'none';
-    }
-    
-    // Load cart count
-    fetch('/api/cart')
-        .then(response => response.json())
-        .then(data => {
-            cartCount = data.count || 0;
-            const badge = document.getElementById('cartBadge');
-            if (badge) {
-                badge.textContent = cartCount;
-                if (cartCount > 0) {
-                    badge.style.display = '';
-                } else {
-                    badge.style.display = 'none';
-                }
-            }
-            const countDisplay = document.getElementById('cartCountDisplay');
-            if (countDisplay) {
-                countDisplay.textContent = cartCount;
-            }
-        })
-        .catch(error => {
-            console.error('Error loading cart:', error);
-        });
-    
-    // Start notification checking
-    checkNotifications();
-    notificationCheckInterval = setInterval(checkNotifications, 30000);
-});
-
-// ============================================
-// EVENT LISTENERS
-// ============================================
-
-document.getElementById('cartOverlay').addEventListener('click', function() {
-    if (isCartOpen) toggleCart();
-});
-
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        if (isCartOpen) toggleCart();
-        closeProductModal();
-        closePaymentModal();
-    }
-});
-
-document.querySelectorAll('.flash-close').forEach(btn => {
-    btn.addEventListener('click', function() {
-        this.parentElement.remove();
-    });
-});
-
-setTimeout(() => {
-    document.querySelectorAll('.flash-message').forEach(msg => {
-        msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-        msg.style.opacity = '0';
-        msg.style.transform = 'translateY(-20px)';
-        setTimeout(() => {
-            if (msg.parentElement) msg.remove();
-        }, 500);
-    });
-}, 5000);
-
-
-console.log('✅ Shop system initialized');
-console.log('📬 Unread notifications:', unreadNotifications);
+    if (cartBadge && parseInt(cartBadge.textContent, 10) === 0) cartBadge.style.display = 'none';
+    filterProducts();
+    loadCart();
+})();
 </script>
 {% endblock %}

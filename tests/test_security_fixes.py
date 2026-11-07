@@ -46,9 +46,17 @@ def test_setup_route_disabled_without_token(client, monkeypatch):
 
 
 def test_self_registered_technician_is_inactive(client, admin):
-    r = client.post('/technician/register', data={
+    from io import BytesIO
+    from datetime import date
+    from app import TechnicianEmployee
+    db.session.add(TechnicianEmployee(tech_id='TECH-0042', full_name='New Tech', birth_date=date(1990, 1, 1),
+                                      id_type='UMID', id_number='CRN-0001-2345'))
+    db.session.commit()
+    r = client.post('/technician/register', content_type='multipart/form-data', data={
         'fullname': 'New Tech', 'email': 'new@test.local', 'staffId': 'TECH-0042',
-        'password': 'password123', 'gender': 'male', 'dob': '1990-01-01'})
+        'password': 'password123', 'password2': 'password123', 'gender': 'male', 'dob': '1990-01-01',
+        'phone': '09171234567', 'id_type': 'UMID', 'id_number': 'CRN-0001-2345', 'privacy_consent': '1',
+        'id_document': (BytesIO(b'\x89PNG\r\n\x1a\n' + b'0' * 64), 'id.png', 'image/png')})
     assert r.status_code == 302
     u = Technician.query.filter_by(username='TECH-0042').first()
     assert u is not None and u.is_active is False
@@ -97,6 +105,43 @@ def test_oauth_never_logs_into_admin(admin):
 def test_oauth_links_verified_customer(customer):
     _, sess = _oauth(customer.email, True)
     assert sess.get('user_id') == customer.id
+
+
+def test_oauth_with_a_technicians_email_is_just_an_invalid_login(client, technician):
+    resp, sess = _oauth(technician.email, True)
+    assert 'user_id' not in sess and resp.headers['Location'].endswith('/login')
+    assert Customer.query.filter_by(email=technician.email).count() == 0   # no customer account made
+    with client.session_transaction() as s:
+        s['_flashes'] = sess.get('_flashes', [])
+    html = client.get('/login').get_data(as_text=True)
+    assert 'Invalid login.' in html and 'echnician' not in html
+
+
+# ---- Each sign-in page is for its own kind of account ----
+
+def test_customer_sign_in_page_never_signs_in_or_mentions_staff(client, technician, admin):
+    for account, password in ((technician, 'testpassword1'), (admin, 'adminpass123')):
+        r = client.post('/login', data={'email': account.email, 'password': password})
+        html = r.get_data(as_text=True)
+        # exactly what a wrong password gets; no hint that staff portals exist
+        assert r.status_code == 200 and 'Invalid email or password' in html
+        assert '/technician/login' not in html and '/admin/login' not in html and 'echnician' not in html
+        with client.session_transaction() as s:
+            assert 'user_id' not in s
+
+
+def test_customer_still_signs_in_on_the_customer_page(client, customer):
+    r = client.post('/login', data={'email': customer.email, 'password': 'customerpass1'})
+    assert r.status_code == 302 and r.headers['Location'].endswith('/user/dashboard')
+
+
+def test_staff_pages_only_accept_their_own_accounts(client, customer, technician):
+    r = client.post('/admin/login', data={'email': technician.email, 'password': 'testpassword1'})
+    assert r.status_code == 200 and 'Invalid admin credentials' in r.get_data(as_text=True)
+    r = client.post('/technician/login', data={'technician_id': customer.email, 'password': 'customerpass1'})
+    assert r.status_code == 401
+    with client.session_transaction() as s:
+        assert 'user_id' not in s
 
 
 # ---- Shop ----
@@ -156,7 +201,9 @@ def test_admin_confirm_updates_order_and_blocks_self_cancel(client, customer, ad
     p = _product(stock=3)
     login_as(client, customer)
     client.post('/api/cart/add', json={'product_id': p.id, 'quantity': 1})
-    client.post('/api/cart/checkout', json={'payment_method': 'gcash', 'gcash_reference': 'REF1'})
+    client.post('/api/cart/checkout', data={'payment_method': 'gcash',
+                                            'payment_proof': (io.BytesIO(b'\x89PNG\r\n\x1a\n' + b'0' * 32), 'paid.png')},
+                content_type='multipart/form-data')
     order = Order.query.one()
     txn = Transaction.query.filter_by(order_id=order.id).one()
 
@@ -173,7 +220,7 @@ def test_admin_confirm_updates_order_and_blocks_self_cancel(client, customer, ad
     # ...but while it is still pending they can, and the payment goes to Refunds.
     db.session.get(Order, order.id).status = 'pending'
     db.session.commit()
-    r = client.post(f'/api/order/{order.id}/cancel').get_json()
+    r = client.post(f'/api/order/{order.id}/cancel', json={'refund_to': '09171234567'}).get_json()
     assert r['success'] and r['refund_opened']
     from app import Refund
     assert Refund.query.filter_by(transaction_id=txn.id, status='pending').count() == 1

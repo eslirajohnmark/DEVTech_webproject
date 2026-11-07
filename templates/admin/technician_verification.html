@@ -1,0 +1,96 @@
+{% extends "base/admin_base.html" %}
+
+{% block title %}Technician Verification{% endblock %}
+
+{% block content %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Technician Verification</h1>
+        <p>Check each new technician's ID before they can be assigned repair jobs</p>
+    </div>
+    <div class="admin-top-actions">
+        {% include 'admin/_notification_bell.html' %}
+    </div>
+</div>
+
+<div class="admin-stats-grid">
+    {% for key, icon, tone in [('pending', 'fa-hourglass-half', 'warning'), ('needs_correction', 'fa-pen-to-square', 'warning'),
+                               ('verified', 'fa-circle-check', 'primary'), ('rejected', 'fa-circle-xmark', 'danger'),
+                               ('suspended', 'fa-pause', 'danger')] %}
+    <a class="admin-stat-card tv-stat {% if status == key %}is-current{% endif %}" href="{{ url_for('admin_tech_verification', status=key) }}">
+        <div class="admin-stat-icon tv-tone-{{ tone }}"><i class="fas {{ icon }}"></i></div>
+        <div class="admin-stat-info">
+            <span class="admin-stat-number">{{ counts.get(key, 0) }}</span>
+            <span class="admin-stat-label">{{ statuses[key] }}</span>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+<form class="admin-payment-filters" method="GET" action="{{ url_for('admin_tech_verification') }}">
+    <div class="admin-search-wrapper">
+        <i class="fas fa-search"></i>
+        <input type="search" name="q" value="{{ q }}" maxlength="100" aria-label="Search technicians"
+               placeholder="Search by name, Tech ID or email... (Enter)">
+    </div>
+    <div class="admin-filter-group">
+        <select name="status" onchange="this.form.submit()" class="admin-filter-select" aria-label="Verification status">
+            {% for key, label in statuses.items() %}
+            <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+            <option value="all" {% if status == 'all' %}selected{% endif %}>All technicians</option>
+        </select>
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-search"></i> Search</button>
+        <a class="admin-btn admin-btn-secondary" href="{{ url_for('admin_tech_verification') }}"><i class="fas fa-undo"></i> Reset</a>
+    </div>
+</form>
+
+<div class="tv-list">
+    {% for t in techs %}
+    <article class="tv-card tv-card--{{ t.verification_status }}">
+        <div class="tv-card-main">
+            <div class="tv-card-title">
+                <strong>{{ t.full_name }}</strong>
+                <span class="admin-muted">{{ t.username }} · {{ t.email }}</span>
+            </div>
+            <p class="admin-muted tv-card-meta">
+                {% if t.id_type %}<i class="fas fa-id-card"></i> {{ t.id_type }}{% endif %}
+                {% if t.id_document_file %}· ID on file{% else %}· <span class="tv-warn">No ID uploaded</span>{% endif %}
+                {% if t.verification_submitted_at %}· sent {{ t.verification_submitted_at.strftime('%b %d, %Y %I:%M %p') }}{% endif %}
+                {% if t.verification_decided_at and t.verification_status != 'pending' %}· decided {{ t.verification_decided_at.strftime('%b %d, %Y') }}{% endif %}
+            </p>
+            {% if t.verification_reason %}<p class="tv-card-reason">{{ t.verification_reason }}</p>{% endif %}
+        </div>
+        <div class="tv-card-side">
+            <span class="tv-status tv-status--{{ t.verification_status }}">{{ t.verification_label }}</span>
+            <a class="admin-btn admin-btn-sm admin-btn-primary" href="{{ url_for('admin_tech_verification_detail', tech_id=t.id) }}">
+                <i class="fas fa-magnifying-glass"></i> Review
+            </a>
+        </div>
+    </article>
+    {% else %}
+    <div class="admin-empty-state">
+        <i class="fas fa-id-card"></i>
+        {% if q or status not in ('pending', 'all') %}
+        <p>No technicians match</p>
+        <p>Try a different search or status.</p>
+        {% else %}
+        <p>Nothing waiting for review</p>
+        <p>New technician registrations appear here with the ID they uploaded.</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="admin-pagination">
+    {% if pager.page > 1 %}
+    <a class="admin-page-btn" href="{{ url_for('admin_tech_verification', page=pager.page - 1, status=status, q=q or None) }}" aria-label="Previous page"><i class="fas fa-chevron-left"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-left"></i></span>{% endif %}
+    <span class="admin-page-info">
+        {% if pager.total %}{{ pager.first }}–{{ pager.last }} of {{ pager.total }} · {% endif %}Page {{ pager.page }} of {{ pager.pages }}
+    </span>
+    {% if pager.page < pager.pages %}
+    <a class="admin-page-btn" href="{{ url_for('admin_tech_verification', page=pager.page + 1, status=status, q=q or None) }}" aria-label="Next page"><i class="fas fa-chevron-right"></i></a>
+    {% else %}<span class="admin-page-btn is-disabled" aria-hidden="true"><i class="fas fa-chevron-right"></i></span>{% endif %}
+</div>
+{% endblock %}

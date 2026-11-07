@@ -12046,6 +12046,9 @@ html, body {
 
 @media (max-width: 768px) {
     html, body { overflow: auto; }
+    /* style.css centres <body> (for the login card); here body scrolls, so a tall page
+       centred in it would overflow upward and its top could never be scrolled to. */
+    body { align-items: flex-start; }
 
     .user-dashboard-wrapper {
         flex-direction: column;
@@ -12117,3 +12120,502 @@ html, body {
 .msg-attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-attachment-chip button { border: 0; background: none; color: inherit; font-size: 1.1rem; cursor: pointer; line-height: 1; }
 .user-chat-attach { cursor: pointer; }
+
+/* ==========================================================================
+   MESSAGES — Messenger-style chat (templates/user/messages.html)
+   One fixed-height frame: the page no longer grows (and jumps) every time a
+   message is sent; only the conversation list and the thread scroll.
+   Two-class selectors so these win over the older .user-chat-* rules above
+   and the stacked-layout rules in responsive-fixes.css.
+   ========================================================================== */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+.msgr { --msgr-them: #e9ecf1; --msgr-me: linear-gradient(135deg, #2563eb, #3b82f6); }
+[data-theme="dark"] .msgr { --msgr-them: rgba(255, 255, 255, 0.09); }
+
+.user-top-bar.msgr-top-bar { margin-bottom: 1rem; }
+
+@media (min-width: 769px) {
+    /* The main column is already 100vh; let the chat take what's left. */
+    .user-main-content:has(> .msgr) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 1.5rem; }
+    .user-main-content:has(> .msgr) > * { flex: none; }
+    .user-main-content > .msgr.user-messages-layout { flex: 1 1 auto; min-height: 0; }
+}
+@media (max-width: 768px) {
+    /* Phones: the chat fills the screen under the menu bar, like the Messenger app. */
+    .user-top-bar.msgr-top-bar { margin-bottom: 0.75rem; }
+    .msgr-top-bar .user-page-title { display: none; }
+    .msgr.user-messages-layout { height: calc(100dvh - 9.5rem); min-height: 380px; }
+}
+
+.msgr.user-messages-layout {
+    display: grid;
+    grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+    border-radius: 18px;
+}
+.msgr .user-messages-sidebar { min-height: 0; max-height: none; display: flex; flex-direction: column; }
+.msgr .user-conversation-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; padding: 0.35rem; }
+.msgr .user-messages-main { min-height: 0; display: flex; flex-direction: column; }
+
+/* ---- conversation list ---- */
+.msgr .user-conversation-item {
+    gap: 0.75rem;
+    padding: 0.55rem 0.65rem;
+    border: 0;
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+}
+.msgr .user-conversation-item:hover { background: rgba(127, 127, 127, 0.1); }
+.msgr .user-conversation-item.active { background: rgba(37, 99, 235, 0.14); }
+.msgr .user-conversation-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.msgr .user-conversation-header,
+.msgr .user-conversation-preview { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; min-width: 0; }
+.msgr .user-conversation-name { font-size: 0.92rem; font-weight: 600; color: var(--user-text-primary); }
+.msgr .user-conversation-time { flex: none; font-size: 0.72rem; color: var(--user-text-muted); }
+.msgr .user-conversation-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; color: var(--user-text-muted); }
+.msgr .is-unread .user-conversation-name,
+.msgr .is-unread .user-conversation-last { font-weight: 700; color: var(--user-text-primary); }
+.msgr-avatar-wrap { position: relative; display: inline-flex; flex: none; }
+.msgr-online-dot {
+    position: absolute;
+    right: 0; bottom: 0;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: #31a24c;
+    border: 2px solid var(--user-card);
+}
+
+/* ---- thread header ---- */
+.msgr .user-chat-header {
+    justify-content: flex-start;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--user-border);
+    flex: none;
+}
+.msgr .user-chat-header-info { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.msgr-head-text { display: flex; flex-direction: column; min-width: 0; }
+.msgr .user-chat-name { font-size: 0.98rem; }
+.msgr .user-chat-status { font-size: 0.74rem; }
+.msgr-back {
+    display: none;
+    flex: none;
+    width: 36px; height: 36px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    color: var(--user-primary);
+    text-decoration: none;
+}
+.msgr-back:hover { background: rgba(127, 127, 127, 0.12); }
+
+/* ---- thread ---- */
+.msgr .user-chat-messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    padding: 0.75rem 1rem 0.5rem;
+    gap: 2px;
+    overscroll-behavior: contain;
+}
+.msgr .user-chat-message { max-width: min(75%, 560px); align-items: flex-end; gap: 0.5rem; }
+.msgr .user-chat-message.is-first { margin-top: 0.5rem; }
+.msgr-msg-avatar { flex: none; width: 28px; visibility: hidden; }
+.msgr .user-chat-message.received.is-last .msgr-msg-avatar { visibility: visible; }
+.msgr .user-chat-bubble { min-width: 0; padding: 0.5rem 0.8rem; border-radius: 18px; }
+.msgr .user-chat-bubble p { font-size: 0.92rem; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msgr .user-chat-message.sent .user-chat-bubble { background: var(--msgr-me); color: #fff; }
+.msgr .user-chat-message.received .user-chat-bubble { background: var(--msgr-them); color: var(--user-text-primary); }
+/* Bubbles in a run join up, like Messenger: tighter corners on the inner side. */
+.msgr .user-chat-message.sent:not(.is-first) .user-chat-bubble { border-top-right-radius: 5px; }
+.msgr .user-chat-message.sent:not(.is-last) .user-chat-bubble { border-bottom-right-radius: 5px; }
+.msgr .user-chat-message.sent.is-last .user-chat-bubble { border-bottom-right-radius: 18px; }
+.msgr .user-chat-message.received:not(.is-first) .user-chat-bubble { border-top-left-radius: 5px; }
+.msgr .user-chat-message.received:not(.is-last) .user-chat-bubble { border-bottom-left-radius: 5px; }
+.msgr .user-chat-message.received.is-last .user-chat-bubble { border-bottom-left-radius: 18px; }
+/* Times move to dividers and hover tooltips once the script has run. */
+.msgr .msgr-ready .user-chat-time { display: none; }
+.msgr .user-chat-message.is-pending .user-chat-bubble { opacity: 0.6; }
+.msgr .user-chat-message.is-failed .user-chat-bubble { opacity: 0.75; box-shadow: 0 0 0 1.5px #ef4444; }
+.msgr .msgr-file-note { font-style: italic; }
+.msgr .msg-attachment img { max-width: min(240px, 100%); border-radius: 14px; }
+.msgr-divider {
+    align-self: center;
+    margin: 0.9rem 0 0.3rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--user-text-muted);
+}
+.msgr-receipt { align-self: flex-end; margin: 0.15rem 0.3rem 0 0; font-size: 0.7rem; color: var(--user-text-muted); }
+.msgr-receipt.is-failed { color: #ef4444; font-weight: 600; }
+.msgr-intro { margin: auto; text-align: center; }
+.msgr-intro .pf-avatar { margin: 0 auto 0.6rem; }
+.msgr-pick { margin: auto; text-align: center; }
+
+/* ---- composer ---- */
+.msgr .msg-attachment-chip { flex: none; margin-top: 0.4rem; }
+.msgr .user-chat-input {
+    flex: none;
+    display: flex;
+    align-items: flex-end;
+    gap: 0.45rem;
+    margin: 0;
+    padding: 0.55rem 0.75rem 0.7rem;
+    border-top: 0;
+    background: var(--user-card);
+}
+.msgr .user-chat-attach,
+.msgr .user-chat-send {
+    flex: none;
+    width: 36px; height: 36px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--user-primary);
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+.msgr .user-chat-attach:hover,
+.msgr .user-chat-send:hover { background: rgba(127, 127, 127, 0.12); color: var(--user-primary); }
+.msgr .user-chat-input-wrapper {
+    flex: 1;
+    min-width: 0;
+    padding: 0.45rem 0.9rem;
+    border: 0;
+    border-radius: 20px;
+    background: var(--msgr-them);
+}
+.msgr .user-chat-input-wrapper:focus-within { box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35); }
+.msgr .user-chat-input-field {
+    display: block;
+    width: 100%;
+    max-height: 132px;
+    padding: 0;
+    border: 0;
+    resize: none;
+    overflow-y: auto;
+    background: transparent;
+    font: inherit;
+    font-size: 0.92rem;
+    line-height: 1.35;
+    color: var(--user-text-primary);
+}
+
+/* ---- narrow: one pane at a time, with a back arrow (like the Messenger app) ---- */
+@container user-main (max-width: 860px) {
+    .msgr.user-messages-layout { grid-template-columns: minmax(0, 1fr); }
+    .msgr.has-thread .user-messages-sidebar { display: none; }
+    .msgr:not(.has-thread) .user-messages-main { display: none; }
+    .msgr .user-messages-sidebar { border: 0; max-height: none; }
+    .msgr .user-chat-messages { min-height: 0; max-height: none; }
+    .msgr .msgr-back { display: inline-flex; }
+}
+
+/* ==========================================================================
+   BOOKING FORM — device types, brand / model, chosen-service details
+   ========================================================================== */
+.user-form-step .user-device-grid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.user-device-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0 0.8rem; margin-top: 0.8rem; }
+.user-optional { font-weight: 400; font-size: 0.78em; color: var(--user-text-muted); }
+.user-service-info {
+    margin-top: 0.7rem;
+    padding: 0.8rem 0.95rem;
+    border-radius: 12px;
+    border: 1px solid var(--user-border);
+    background: var(--user-bg);
+    font-size: 0.85rem;
+}
+.user-service-info p { margin: 0 0 0.45rem; color: var(--user-text-primary); line-height: 1.5; }
+.user-service-info ul { list-style: none; margin: 0 0 0.45rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; }
+.user-service-info li { color: var(--user-text-secondary); }
+.user-service-info li i { color: var(--user-primary); margin-right: 0.25rem; }
+.user-service-info small { display: block; color: var(--user-text-muted); line-height: 1.45; }
+.user-service-note {
+    display: flex; gap: 0.5rem; align-items: flex-start;
+    margin: 0.6rem 0 0; padding: 0.65rem 0.85rem;
+    border-radius: 10px;
+    background: rgba(37, 99, 235, 0.07);
+    color: var(--user-text-secondary);
+    font-size: 0.82rem; line-height: 1.5;
+}
+.user-service-note i { color: var(--user-primary); margin-top: 0.2rem; }
+
+
+/* ==========================================================================
+   SHOP — banner, badges, quick filters, card actions, checkout (ETA, GCash QR,
+   payment screenshot) and toasts
+   ========================================================================== */
+.shop-banner {
+    display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 1.2rem;
+    padding: 1.5rem 1.6rem; margin-bottom: 1.2rem; border-radius: var(--user-radius-md);
+    background: linear-gradient(120deg, #1e3a8a 0%, #2563eb 60%, #3b82f6 100%); color: #fff;
+    box-shadow: 0 10px 28px -12px rgba(37, 99, 235, 0.55);
+}
+.shop-banner-tag {
+    display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.65rem; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.shop-banner h2 { margin: 0.6rem 0 0.35rem; font-size: 1.35rem; font-weight: 800; line-height: 1.25; color: #fff; }
+.shop-banner p { margin: 0 0 0.9rem; font-size: 0.88rem; color: rgba(255, 255, 255, 0.85); }
+.shop-banner-btn {
+    display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.55rem 1rem; border: 0; border-radius: 999px;
+    background: #fff; color: #1d4ed8; font: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer;
+}
+.shop-banner-btn:hover { background: #eff6ff; }
+.shop-banner-btn:focus-visible { outline: 3px solid #bfdbfe; outline-offset: 2px; }
+.shop-banner-perks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; align-content: center; }
+.shop-banner-perks li {
+    display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.75rem; border-radius: 10px;
+    background: rgba(255, 255, 255, 0.12); font-size: 0.82rem; font-weight: 600;
+}
+.shop-banner-perks i { width: 1.1rem; text-align: center; opacity: 0.9; }
+
+.shop-quick { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: -0.4rem 0 1.1rem; }
+.shop-quick-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.85rem; border-radius: 999px;
+    border: 1px solid var(--user-border); background: var(--user-card); color: var(--user-text-secondary);
+    font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+}
+.shop-quick-chip span { font-size: 0.72rem; padding: 0 0.4rem; border-radius: 999px; background: var(--user-bg); }
+.shop-quick-chip:hover { border-color: var(--user-primary); color: var(--user-primary); }
+.shop-quick-chip.is-active { background: var(--user-primary); border-color: var(--user-primary); color: #fff; }
+.shop-quick-chip.is-active span { background: rgba(255, 255, 255, 0.22); }
+.shop-quick-chip:focus-visible { outline: 2px solid var(--user-primary); outline-offset: 2px; }
+
+.user-shop-grid .user-product-card[hidden], #shopNoResults[hidden] { display: none; }
+.shop-badges {
+    position: absolute; top: 0.6rem; left: 0.6rem; right: 0.6rem; z-index: 1;
+    display: flex; flex-wrap: wrap; gap: 0.3rem; pointer-events: none;
+}
+.shop-badge {
+    display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.5rem; border-radius: 999px;
+    font-size: 0.62rem; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1.5;
+}
+.shop-badge.sale { background: #dc2626; color: #fff; }
+.shop-badge.hot { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+.shop-badge.low { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.shop-badge.stock { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.shop-badge.out { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+.user-product-card .user-product-image { margin-top: 1.1rem; }
+.user-product-card .user-product-image img { max-height: 70px; max-width: 100%; object-fit: contain; }
+.user-product-price { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 0.35rem; }
+.shop-was { font-size: 0.75em; font-weight: 500; color: var(--user-text-muted); }
+.shop-sold { color: var(--user-text-muted); font-weight: 500; }
+
+/* Card buttons: fixed shapes, so "Adding…" / "Added" never resizes the card. */
+.user-product-actions { align-items: stretch; }
+.user-product-btn.view-btn { flex: 0 0 auto; min-width: 0; padding: 0 0.7rem; white-space: nowrap; }
+.user-product-btn.buy-btn { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; }
+.user-product-btn.buy-btn.is-busy { background: var(--user-primary); color: #fff; opacity: 0.85; cursor: progress; }
+.user-product-btn.buy-btn:hover:not(:disabled) { transform: none; }
+.user-modal-actions .user-btn-primary.is-busy { opacity: 0.85; cursor: progress; }
+.user-modal-actions .user-btn-primary.added { background: var(--user-success); }
+
+.shop-eta {
+    display: flex; gap: 0.75rem; align-items: flex-start; margin-top: 0.9rem; padding: 0.75rem 0.9rem;
+    border-radius: 10px; background: rgba(37, 99, 235, 0.07); border: 1px solid rgba(37, 99, 235, 0.18);
+}
+.shop-eta > i { color: var(--user-primary); font-size: 1.1rem; margin-top: 0.2rem; }
+.shop-eta > div { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.shop-eta-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--user-text-muted); }
+.shop-eta strong { font-size: 0.95rem; color: var(--user-text-primary); }
+.shop-eta small { font-size: 0.78rem; color: var(--user-text-secondary, var(--user-text-muted)); line-height: 1.45; }
+
+.shop-skeleton {
+    display: inline-block; height: 0.95rem; border-radius: 6px; vertical-align: middle;
+    background: var(--user-border); animation: shopShimmer 1.2s ease-in-out infinite;   /* opacity only: cheap to animate */
+}
+.shop-skeleton[hidden] { display: none; }
+@keyframes shopShimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .shop-skeleton { animation: none; } }
+
+.shop-gcash { margin-top: 1rem; padding: 1rem; border-radius: 12px; border: 1px solid var(--user-border); background: var(--user-bg); }
+.shop-gcash[hidden] { display: none; }
+.shop-gcash-top { display: flex; gap: 1rem; align-items: center; }
+.shop-gcash-qr {
+    flex: 0 0 auto; width: 148px; height: 148px; border-radius: 12px; background: #fff; border: 1px solid var(--user-border);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.shop-gcash-qr img { width: 100%; height: 100%; object-fit: contain; }
+.shop-gcash-qr img[hidden], .shop-gcash-noqr[hidden] { display: none; }
+.shop-skeleton-qr { width: 120px; height: 120px; border-radius: 10px; }
+.shop-gcash-noqr { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0.6rem; text-align: center; font-size: 0.74rem; color: #475569; }
+.shop-gcash-noqr i { font-size: 2rem; color: #94a3b8; }
+.shop-gcash-info { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.shop-gcash-label { font-size: 0.75rem; color: var(--user-text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+.shop-gcash-amount { font-size: 1.6rem; font-weight: 800; color: var(--user-primary); line-height: 1.15; }
+.shop-gcash-to { font-size: 0.85rem; color: var(--user-text-secondary, var(--user-text-muted)); }
+.shop-gcash-number { font-size: 0.85rem; font-weight: 600; color: var(--user-text-primary); }
+.shop-gcash-steps { margin: 0.9rem 0 0.8rem; padding-left: 1.2rem; font-size: 0.82rem; color: var(--user-text-secondary, var(--user-text-muted)); line-height: 1.55; }
+.shop-proof {
+    display: block; padding: 0.9rem; border: 2px dashed var(--user-border); border-radius: 12px;
+    background: var(--user-card); cursor: pointer; text-align: center; transition: border-color 0.2s ease;
+}
+.shop-proof:hover, .shop-proof:focus-within { border-color: var(--user-primary); }
+.shop-proof.has-file { border-style: solid; border-color: var(--user-success); text-align: left; }
+.shop-proof-empty { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; color: var(--user-text-secondary, var(--user-text-muted)); }
+.shop-proof-empty i { font-size: 1.5rem; color: var(--user-primary); }
+.shop-proof-empty strong { color: var(--user-text-primary); font-size: 0.9rem; }
+.shop-proof-empty small, .shop-proof-chosen small { font-size: 0.75rem; color: var(--user-text-muted); }
+.shop-proof-chosen { display: flex; align-items: center; gap: 0.8rem; }
+.shop-proof-chosen[hidden], .shop-proof-empty[hidden] { display: none; }
+.shop-proof-chosen img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--user-border); }
+.shop-proof-chosen span { display: flex; flex-direction: column; min-width: 0; }
+.shop-proof-chosen strong { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shop-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+
+#toastContainer .shop-toast {
+    pointer-events: auto; display: flex; align-items: center; gap: 0.75rem; width: 100%; box-sizing: border-box;
+    padding: 0.75rem 1rem; border-radius: 12px; border-left: 4px solid var(--user-primary);
+    background: var(--user-card); color: var(--user-text-primary); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+    font-size: 0.88rem; font-weight: 500; transform: translateX(120%); transition: transform 0.35s ease;
+}
+#toastContainer .shop-toast.show { transform: translateX(0); }
+.shop-toast > span { flex: 1; min-width: 0; }
+.shop-toast-action {
+    flex: 0 0 auto; border: 1px solid var(--user-primary); background: transparent; color: var(--user-primary);
+    border-radius: 999px; padding: 0.25rem 0.7rem; font: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer;
+}
+.shop-toast-close { background: none; border: 0; color: #94a3b8; cursor: pointer; font-size: 1.2rem; padding: 0 0.2rem; }
+
+@media (max-width: 900px) {
+    .shop-banner { grid-template-columns: 1fr; }
+    .shop-banner-perks { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+}
+@media (max-width: 480px) {
+    .shop-banner { padding: 1.2rem; }
+    .shop-banner h2 { font-size: 1.15rem; }
+    .shop-gcash-top { flex-direction: column; align-items: flex-start; }
+    .shop-gcash-qr { width: 100%; max-width: 220px; height: auto; aspect-ratio: 1; align-self: center; }
+    .user-product-actions { flex-direction: row; }
+    .user-product-btn.view-btn span { display: none; }
+    #toastContainer { left: 12px; right: 12px; width: auto; max-width: none; }
+}
+
+/* ==========================================================================
+   MY ORDERS — cards, tracking timeline, details modal, cancel and refunds
+   ========================================================================== */
+.ord-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.2rem; }
+.ord-card { cursor: default; gap: 0.6rem; }
+.ord-card:hover { transform: none; }
+.ord-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; }
+.ord-card-head h4 { margin: 0; color: var(--user-text-primary); }
+.ord-muted { font-size: 0.8rem; color: var(--user-text-muted); }
+.ord-card-total { display: flex; justify-content: space-between; align-items: center; }
+.ord-amount { font-size: 1.2rem; font-weight: 700; color: var(--user-primary); }
+.ord-card-tags { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.ord-card-actions { display: flex; margin-top: auto; }
+.ord-card-actions .user-action-btn-sm { flex: 1; justify-content: center; }
+.ord-eta { display: flex; gap: 0.5rem; align-items: center; margin: 0; padding: 0.5rem 0.7rem; border-radius: 10px;
+    background: rgba(37, 99, 235, 0.07); font-size: 0.82rem; color: var(--user-text-secondary, var(--user-text-muted)); }
+.ord-eta i { color: var(--user-primary); }
+.ord-eta strong { color: var(--user-text-primary); }
+.ord-eta--done { background: rgba(34, 197, 94, 0.09); }
+.ord-eta--done i { color: var(--user-success); }
+
+.ord-status { display: inline-flex; align-items: center; padding: 0.2rem 0.65rem; border-radius: 999px; font-size: 0.72rem;
+    font-weight: 700; white-space: nowrap; background: #e2e8f0; color: #334155; }
+.ord-status--pending { background: #fef3c7; color: #92400e; }
+.ord-status--processing { background: #dbeafe; color: #1d4ed8; }
+.ord-status--out_for_delivery { background: #e0e7ff; color: #4338ca; }
+.ord-status--completed { background: #dcfce7; color: #15803d; }
+.ord-status--cancelled { background: #fee2e2; color: #b91c1c; }
+
+.ord-modal { max-width: 640px; }
+.ord-modal .user-modal-body { max-height: min(70vh, 640px); overflow-y: auto; }
+.ord-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.ord-eta-box { margin-top: 0.8rem; }
+.ord-eta-box--done { background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.25); }
+.ord-eta-box--done > i { color: var(--user-success); }
+.ord-rider { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--user-text-secondary, var(--user-text-muted)); }
+.ord-rider i { color: var(--user-primary); margin-right: 0.3rem; }
+.ord-section { margin: 1.1rem 0 0.5rem; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--user-text-muted); }
+
+.ord-steps { list-style: none; margin: 0; padding: 0; position: relative; }
+.ord-step { position: relative; display: flex; gap: 0.75rem; padding-bottom: 0.9rem; }
+.ord-step:last-child { padding-bottom: 0; }
+.ord-step::before { content: ''; position: absolute; left: 0.8rem; top: 1.7rem; bottom: 0; width: 2px; background: var(--user-border); }
+.ord-step:last-child::before { display: none; }
+.ord-step.is-done::before { background: var(--user-primary); }
+.ord-step-dot { flex: 0 0 auto; width: 1.65rem; height: 1.65rem; border-radius: 50%; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 0.7rem; background: var(--user-bg); color: var(--user-text-muted); border: 2px solid var(--user-border); z-index: 1; }
+.ord-step.is-done .ord-step-dot { background: var(--user-primary); border-color: var(--user-primary); color: #fff; }
+.ord-step.is-current .ord-step-dot { background: var(--user-card); border-color: var(--user-primary); color: var(--user-primary); }
+.ord-step.is-problem .ord-step-dot { background: var(--user-danger); border-color: var(--user-danger); color: #fff; }
+.ord-step-text { display: flex; flex-direction: column; padding-top: 0.15rem; min-width: 0; }
+.ord-step-text strong { font-size: 0.88rem; color: var(--user-text-primary); }
+.ord-step:not(.is-done):not(.is-current):not(.is-problem) .ord-step-text strong { color: var(--user-text-muted); font-weight: 600; }
+.ord-step-text small { font-size: 0.76rem; color: var(--user-text-muted); }
+
+.ord-table-wrap { overflow-x: auto; }
+/* The modal body is a height-capped flex column: without this its scrolling children
+   (the items table) shrink until they disappear instead of the body scrolling. */
+.user-modal-body > * { flex-shrink: 0; }
+
+/* Destructive action button (cancel order); used on My Orders, was never styled. */
+.user-btn-danger {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+    padding: 0.65rem 1.1rem; border-radius: var(--user-radius-sm, 8px); border: 1px solid var(--user-danger);
+    background: var(--user-danger); color: #fff; font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.user-btn-danger:hover:not(:disabled) { background: #dc2626; box-shadow: 0 6px 16px -6px rgba(239, 68, 68, 0.6); }
+.user-btn-danger:focus-visible { outline: 3px solid rgba(239, 68, 68, 0.35); outline-offset: 2px; }
+.user-btn-danger:disabled { opacity: 0.6; cursor: progress; }
+.ord-table { width: 100%; font-size: 0.85rem; }
+.ord-table .c { text-align: center; }
+.ord-table .r { text-align: right; }
+.ord-table .b { font-weight: 700; }
+.ord-total { color: var(--user-primary); }
+.ord-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.2rem; }
+.ord-info-grid p { margin: 0 0 0.3rem; font-size: 0.86rem; line-height: 1.5; color: var(--user-text-primary); }
+.ord-info-grid a { font-size: 0.82rem; }
+.ord-cap { text-transform: capitalize; }
+.ord-warn { color: #b45309; font-size: 0.82rem !important; }
+.ord-note { margin-top: 1rem; }
+
+.ord-refund { display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.7rem 0.85rem; border-radius: 10px; margin-bottom: 0.5rem;
+    background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.ord-refund div { display: flex; flex-direction: column; gap: 0.1rem; }
+.ord-refund small { font-size: 0.78rem; opacity: 0.9; }
+.ord-refund--refunded { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.ord-refund--declined { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+
+.ord-skel { display: flex; flex-direction: column; gap: 0.8rem; padding: 0.2rem 0; }
+.ord-skel-steps { display: grid; gap: 0.5rem; }
+.ord-error { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; padding: 2rem 1rem; text-align: center; color: var(--user-text-secondary, var(--user-text-muted)); }
+.ord-error i { font-size: 2rem; opacity: 0.5; }
+
+.ord-cancel-text { margin: 0 0 0.8rem; color: var(--user-text-secondary, var(--user-text-muted)); font-size: 0.9rem; }
+.ord-refund-box { padding: 0.9rem; border-radius: 12px; background: rgba(37, 99, 235, 0.06); border: 1px solid rgba(37, 99, 235, 0.2); display: flex; flex-direction: column; gap: 0.45rem; }
+.ord-refund-box[hidden], .ord-form-error[hidden] { display: none; }
+.ord-refund-box p { margin: 0; font-size: 0.88rem; color: var(--user-text-primary); }
+.ord-refund-box label { font-size: 0.82rem; font-weight: 600; color: var(--user-text-primary); }
+.ord-refund-box input { padding: 0.6rem 0.75rem; border-radius: 8px; border: 1px solid var(--user-border); background: var(--user-card);
+    color: var(--user-text-primary); font: inherit; }
+.ord-refund-box input:focus { outline: none; border-color: var(--user-primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+.ord-refund-box small { font-size: 0.76rem; color: var(--user-text-muted); }
+.ord-form-error { margin: 0.7rem 0 0; color: var(--user-danger); font-size: 0.84rem; }
+
+@media (max-width: 560px) {
+    .ord-grid { grid-template-columns: 1fr; }
+    .ord-info-grid { grid-template-columns: 1fr; }
+    .ord-modal .user-modal-body { max-height: 68vh; }
+    .ord-modal .user-modal-footer { flex-wrap: wrap; }
+    .ord-modal .user-modal-footer button { flex: 1 1 auto; }
+}
+.user-product-card .user-product-stock { flex-wrap: wrap; row-gap: 0.1rem; }

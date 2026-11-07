@@ -145,6 +145,16 @@ def register_commands(app):
     # ----------------------------------------------------------------
     # UPGRADE-DB
     # ----------------------------------------------------------------
+    @app.cli.command('sync-service-catalog')
+    def sync_service_catalog_command():
+        """Rename / update / add services to match services/service_catalog.py.
+        Keeps prices, ids and booking history; never duplicates; safe to repeat.
+        Not part of upgrade-db, so it doesn't undo edits made in Admin > Services."""
+        import app as app_module
+        from services.service_catalog import sync_service_catalog
+        changes = sync_service_catalog(db, app_module.ServiceCategory, app_module.Service)
+        click.echo('\n'.join(changes) if changes else 'Service catalog already up to date.')
+
     @app.cli.command('upgrade-db')
     def upgrade_db():
         """Bring an existing database up to date: create new tables, add
@@ -153,7 +163,9 @@ def register_commands(app):
         import app as app_module
         db.create_all()
         for patch in ('update_payment_method_column', 'add_receipt_image_column',
-                      'add_service_category_columns', 'add_profile_columns', 'add_workflow_columns'):
+                      'add_service_category_columns', 'add_profile_columns', 'add_workflow_columns',
+                      'add_technician_verification_columns', 'add_booking_device_columns',
+                      'add_shop_delivery_columns'):
             getattr(app_module, patch)()
         app_module.move_legacy_receipts()
         released = app_module.release_reserved_cart_stock()

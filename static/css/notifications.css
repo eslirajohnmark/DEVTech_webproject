@@ -1,0 +1,228 @@
+/* ==========================================================================
+   DEVTech — notification feed (templates/partials/notification_feed.html)
+   One design for the admin and technician portals; each maps the --nf-*
+   tokens to its own theme. The customer page only uses the dialog.
+   ========================================================================== */
+.nf--admin {
+    --nf-surface: var(--dark-card, #111);
+    --nf-surface-2: rgba(255, 255, 255, 0.035);
+    --nf-border: var(--dark-border, #1e1e1e);
+    --nf-text: var(--text-primary, #e5e5e5);
+    --nf-muted: var(--text-secondary, #888);
+    --nf-accent: var(--primary, #00ff88);
+    --nf-info: #60a5fa;
+    --nf-success: var(--primary, #00ff88);
+    --nf-warning: var(--warning, #f59e0b);
+    --nf-error: var(--danger, #ef4444);
+    --nf-radius: 14px;
+}
+.nf--technician {
+    --nf-surface: var(--t-glass, rgba(20, 28, 54, 0.6));
+    --nf-surface-2: var(--t-glass-2, rgba(255, 255, 255, 0.04));
+    --nf-border: var(--t-glass-edge-2, rgba(255, 255, 255, 0.08));
+    --nf-text: var(--t-text, #e8ecf8);
+    --nf-muted: var(--t-text-muted, #8b95b5);
+    --nf-accent: var(--t-blue, #3b82f6);
+    --nf-info: var(--t-blue, #3b82f6);
+    --nf-success: var(--t-yellow, #facc15);
+    --nf-warning: var(--t-warn, #fb923c);
+    --nf-error: var(--t-red, #f43f5e);
+    --nf-radius: var(--t-r-lg, 16px);
+    --nf-dialog-bg: #111a33;          /* the glass surface is see-through; the dialog needs a solid one */
+}
+/* dialog on the customer page */
+body:has(.user-dashboard-wrapper) .nf-dialog {
+    --nf-surface: var(--user-card, #fff);
+    --nf-border: var(--user-border, #e2e8f0);
+    --nf-text: var(--user-text-primary, #0f172a);
+    --nf-muted: var(--user-text-muted, #64748b);
+    --nf-error: #ef4444;
+}
+
+.nf { color: var(--nf-text); }
+
+/* customer page "Delete All" button */
+.user-btn-secondary.user-btn-danger-outline { color: #ef4444; border-color: rgba(239, 68, 68, 0.45); }
+.user-btn-secondary.user-btn-danger-outline:hover { background: rgba(239, 68, 68, 0.08); }
+
+/* ---- summary + delete all ---- */
+.nf-summary { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0.75rem; margin-bottom: 1rem; }
+.nf-stat {
+    flex: 1 1 160px;
+    display: flex; flex-direction: column; gap: 0.15rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--nf-radius);
+    border: 1px solid var(--nf-border);
+    background: var(--nf-surface);
+}
+.nf-stat strong { font-size: 1.5rem; line-height: 1.1; }
+.nf-stat span { font-size: 0.78rem; color: var(--nf-muted); }
+.nf-delete-all { align-self: center; }
+
+/* ---- buttons ---- */
+.nf-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+    padding: 0.6rem 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--nf-border);
+    background: transparent;
+    color: var(--nf-text);
+    font: inherit; font-size: 0.85rem; font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+.nf-btn:hover { background: rgba(127, 127, 127, 0.12); }
+.nf-btn:focus-visible, .nf-chip:focus-visible, .nf-remove button:focus-visible, .nf-open:focus-visible {
+    outline: 2px solid var(--nf-accent); outline-offset: 2px;
+}
+.nf-btn--danger { border-color: transparent; background: var(--nf-error); color: #fff; }
+.nf-btn--danger:hover { background: var(--nf-error); filter: brightness(1.08); }
+
+/* ---- filters ---- */
+.nf-filters { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.9rem; }
+.nf-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--nf-border);
+    background: var(--nf-surface);
+    color: var(--nf-muted);
+    font: inherit; font-size: 0.8rem; font-weight: 600;
+    cursor: pointer;
+}
+.nf-chip span { font-size: 0.72rem; opacity: 0.8; }
+.nf-chip.is-active { background: var(--nf-text); border-color: var(--nf-text); color: var(--nf-surface); }
+.nf--technician .nf-chip.is-active { background: var(--nf-accent); border-color: var(--nf-accent); color: #fff; }
+
+/* ---- list ---- */
+.nf-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.nf-day {
+    margin: 0.9rem 0 0.1rem;
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--nf-muted);
+}
+.nf-day:first-child { margin-top: 0; }
+.nf-item {
+    --nf-tone: var(--nf-info);
+    position: relative;
+    display: flex; gap: 0.85rem; align-items: flex-start;
+    padding: 0.9rem 3rem 0.9rem 1rem;
+    border-radius: var(--nf-radius);
+    border: 1px solid var(--nf-border);
+    background: var(--nf-surface);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.nf-item:hover { border-color: color-mix(in srgb, var(--nf-tone) 45%, var(--nf-border)); }
+.nf-item--success { --nf-tone: var(--nf-success); }
+.nf-item--warning { --nf-tone: var(--nf-warning); }
+.nf-item--error { --nf-tone: var(--nf-error); }
+.nf-item.is-new { border-color: color-mix(in srgb, var(--nf-tone) 50%, var(--nf-border)); }
+.nf-item.is-new::before {
+    content: '';
+    position: absolute; left: -1px; top: 14px; bottom: 14px;
+    width: 3px; border-radius: 0 3px 3px 0;
+    background: var(--nf-tone);
+}
+.nf-icon {
+    flex: none;
+    width: 40px; height: 40px;
+    display: grid; place-items: center;
+    border-radius: 12px;
+    color: var(--nf-tone);
+    background: color-mix(in srgb, var(--nf-tone) 14%, transparent);
+    font-size: 1rem;
+}
+.nf-body { flex: 1; min-width: 0; }
+.nf-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.6rem; }
+.nf-title { font-size: 0.92rem; font-weight: 700; }
+.nf-new {
+    font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 0.12rem 0.45rem; border-radius: 999px;
+    color: var(--nf-tone); background: color-mix(in srgb, var(--nf-tone) 16%, transparent);
+}
+.nf-time { margin-left: auto; font-size: 0.74rem; color: var(--nf-muted); white-space: nowrap; }
+.nf-msg {
+    margin: 0.3rem 0 0;
+    font-size: 0.85rem; line-height: 1.5;
+    color: var(--nf-muted);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.nf-open {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    margin-top: 0.5rem;
+    font-size: 0.8rem; font-weight: 700;
+    color: var(--nf-accent);
+    text-decoration: none;
+}
+.nf-open:hover { text-decoration: underline; }
+.nf-remove { position: absolute; top: 0.6rem; right: 0.6rem; margin: 0; }
+.nf-remove button {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    border: 0; border-radius: 8px;
+    background: transparent; color: var(--nf-muted);
+    cursor: pointer; opacity: 0.55;
+}
+.nf-item:hover .nf-remove button, .nf-remove button:focus-visible { opacity: 1; }
+.nf-remove button:hover { background: rgba(127, 127, 127, 0.14); color: var(--nf-error); }
+.nf-filter-empty, .nf-more { margin: 1rem 0 0; text-align: center; font-size: 0.82rem; color: var(--nf-muted); }
+
+/* ---- empty ---- */
+.nf-empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    border-radius: var(--nf-radius);
+    border: 1px dashed var(--nf-border);
+    background: var(--nf-surface);
+}
+.nf-empty-icon {
+    width: 64px; height: 64px; margin: 0 auto 0.9rem;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    font-size: 1.5rem;
+    color: var(--nf-accent);
+    background: color-mix(in srgb, var(--nf-accent) 12%, transparent);
+}
+.nf-empty h3 { margin: 0 0 0.3rem; font-size: 1.05rem; }
+.nf-empty p { margin: 0; font-size: 0.85rem; color: var(--nf-muted); }
+
+/* ---- confirmation dialog ---- */
+.nf-dialog {
+    /* centred even where a CSS reset sets margin: 0 on everything */
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    height: fit-content;
+    width: min(92vw, 420px);
+    padding: 1.6rem 1.5rem 1.3rem;
+    border-radius: 18px;
+    border: 1px solid var(--nf-border, #2a2a2a);
+    background: var(--nf-dialog-bg, var(--nf-surface, #111));
+    color: var(--nf-text, #e5e5e5);
+    text-align: center;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.nf-dialog::backdrop { background: rgba(2, 6, 23, 0.6); backdrop-filter: blur(3px); }
+.nf-dialog[open] { animation: nf-pop 0.18s ease-out; }
+@keyframes nf-pop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+.nf-dialog-icon {
+    width: 56px; height: 56px; margin: 0 auto 0.8rem;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    font-size: 1.3rem;
+    color: var(--nf-error, #ef4444);
+    background: color-mix(in srgb, var(--nf-error, #ef4444) 14%, transparent);
+}
+.nf-dialog h2 { margin: 0 0 0.4rem; font-size: 1.15rem; }
+.nf-dialog p { margin: 0 0 1.2rem; font-size: 0.88rem; line-height: 1.5; color: var(--nf-muted, #888); }
+.nf-dialog-actions { display: flex; gap: 0.6rem; }
+.nf-dialog-actions .nf-btn { flex: 1; }
+
+@media (max-width: 560px) {
+    .nf-item { padding-left: 0.8rem; }
+    .nf-icon { width: 34px; height: 34px; border-radius: 10px; font-size: 0.9rem; }
+    .nf-time { margin-left: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .nf-dialog[open] { animation: none; }
+}

@@ -54,7 +54,7 @@
             <h3>{{ cat.name }}</h3>
             <p>{{ cat.description or 'Browse services in this category.' }}</p>
             <span class="user-catalog-card-link">
-                View Services <i class="fas fa-arrow-right"></i>
+                {{ catalog[loop.index0][1]|length }} services <i class="fas fa-arrow-right"></i>
             </span>
         </div>
     </a>
@@ -65,18 +65,23 @@
     <div class="user-catalog-all-head">
         <div>
             <h2>All Services</h2>
-            <p>Browse the complete list of services under each category.</p>
+            <p>Prices are starting prices; the final cost depends on your device, the diagnosis and parts.</p>
         </div>
-        <div class="user-catalog-filters" role="tablist">
-            <button class="user-catalog-pill is-active" data-filter="all">All</button>
-            {% for cat in categories %}
-            <button class="user-catalog-pill" data-filter="{{ cat.slug }}">{{ cat.name|truncate(20, True) }}</button>
-            {% endfor %}
+        <div class="user-catalog-search">
+            <i class="fas fa-search" aria-hidden="true"></i>
+            <input type="search" id="catalogSearch" placeholder="Search services, e.g. screen, virus, SSD"
+                   aria-label="Search services" autocomplete="off">
         </div>
+    </div>
+    <div class="user-catalog-filters" role="toolbar" aria-label="Filter by category">
+        <button type="button" class="user-catalog-pill is-active" data-filter="all" aria-pressed="true">All</button>
+        {% for cat in categories %}
+        <button type="button" class="user-catalog-pill" data-filter="{{ cat.slug }}" aria-pressed="false">{{ cat.name }}</button>
+        {% endfor %}
     </div>
 
     <div class="user-catalog-services" id="catalogServices">
-        {% for cat in categories %}
+        {% for cat, services in catalog %}
         <article class="user-catalog-svc-card" data-category="{{ cat.slug }}">
             <header class="user-catalog-svc-head" style="background: {{ cat.color or '#2563eb' }};">
                 <i class="fas fa-{{ (cat.icon or 'tools')|replace('fa-', '') }}"></i>
@@ -84,10 +89,21 @@
             </header>
             <div class="user-catalog-svc-body">
                 <ul>
-                    {% for svc in cat.services %}
-                    <li>{{ svc.name }}</li>
-                    {% else %}
-                    <li style="color:var(--user-text-muted); font-style:italic;">No services listed yet.</li>
+                    {% for svc in services %}
+                    <li class="user-catalog-svc" data-search="{{ (svc.name ~ ' ' ~ (svc.description or '') ~ ' ' ~ cat.name)|lower }}">
+                        <div class="user-catalog-svc-main">
+                            <strong>{{ svc.name }}</strong>
+                            {% if svc.description %}<p>{{ svc.description }}</p>{% endif %}
+                            <span class="user-catalog-svc-meta">
+                                <span><i class="fas fa-tag" aria-hidden="true"></i>
+                                    {% if svc.price and svc.price > 0 %}From ₱{{ "{:,.0f}".format(svc.price) }}{% else %}Price upon diagnosis{% endif %}</span>
+                                <span><i class="fas fa-clock" aria-hidden="true"></i>
+                                    ~{{ svc.estimated_hours or 1 }} hr{{ '' if (svc.estimated_hours or 1) == 1 else 's' }}</span>
+                            </span>
+                        </div>
+                        <a class="user-catalog-svc-book" href="{{ url_for('book_appointment', category_slug=cat.slug, service=svc.id) }}"
+                           aria-label="Book {{ svc.name }}">Book</a>
+                    </li>
                     {% endfor %}
                 </ul>
                 {% if cat.tagline %}
@@ -105,6 +121,12 @@
             <p style="color: var(--user-text-muted);">Service categories will appear here once they're added.</p>
         </div>
         {% endfor %}
+    </div>
+    <div class="user-empty-state user-catalog-noresults" id="catalogNoResults" hidden>
+        <i class="fas fa-magnifying-glass" style="font-size: 2rem; opacity: 0.4;"></i>
+        <h3 style="margin-top: 0.75rem;">No services match</h3>
+        <p style="color: var(--user-text-muted);">Try another word, choose "All", or
+            <a href="{{ url_for('support') }}">ask our support team</a>: we can still help with requests not listed here.</p>
     </div>
 </section>
 
@@ -133,17 +155,43 @@
     'use strict';
     var pills = document.querySelectorAll('.user-catalog-pill');
     var cards = document.querySelectorAll('.user-catalog-svc-card');
+    var search = document.getElementById('catalogSearch');
+    var noResults = document.getElementById('catalogNoResults');
+    var filter = 'all';
+
+    // Category pill and search work together; a card shows if it has a matching service.
+    function apply() {
+        // Each typed word must start a word in the service text ("ram" finds "RAM Upgrade", not "programs").
+        var words = (search ? search.value : '').toLowerCase().split(/\s+/).filter(Boolean).map(function (w) {
+            return new RegExp('(^|[^a-z0-9])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        });
+        var shown = 0;
+        cards.forEach(function (card) {
+            var inCategory = filter === 'all' || card.getAttribute('data-category') === filter;
+            var visible = 0;
+            card.querySelectorAll('.user-catalog-svc').forEach(function (li) {
+                var text = li.getAttribute('data-search') || '';
+                var match = inCategory && words.every(function (w) { return w.test(text); });
+                li.hidden = !match;
+                if (match) visible++;
+            });
+            card.style.display = visible ? '' : 'none';
+            shown += visible;
+        });
+        if (noResults) noResults.hidden = shown > 0 || !cards.length;
+    }
+
     pills.forEach(function (pill) {
         pill.addEventListener('click', function () {
-            pills.forEach(function (p) { p.classList.remove('is-active'); });
-            pill.classList.add('is-active');
-            var filter = pill.getAttribute('data-filter');
-            cards.forEach(function (card) {
-                card.style.display = (filter === 'all' ||
-                    card.getAttribute('data-category') === filter) ? '' : 'none';
+            pills.forEach(function (p) {
+                p.classList.toggle('is-active', p === pill);
+                p.setAttribute('aria-pressed', p === pill ? 'true' : 'false');
             });
+            filter = pill.getAttribute('data-filter');
+            apply();
         });
     });
+    if (search) search.addEventListener('input', apply);
 })();
 </script>
 {% endblock %}

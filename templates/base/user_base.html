@@ -98,6 +98,7 @@
                 </div>
             </div>
 
+            {% set _nc = nav_counts() %}
             <nav class="user-nav-menu" id="mobileNavMenu">
                 <a href="{{ url_for('user_dashboard') }}" class="user-nav-item {% if request.endpoint == 'user_dashboard' %}active{% endif %}">
                     <i class="fas fa-th-large"></i> Dashboard
@@ -107,6 +108,7 @@
                 </a>
                 <a href="{{ url_for('monitor_device') }}" class="user-nav-item {% if request.endpoint == 'monitor_device' %}active{% endif %}">
                     <i class="fas fa-satellite-dish"></i> Monitor Device
+                    <span class="user-nav-badge" title="Waiting for your answer" data-live-count="approvals" {% if not _nc.get('approvals') %}hidden{% endif %}>{{ _nc.get('approvals') or 0 }}</span>
                 </a>
                 <a href="{{ url_for('service_catalog') }}" class="user-nav-item {% if request.endpoint in ['service_catalog','book_appointment'] %}active{% endif %}">
                     <i class="fas fa-calendar-alt"></i> Service Request
@@ -117,7 +119,6 @@
                 <a href="{{ url_for('user_orders') }}" class="user-nav-item {% if request.endpoint == 'user_orders' %}active{% endif %}">
                     <i class="fas fa-box"></i> My Orders
                 </a>
-                {% set _nc = nav_counts() %}
                 <a href="{{ url_for('messages') }}" class="user-nav-item {% if request.endpoint == 'messages' %}active{% endif %}">
                     <i class="fas fa-comments"></i> Messages
                     <span class="user-nav-badge" data-live-count="messages" {% if not _nc.get('messages') %}hidden{% endif %}>{{ _nc.get('messages') or 0 }}</span>

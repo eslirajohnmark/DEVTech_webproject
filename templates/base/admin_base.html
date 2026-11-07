@@ -67,27 +67,36 @@
                 </a>
                 <a href="{{ url_for('admin_support') }}" class="admin-nav-item {% if request.endpoint == 'admin_support' %}admin-active{% endif %}">
                     <i class="fas fa-headset"></i> Support
-                    {% set _open = (_nc.get('tickets') or 0) + (_nc.get('inquiries') or 0) %}
-                    {% if _open %}<span class="admin-nav-badge">{{ _open }}</span>{% endif %}
+                    <span class="admin-nav-badge" data-live-count="support" {% if not _nc.get('support') %}hidden{% endif %}>{{ _nc.get('support') or 0 }}</span>
                 </a>
                 <a href="{{ url_for('admin_users') }}" class="admin-nav-item {% if request.endpoint == 'admin_users' %}admin-active{% endif %}">
                     <i class="fas fa-users"></i> User Management
                 </a>
                 <a href="{{ url_for('admin_requests') }}" class="admin-nav-item {% if request.endpoint == 'admin_requests' %}admin-active{% endif %}">
                     <i class="fas fa-clipboard-list"></i> Service Requests
+                    <span class="admin-nav-badge" data-live-count="requests" {% if not _nc.get('requests') %}hidden{% endif %}>{{ _nc.get('requests') or 0 }}</span>
                 </a>
                 <a href="{{ url_for('admin_services') }}" class="admin-nav-item {% if request.endpoint == 'admin_services' %}admin-active{% endif %}">
                     <i class="fas fa-screwdriver-wrench"></i> Services &amp; Prices
                 </a>
                 <a href="{{ url_for('admin_technician_activity') }}" class="admin-nav-item {% if request.endpoint == 'admin_technician_activity' %}admin-active{% endif %}">
                     <i class="fas fa-screwdriver-wrench"></i> Technician Activity
+                    <span class="admin-nav-badge" data-live-count="activity" {% if not _nc.get('activity') %}hidden{% endif %}>{{ _nc.get('activity') or 0 }}</span>
+                </a>
+                <a href="{{ url_for('admin_tech_verification') }}" class="admin-nav-item {% if (request.endpoint or '').startswith('admin_tech_verification') %}admin-active{% endif %}">
+                    <i class="fas fa-id-card"></i> Technician Verification
+                    <span class="admin-nav-badge" data-live-count="verifications" {% if not _nc.get('verifications') %}hidden{% endif %}>{{ _nc.get('verifications') or 0 }}</span>
+                </a>
+                <a href="{{ url_for('admin_tech_roster') }}" class="admin-nav-item {% if (request.endpoint or '').startswith('admin_tech_roster') %}admin-active{% endif %}">
+                    <i class="fas fa-address-book"></i> Technician Roster
                 </a>
                 <a href="{{ url_for('admin_payments') }}" class="admin-nav-item {% if request.endpoint == 'admin_payments' %}admin-active{% endif %}">
                     <i class="fas fa-credit-card"></i> Payment Confirmation
+                    <span class="admin-nav-badge" data-live-count="payments" {% if not _nc.get('payments') %}hidden{% endif %}>{{ _nc.get('payments') or 0 }}</span>
                 </a>
                 <a href="{{ url_for('admin_refunds') }}" class="admin-nav-item {% if request.endpoint == 'admin_refunds' %}admin-active{% endif %}">
                     <i class="fas fa-rotate-left"></i> Refunds
-                    {% if _nc.get('refunds') %}<span class="admin-nav-badge">{{ _nc.refunds }}</span>{% endif %}
+                    <span class="admin-nav-badge" data-live-count="refunds" {% if not _nc.get('refunds') %}hidden{% endif %}>{{ _nc.get('refunds') or 0 }}</span>
                 </a>
                 <a href="{{ url_for('admin_products') }}" class="admin-nav-item {% if request.endpoint == 'admin_products' %}admin-active{% endif %}">
                     <i class="fas fa-boxes-stacked"></i> Products

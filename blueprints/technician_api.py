@@ -72,12 +72,50 @@ def _report_submitted(b):
 
 
 # status -> (requirement_check, log_text_for_next_stage)
+# Assigned -> Diagnosis -> On Repair move on their own once the work is recorded.
+# On Repair -> Ready for Collection -> Released are the technician's call: they
+# press "Advance to next stage" (see stage_requirements / advance_job).
 _AUTO_GUARDS = {
     'confirmed':         (_intake_exists,   'Intake recorded. Diagnosis started automatically.'),
     'diagnosis_pending': (_diagnosis_saved, 'Diagnosis complete. Repair started automatically.'),
-    'in_progress':       (_report_submitted,'Service report submitted. Device ready for collection.'),
-    # 'completed' has no auto-advance — releasing is a deliberate action.
 }
+
+MANUAL_STAGES = ('in_progress', 'completed')
+
+
+def _is_cash_after_repair(txn):
+    return bool(txn and (txn.payment_method or '').upper() == 'C.A.R')
+
+
+def stage_requirements(b):
+    """What the job needs before it can leave its current stage, for the job page
+    and for advance_job (one list, so the page and the server never disagree).
+    Returns {'manual', 'next', 'items': [{'label', 'met', 'hint'}]} or None."""
+    nxt = NEXT_STATUS.get(b.status)
+    if not nxt or b.status == 'on_hold':
+        return None
+    txn = b.transaction
+    if b.status == 'confirmed':
+        items = [{'label': 'Device intake recorded', 'met': _intake_exists(b),
+                  'hint': 'Record the device intake. Diagnosis then starts automatically.'}]
+    elif b.status == 'diagnosis_pending':
+        items = [{'label': 'Diagnosis written', 'met': _diagnosis_saved(b),
+                  'hint': 'Write the diagnosis in the service report. The repair then starts automatically.'}]
+    elif b.status == 'in_progress':
+        items = [{'label': 'Service report submitted', 'met': _report_submitted(b),
+                  'hint': 'Submit your service report (save draft is not enough).'}]
+    else:   # completed -> released
+        paid = bool(txn and txn.payment_status == 'confirmed')
+        if _is_cash_after_repair(txn) and not paid:
+            items = [{'label': f'Cash of ₱{float(txn.amount):,.2f} collected', 'met': None,
+                      'hint': 'C.A.R job: tick the box below once the customer has paid you in cash.'}]
+        else:
+            items = [{'label': 'Payment confirmed', 'met': paid,
+                      'hint': 'An admin must confirm the GCash payment before the device is released.'
+                              if txn else 'This job has no payment record. Ask an admin to check it.'}]
+    return {'manual': b.status in MANUAL_STAGES, 'next': nxt, 'next_label': STATUS_LABELS[nxt],
+            'items': items, 'cash_due': float(txn.amount) if b.status == 'completed' and
+            _is_cash_after_repair(txn) and txn.payment_status != 'confirmed' else None}
 
 
 def _maybe_advance(b, actor_name, reason_override=None):
@@ -330,8 +368,9 @@ def get_job(job_id):
 @technician_api_bp.route('/jobs/<int:job_id>/advance', methods=['POST'])
 @technician_required
 def advance_job(job_id):
-    """Manual fallback. With auto-advance in place, this is only needed for
-    the final completed -> released step, which is deliberately kept manual."""
+    """Moves the job to its next stage once stage_requirements() are met.
+    On Repair -> Ready for Collection -> Released only happen here; the
+    earlier stages also advance on their own (see _AUTO_GUARDS)."""
     b = Booking.query.get_or_404(job_id)
     if b.technician_id != session['user_id']:
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
@@ -344,20 +383,43 @@ def advance_job(job_id):
 
     nxt = NEXT_STATUS.get(b.status)
     if not nxt:
+        if b.status == 'on_hold':
+            return fail('This job is on hold until the customer answers your extra-work request.')
         return fail('This job cannot be advanced from its current status.')
 
-    # Guards (identical to _AUTO_GUARDS)
+    # Same checks the job page lists (stage_requirements).
     if b.status == 'confirmed' and not _intake_exists(b):
         return fail('Record the device intake first.')
     if b.status == 'diagnosis_pending' and not _diagnosis_saved(b):
         return fail('Write a diagnosis before starting the repair.')
     if b.status == 'in_progress' and not _report_submitted(b):
-        return fail('Submit your service report before marking the device ready.')
+        return fail("Can't move to Ready for Collection yet: submit your service report first.")
+    cash_note = ''
+    if b.status == 'completed':
+        txn = b.transaction
+        if not txn:
+            return fail("Can't release yet: this job has no payment record. Ask an admin to check it.")
+        if txn.payment_status != 'confirmed':
+            if not _is_cash_after_repair(txn):
+                return fail("Can't release yet: the GCash payment hasn't been confirmed by an admin.")
+            got_cash = (request.get_json(silent=True) or {}).get('cashReceived') if request.is_json \
+                else request.form.get('cash_received')
+            if not got_cash:
+                return fail(f"Can't release yet: confirm that you collected ₱{float(txn.amount):,.2f} "
+                            'cash from the customer (tick the box), then release.')
+            now = datetime.utcnow()
+            # Only while still unpaid, so a double click can't record it twice.
+            from app import Transaction
+            Transaction.query.filter(Transaction.id == txn.id, Transaction.payment_status.in_(('pending', 'rejected')))\
+                .update({'payment_status': 'confirmed', 'updated_at': now, 'reviewed_at': now,
+                         'reviewed_by': f'{session.get("username", "Technician")} (cash at release)'},
+                        synchronize_session=False)
+            cash_note = f' Cash payment of ₱{float(txn.amount):,.2f} collected.'
 
     texts = {'diagnosis_pending': 'Device received and recorded. Diagnosis in progress.',
              'in_progress': 'Diagnosis complete. Repair started.',
              'completed': 'Repair complete. Device ready for collection.',
-             'released': 'Device released to customer.'}
+             'released': 'Device released to customer.' + cash_note}
     actions = {'diagnosis_pending': 'intake', 'in_progress': 'status',
                'completed': 'status', 'released': 'release'}
 
@@ -369,9 +431,14 @@ def advance_job(job_id):
     db.session.commit()
 
     create_notification(b.user_id, 'Repair Status Updated',
-                        f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.', 'info',
-                        role='customer')
+                        f'Your booking {b.booking_number} is now: {STATUS_LABELS[nxt]}.'
+                        + (' You can now rate your technician on the Monitor Device page.'
+                           if nxt == 'completed' else ''), 'info', role='customer')
+    if cash_note:
+        notify_admins('Cash Collected', f'{b.booking_number}: {session.get("username")} collected '
+                      f'₱{float(b.transaction.amount):,.2f} cash and released the device.', 'info')
     if not request.is_json:
+        flash(f'Moved to {STATUS_LABELS[nxt]}.' + cash_note, 'success')
         return redirect(url_for('technician.job_detail', job_id=b.id))
     return jsonify({'ok': True, 'job': _job_to_dict(b)})
 
@@ -610,12 +677,9 @@ def job_report(job_id):
             action='report', text=f'Service report {r.status}.',
         ))
 
-        # Auto-advance in_progress -> completed on SUBMIT only.
-        # (Draft saves do not fire the guard, because _report_submitted
-        # requires r.status == 'submitted'.)
+        # Submitting no longer moves the job on: the technician advances
+        # On Repair -> Ready for Collection by hand (see stage_requirements).
         new_status = None
-        if r.status == 'submitted':
-            new_status = _maybe_advance(b, session.get('username', 'Technician'))
 
         db.session.commit()
 
@@ -625,8 +689,9 @@ def job_report(job_id):
                           'info')
 
         if is_form:
-            if new_status:
-                flash('Report submitted. Job moved to Ready for Collection.', 'success')
+            if r.status == 'submitted' and b.status == 'in_progress':
+                flash('Report submitted. When the device is ready, press "Advance to Ready for Collection".',
+                      'success')
             else:
                 flash(f'Report {r.status}.', 'success')
             return redirect(url_for('technician.job_detail', job_id=job_id))

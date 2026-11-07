@@ -120,6 +120,13 @@
     from { opacity: 0; transform: translate(-50%, 12px); }
     to   { opacity: 1; transform: translate(-50%, 0); }
 }
+/* A sidebar badge whose number just went up pulses a few times. */
+.live-bump { animation: live-bump 0.9s ease-out 3; }
+@keyframes live-bump {
+    0%   { transform: scale(1);   box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+    35%  { transform: scale(1.3); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+    100% { transform: scale(1);   box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
 @media (prefers-reduced-motion: reduce) {
-    .live-toast, .live-chip { animation: none; transition: none; }
+    .live-toast, .live-chip, .live-bump { animation: none; transition: none; }
 }

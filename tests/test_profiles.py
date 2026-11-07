@@ -124,6 +124,9 @@ def test_admin_profile_is_admin_only(customer_logged_in):
 
 
 def test_technician_can_edit_contact_details(tech_logged_in, technician):
+    # The fixture technician is verified; a verified name is locked (see below).
+    technician.verification_status, technician.id_verified = 'pending', False
+    db.session.commit()
     tech_logged_in.post('/technician/profile/details', data={
         'full_name': 'Tom Fixer', 'phone': '0918', 'address': '1 Rizal', 'city': 'Ormoc', 'province': 'Leyte',
         'email': 'hijack@x.test'})
@@ -132,6 +135,14 @@ def test_technician_can_edit_contact_details(tech_logged_in, technician):
     assert t.email == 'tech@test.local'                          # email is not editable here
     tech_logged_in.post('/technician/profile/details', data={'full_name': ''})
     assert db.session.get(Technician, technician.id).full_name == 'Tom Fixer'
+
+
+def test_verified_technician_cannot_change_their_name(tech_logged_in, technician):
+    tech_logged_in.post('/technician/profile/details', data={
+        'full_name': 'Someone Else', 'phone': '0918', 'city': 'Ormoc'})
+    t = db.session.get(Technician, technician.id)
+    assert t.full_name == 'Test Technician'                      # checked against their ID
+    assert (t.phone, t.city) == ('0918', 'Ormoc')                 # the rest is still saved
 
 
 def test_customer_password_rule_matches_site(customer_logged_in, customer):

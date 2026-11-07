@@ -215,6 +215,37 @@
         </div>
     </div>
 
+    <!-- Shop location: delivery distance and estimated arrival times -->
+    <div class="admin-settings-section">
+        <div class="admin-settings-header">
+            <h3><i class="fas fa-store"></i> Shop Location &amp; Delivery</h3>
+            <p>Where riders start from. Used to work out the distance and estimated delivery time of each order.</p>
+        </div>
+        <div class="admin-settings-body">
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Map pin</span>
+                    <span class="admin-setting-desc">Latitude and longitude of the shop. Use your location while at the shop, or copy them from Google Maps.</span>
+                </div>
+                <div class="admin-setting-control admin-qr-control">
+                    <input type="text" class="admin-setting-input" style="width:120px;" id="shop_latitude" inputmode="decimal" placeholder="Latitude" value="{{ settings.get('shop_latitude', '') }}" />
+                    <input type="text" class="admin-setting-input" style="width:120px;" id="shop_longitude" inputmode="decimal" placeholder="Longitude" value="{{ settings.get('shop_longitude', '') }}" />
+                    <button type="button" class="admin-btn admin-btn-sm" id="shopLocateBtn"><i class="fas fa-crosshairs"></i> Use my location</button>
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">City and province</span>
+                    <span class="admin-setting-desc">Used when a customer has not pinned their location.</span>
+                </div>
+                <div class="admin-setting-control admin-qr-control">
+                    <input type="text" class="admin-setting-input" style="width:140px;" id="shop_city" maxlength="50" placeholder="City" value="{{ settings.get('shop_city', '') }}" />
+                    <input type="text" class="admin-setting-input" style="width:140px;" id="shop_province" maxlength="50" placeholder="Province" value="{{ settings.get('shop_province', '') }}" />
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Payment Settings -->
     <div class="admin-settings-section">
         <div class="admin-settings-header">
@@ -250,6 +281,22 @@
                 </div>
                 <div class="admin-setting-control">
                     <input type="text" value="{{ settings.get('gcash_name', '') }}" class="admin-setting-input" id="gcash_name" maxlength="100" placeholder="Account holder name" />
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">GCash QR Code</span>
+                    <span class="admin-setting-desc">Upload the QR from your GCash app (Profile &rsaquo; My QR, or the QR you show customers).
+                        At checkout the exact order amount is written into it, so customers just scan and pay.</span>
+                    <span class="admin-setting-desc" id="gcashQrStatus" aria-live="polite"></span>
+                </div>
+                <div class="admin-setting-control admin-qr-control">
+                    <input type="hidden" id="gcash_qr_payload" value="{{ settings.get('gcash_qr_payload', '') }}" />
+                    <label class="admin-btn admin-btn-sm admin-btn-primary">
+                        <i class="fas fa-qrcode"></i> Upload QR image
+                        <input type="file" accept="image/*" id="gcashQrFile" hidden />
+                    </label>
+                    <button type="button" class="admin-btn admin-btn-sm" id="gcashQrRemove">Remove</button>
                 </div>
             </div>
             <div class="admin-setting-item">
@@ -339,10 +386,72 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/vendor/jsQR.js') }}"></script>
 <script>
     const SETTING_FIELDS = ['system_name', 'system_email', 'default_currency', 'timezone',
                             'contact_phone', 'contact_email', 'contact_address', 'business_hours',
-                            'gcash_account', 'gcash_name', 'service_fee', 'enable_gcash', 'enable_cod'];
+                            'gcash_account', 'gcash_name', 'service_fee', 'enable_gcash', 'enable_cod',
+                            'gcash_qr_payload', 'shop_latitude', 'shop_longitude', 'shop_city', 'shop_province'];
+
+    // ---- GCash QR: decode the uploaded image here; only the QR text is saved ----
+    function qrFields(text) {
+        const out = {};
+        let i = 0;
+        while (i + 4 <= text.length) {
+            const tag = text.slice(i, i + 2), len = parseInt(text.slice(i + 2, i + 4), 10);
+            if (isNaN(len)) break;
+            out[tag] = text.slice(i + 4, i + 4 + len);
+            i += 4 + len;
+        }
+        return out;
+    }
+    function showQrStatus() {
+        const v = document.getElementById('gcash_qr_payload').value;
+        const el = document.getElementById('gcashQrStatus');
+        if (!v) { el.textContent = 'No QR saved: customers see your GCash number instead.'; return; }
+        const f = qrFields(v);
+        el.textContent = '✅ QR saved' + (f['59'] ? ` for ${f['59']}` : '') + (f['60'] ? `, ${f['60']}` : '') + '. Click Save All after changing it.';
+    }
+    document.getElementById('gcashQrFile').addEventListener('change', function () {
+        const file = this.files && this.files[0];
+        if (!file) return;
+        const img = new Image();
+        img.onload = () => {
+            const scale = Math.min(1, 1200 / Math.max(img.width, img.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = window.jsQR && jsQR(data.data, data.width, data.height);
+            URL.revokeObjectURL(img.src);
+            if (!code || !code.data.startsWith('000201')) {
+                showAdminToast('⚠️ No GCash / QR Ph payment code found in that image. Upload a clear, uncropped QR.');
+                return;
+            }
+            document.getElementById('gcash_qr_payload').value = code.data;
+            showQrStatus();
+            showAdminToast('QR read. Click Save All to use it at checkout.');
+        };
+        img.onerror = () => showAdminToast('⚠️ That file is not an image.');
+        img.src = URL.createObjectURL(file);
+        this.value = '';
+    });
+    document.getElementById('gcashQrRemove').addEventListener('click', () => {
+        document.getElementById('gcash_qr_payload').value = '';
+        showQrStatus();
+        showAdminToast('QR removed. Click Save All to apply.');
+    });
+    document.getElementById('shopLocateBtn').addEventListener('click', () => {
+        if (!navigator.geolocation) { showAdminToast('⚠️ This browser cannot share its location.'); return; }
+        navigator.geolocation.getCurrentPosition(pos => {
+            document.getElementById('shop_latitude').value = pos.coords.latitude.toFixed(6);
+            document.getElementById('shop_longitude').value = pos.coords.longitude.toFixed(6);
+            showAdminToast('Location filled in. Click Save All to apply.');
+        }, () => showAdminToast('⚠️ Location permission was denied.'), {enableHighAccuracy: true, timeout: 10000});
+    });
+    showQrStatus();
 
     async function saveAllSettings() {
         const payload = {};
