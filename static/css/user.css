@@ -12619,3 +12619,14 @@ html, body {
     .ord-modal .user-modal-footer button { flex: 1 1 auto; }
 }
 .user-product-card .user-product-stock { flex-wrap: wrap; row-gap: 0.1rem; }
+
+/* Online payment (PayMongo): checkout option, note, and the My Orders pay button */
+.user-payment-option-icon.online { background: rgba(37, 99, 235, 0.12); color: var(--user-primary); }
+.shop-online-note { display: flex; gap: 0.7rem; align-items: flex-start; margin-top: 1rem; padding: 0.8rem 0.9rem;
+    border-radius: 12px; background: rgba(37, 99, 235, 0.07); border: 1px solid rgba(37, 99, 235, 0.2); }
+.shop-online-note[hidden] { display: none; }
+.shop-online-note i { color: var(--user-primary); margin-top: 0.2rem; }
+.shop-online-note p { margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--user-text-primary); }
+.ord-pay-form { margin: 0 auto 0 0; display: flex; }
+#cancelOnlineNote { margin: 0.8rem 0 0; font-size: 0.88rem; }
+.user-transaction-actions form { display: inline-flex; margin: 0; }

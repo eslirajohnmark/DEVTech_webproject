@@ -3,7 +3,6 @@ import sys
 # module even when started with `python app.py` (otherwise app.py is imported twice
 # and the blueprint imports fail circularly).
 sys.modules.setdefault('app', sys.modules[__name__])
- 
 from flask import (Flask, render_template, request, redirect, url_for, session,
                    flash, jsonify, g, abort, json)
 from flask_sqlalchemy import SQLAlchemy
@@ -39,7 +38,7 @@ from flask_talisman import Talisman
 from commands import register_commands
 from flask import send_file
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from services import email_service, profile_presets, delivery_eta, gcash_qr
+from services import email_service, profile_presets, delivery_eta, gcash_qr, paymongo_service
 from services.job_status import (STAGES, STATUS_LABELS, ACTIVE_STATUSES,
                                  FINISHED_STATUSES, SLOT_STATUSES)
  
@@ -80,6 +79,15 @@ app.config['ID_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'id_
 app.config['CREDENTIAL_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'credentials')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['DEBUG'] = not IS_PRODUCTION
+
+
+# ---- PayMongo (Hosted Checkout) ----
+app.config['PAYMONGO_ENABLED']        = os.environ.get('PAYMONGO_ENABLED', 'false').lower() == 'true'
+app.config['PAYMONGO_SECRET_KEY']     = os.environ.get('PAYMONGO_SECRET_KEY', '')
+app.config['PAYMONGO_PUBLIC_KEY']     = os.environ.get('PAYMONGO_PUBLIC_KEY', '')
+app.config['PAYMONGO_WEBHOOK_SECRET'] = os.environ.get('PAYMONGO_WEBHOOK_SECRET', '')
+app.config['PAYMONGO_SUCCESS_URL']    = os.environ.get('PAYMONGO_SUCCESS_URL', '')
+app.config['PAYMONGO_CANCEL_URL']     = os.environ.get('PAYMONGO_CANCEL_URL', '')
  
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -220,6 +228,7 @@ def _inject_site_details():
                 'gcash_name': values.get('gcash_name') or values.get('system_name') or 'DEVTech Computer Services',
                 'gcash_enabled': values.get('enable_gcash', 'true') == 'true',
                 'cod_enabled': values.get('enable_cod', 'true') == 'true',
+                'online_payments': paymongo_service.is_enabled(app),
             }
         return g.site_details
     return {'site': site, 'current_year': datetime.utcnow().year}
@@ -761,6 +770,10 @@ class Transaction(db.Model):
     customer = db.relationship('Customer', back_populates='transactions')
     user_id = db.synonym('customer_id')
     user = db.synonym('customer')
+    
+    paymongo_checkout_id = db.Column(db.String(64), nullable=True, index=True)
+    paymongo_payment_id  = db.Column(db.String(64), nullable=True, index=True)
+    paymongo_paid_at     = db.Column(db.DateTime, nullable=True)
 
 class Refund(db.Model):
     """Money owed back to a customer for a payment (a cancelled paid booking or
@@ -1217,7 +1230,7 @@ def log_activity(user_id, action, details=None, ip_address=None, role=None):
                                action=action, details=details,
                                ip_address=ip_address or request.remote_addr))
     db.session.commit()
-    
+
     
 # ==================== SCHEMA SELF-HEAL (MySQL) ====================
  
@@ -1320,6 +1333,16 @@ def add_shop_delivery_columns():
         _try_sql("ALTER TABLE orders ADD CONSTRAINT fk_orders_rider FOREIGN KEY (rider_id) REFERENCES delivery_riders(id)")
         _try_sql("ALTER TABLE refunds ADD COLUMN payout_account VARCHAR(60) NULL")
 
+def add_paymongo_columns():
+    """PayMongo checkout/payment ids on transactions. Safe to run every
+    startup: each statement is a no-op once the column exists."""
+    with app.app_context():
+        _try_sql("ALTER TABLE transactions ADD COLUMN paymongo_checkout_id VARCHAR(64) NULL")
+        _try_sql("ALTER TABLE transactions ADD COLUMN paymongo_payment_id VARCHAR(64) NULL")
+        _try_sql("ALTER TABLE transactions ADD COLUMN paymongo_paid_at DATETIME NULL")
+        _try_sql("CREATE INDEX ix_transactions_paymongo_checkout ON transactions (paymongo_checkout_id)")
+        _try_sql("CREATE INDEX ix_transactions_paymongo_payment ON transactions (paymongo_payment_id)")
+        
 def add_service_category_columns():
     """Same columns as database/migrate_service_categories.sql, for DBs created before it."""
     with app.app_context():
@@ -1974,7 +1997,7 @@ def settle_cancelled_booking(booking):
             txn.updated_at = now
     return needs_refund_check
 
-REFUND_METHODS = ('GCash', 'Cash', 'Bank transfer')
+REFUND_METHODS = ('GCash', 'PayMongo', 'Cash', 'Bank transfer')
 
 def open_refund(txn, reason, created_by='system', booking=None, order=None):
     """Open a refund for a payment unless one is already pending or done.
@@ -2006,6 +2029,10 @@ def notify_refund_check(booking, transactions):
         if created:
             opened.append(t)
     db.session.commit()
+    for t in list(opened):
+        refund = Refund.query.filter_by(transaction_id=t.id, status='pending').first()
+        if paymongo_auto_refund(refund):
+            opened.remove(t)
     if not opened:
         return
     numbers = ', '.join(t.transaction_number for t in opened)
@@ -2958,6 +2985,259 @@ def user_payment(transaction_id):
     return redirect(url_for('user_transactions'))
 
 LEGACY_RECEIPT_FOLDER = os.path.join('static', 'uploads', 'receipts')
+# ==================== PAYMONGO (ONLINE PAYMENT) ====================
+# Card, GCash, Maya, GrabPay or QR Ph through PayMongo's hosted checkout page.
+# A payment is confirmed only after asking PayMongo itself - from the page the
+# customer returns to, or from PayMongo's signed webhook - and only when the
+# amount paid is exactly the amount owed.
+
+PAYMONGO_PAYABLE = ('pending', 'rejected')        # payment states that may start a checkout
+
+def _paymongo_absolute(endpoint, **values):
+    base = (os.environ.get('APP_BASE_URL') or '').rstrip('/')
+    return base + url_for(endpoint, **values) if base else url_for(endpoint, _external=True, **values)
+
+def _paymongo_back_page(transaction, **extra):
+    if transaction.order:
+        return url_for('user_orders', **extra)
+    return url_for('user_transactions')
+
+def can_pay_online(transaction):
+    """True when this payment may be paid now through PayMongo."""
+    if not paymongo_service.is_enabled(app) or transaction.payment_status not in PAYMONGO_PAYABLE:
+        return False
+    if (transaction.order and transaction.order.status in ('cancelled', 'completed')) or \
+            (transaction.booking and transaction.booking.status == 'cancelled'):
+        return False
+    # A GCash screenshot already waiting for review: paying again would charge twice.
+    return not (transaction.payment_status == 'pending' and transaction.receipt_image)
+
+app.jinja_env.globals['can_pay_online'] = can_pay_online
+
+def start_paymongo_checkout(transaction):
+    """Open (or reuse) a PayMongo checkout for this payment and return the URL to
+    send the customer to. Raises PaymongoError if PayMongo can't be reached. Commits."""
+    if transaction.paymongo_checkout_id:
+        try:
+            attrs = paymongo_service.retrieve_checkout_session(app, transaction.paymongo_checkout_id)
+            if attrs.get('status') == 'active' and attrs.get('checkout_url') \
+                    and not paymongo_service.paid_payment(attrs):
+                return attrs['checkout_url']
+        except paymongo_service.PaymongoError:
+            pass                                    # stale session: open a new one
+    what = (f'Shop order {transaction.order.order_number}' if transaction.order
+            else transaction.booking.service.name if transaction.booking and transaction.booking.service
+            else 'DEVTech payment')
+    session_id, url = paymongo_service.create_checkout_session(
+        app, amount=transaction.amount, description=f'{what} ({transaction.transaction_number})',
+        reference_number=transaction.transaction_number,
+        success_url=_paymongo_absolute('paymongo_return', transaction_id=transaction.id),
+        cancel_url=_paymongo_absolute('paymongo_cancelled', transaction_id=transaction.id),
+        metadata={'transaction_number': transaction.transaction_number,
+                  'customer_id': transaction.customer_id})
+    transaction.paymongo_checkout_id = session_id
+    transaction.payment_method = 'paymongo'
+    transaction.payment_status = 'pending'
+    transaction.rejection_reason = None
+    transaction.updated_at = datetime.utcnow()
+    if transaction.order:
+        transaction.order.payment_method = 'paymongo'
+        transaction.order.payment_status = 'pending'
+    db.session.commit()
+    return url
+
+def confirm_paymongo_payment(transaction, payment_id, amount_centavos, source):
+    """Record a PayMongo payment once. Returns 'confirmed', 'already',
+    'amount_mismatch' or 'refunding' (paid for something already cancelled). Commits."""
+    if amount_centavos != paymongo_service.to_centavos(transaction.amount):
+        app.logger.error('PayMongo amount mismatch on %s: paid %s centavos, owed %s',
+                         transaction.transaction_number, amount_centavos, transaction.amount)
+        notify_admins('PayMongo amount mismatch',
+                      f'{transaction.transaction_number}: PayMongo reports ₱{amount_centavos / 100:,.2f} paid '
+                      f'but ₱{float(transaction.amount):,.2f} is owed. Check the PayMongo dashboard.', 'warning')
+        return 'amount_mismatch'
+    now = datetime.utcnow()
+    values = {'payment_status': 'confirmed', 'paymongo_payment_id': payment_id, 'paymongo_paid_at': now,
+              'payment_method': 'paymongo', 'reviewed_at': now, 'reviewed_by': f'PayMongo ({source})',
+              'updated_at': now, 'rejection_reason': None}
+    claimed = Transaction.query.filter(Transaction.id == transaction.id,
+                                       Transaction.payment_status.in_(PAYMONGO_PAYABLE)).update(
+        values, synchronize_session=False)
+    if claimed != 1:
+        db.session.rollback()
+        db.session.refresh(transaction)
+        if transaction.payment_status != 'cancelled' or transaction.paymongo_payment_id:
+            return 'already'
+        # Paid after the order / booking was cancelled: keep the record and send it straight back.
+        claimed = Transaction.query.filter_by(id=transaction.id, payment_status='cancelled',
+                                              paymongo_payment_id=None).update(values, synchronize_session=False)
+        if claimed != 1:
+            db.session.rollback()
+            return 'already'
+        db.session.refresh(transaction)
+        refund, _ = open_refund(transaction, f'{transaction.transaction_number} was paid online after it was '
+                                f'cancelled.', created_by='PayMongo', booking=transaction.booking,
+                                order=transaction.order)
+        db.session.commit()
+        paymongo_auto_refund(refund)
+        return 'refunding'
+    db.session.refresh(transaction)
+    if transaction.order:
+        transaction.order.payment_status = 'confirmed'
+        transaction.order.payment_method = 'paymongo'
+    db.session.commit()
+    log_activity(transaction.customer_id, 'paymongo_paid', f'{transaction.transaction_number} via {source}',
+                 role='customer')
+    create_notification(transaction.customer_id, 'Payment Confirmed',
+                        f'We received your online payment of ₱{float(transaction.amount):,.2f} for '
+                        f'{transaction.transaction_number}. Thank you!', 'success', role='customer')
+    notify_admins('Online Payment Received',
+                  f'{transaction.transaction_number} (₱{float(transaction.amount):,.2f}) was paid through PayMongo.',
+                  'success')
+    return 'confirmed'
+
+def sync_paymongo_payment(transaction):
+    """Ask PayMongo whether an open online payment was paid and record it.
+    Returns the confirm result, 'unpaid', or 'unknown' if PayMongo can't be reached."""
+    if transaction.payment_method != 'paymongo' or not transaction.paymongo_checkout_id \
+            or transaction.paymongo_payment_id or not paymongo_service.is_enabled(app):
+        return 'unpaid'
+    try:
+        attrs = paymongo_service.retrieve_checkout_session(app, transaction.paymongo_checkout_id)
+    except paymongo_service.PaymongoError:
+        app.logger.warning('Could not check PayMongo session for %s', transaction.transaction_number)
+        return 'unknown'
+    paid = paymongo_service.paid_payment(attrs)
+    return confirm_paymongo_payment(transaction, paid[0], paid[1], 'status check') if paid else 'unpaid'
+
+def close_paymongo_checkout(transaction):
+    """Expire an unpaid checkout so the link can't be paid after a cancellation."""
+    if transaction.paymongo_checkout_id and not transaction.paymongo_payment_id \
+            and paymongo_service.is_enabled(app):
+        try:
+            paymongo_service.expire_checkout_session(app, transaction.paymongo_checkout_id)
+        except paymongo_service.PaymongoError:
+            app.logger.info('PayMongo session for %s was already closed', transaction.transaction_number)
+
+def paymongo_auto_refund(refund):
+    """Send a refund for an online payment straight back to the customer's card
+    or e-wallet through PayMongo. If PayMongo refuses, the refund stays pending
+    for an admin. Returns True when sent. Commits."""
+    txn = refund.transaction if refund else None
+    if not txn or refund.status != 'pending' or txn.payment_method != 'paymongo' \
+            or not txn.paymongo_payment_id or not paymongo_service.is_enabled(app):
+        return False
+    try:
+        refund_id, state = paymongo_service.create_refund(
+            app, payment_id=txn.paymongo_payment_id, amount=refund.amount, notes=refund.reason)
+    except paymongo_service.PaymongoError as exc:
+        app.logger.warning('PayMongo refund failed for %s: %s %s', txn.transaction_number, exc.status, exc.body)
+        refund.note = 'Automatic PayMongo refund failed; send it from the PayMongo dashboard, then mark it here.'
+        db.session.commit()
+        notify_admins('Refund needs attention', f'PayMongo could not refund {txn.transaction_number} '
+                      f'automatically. See Refunds.', 'warning')
+        return False
+    now = datetime.utcnow()
+    claimed = Refund.query.filter_by(id=refund.id, status='pending').update(dict(
+        status='refunded', method='PayMongo', reference=refund_id[:80], processed_at=now,
+        processed_by='PayMongo (automatic)', note=f'Refunded automatically through PayMongo ({state}).'),
+        synchronize_session=False)
+    if claimed != 1:
+        db.session.rollback()
+        return False
+    txn.payment_status = 'refunded'
+    txn.updated_at = now
+    if txn.order:
+        txn.order.payment_status = 'refunded'
+    db.session.commit()
+    create_notification(txn.customer_id, 'Refund Sent',
+                        f'₱{float(refund.amount):,.2f} for {txn.transaction_number} was refunded to the card or '
+                        f'e-wallet you paid with (PayMongo ref {refund_id}). Banks and e-wallets can take a few '
+                        f'days to show it.', 'success', role='customer')
+    return True
+
+@app.route('/user/payments/<int:transaction_id>/paymongo', methods=['POST'])
+@login_required
+def user_payment_paymongo(transaction_id):
+    """Send the customer to PayMongo to pay one transaction online."""
+    transaction = Transaction.query.get_or_404(transaction_id)
+    if transaction.user_id != session.get('user_id'):
+        abort(404)
+    back = _paymongo_back_page(transaction)
+    if not paymongo_service.is_enabled(app):
+        flash('Online payment is not available right now.', 'warning')
+        return redirect(back)
+    if not can_pay_online(transaction):
+        flash('This payment can no longer be paid online.', 'info')
+        return redirect(back)
+    try:
+        return redirect(start_paymongo_checkout(transaction))
+    except paymongo_service.PaymongoError as exc:
+        app.logger.warning('PayMongo checkout failed for %s: %s %s', transaction.transaction_number,
+                           exc.status, exc.body)
+        flash('We could not open the online payment page. Please try again in a moment.', 'danger')
+        return redirect(back)
+
+@app.route('/paymongo/return/<int:transaction_id>')
+@login_required
+def paymongo_return(transaction_id):
+    """Where PayMongo sends the customer after paying. Never trusts the visit
+    itself: it asks PayMongo whether the session really has a paid payment."""
+    transaction = Transaction.query.get_or_404(transaction_id)
+    if transaction.user_id != session.get('user_id'):
+        abort(404)
+    placed = {'placed': transaction.order.order_number} if transaction.order else {}
+    if transaction.payment_status == 'confirmed':
+        flash('Your online payment is confirmed. Thank you!', 'success')
+        return redirect(_paymongo_back_page(transaction, **placed))
+    result = sync_paymongo_payment(transaction)
+    if result in ('confirmed', 'already'):
+        flash(f'Payment received: ₱{float(transaction.amount):,.2f} for {transaction.transaction_number}. Thank you!',
+              'success')
+    elif result == 'unknown':
+        flash('We could not reach PayMongo to check your payment. It will update here automatically.', 'warning')
+    elif result == 'amount_mismatch':
+        flash('Your payment amount did not match the amount due. Our team has been alerted and will contact you.',
+              'danger')
+    elif result == 'refunding':
+        flash('This order was already cancelled, so your payment is being refunded in full.', 'info')
+    else:
+        flash('Your payment has not gone through yet. If you completed it, it will show here in a moment.', 'info')
+    return redirect(_paymongo_back_page(transaction, **placed))
+
+@app.route('/paymongo/cancelled/<int:transaction_id>')
+@login_required
+def paymongo_cancelled(transaction_id):
+    transaction = Transaction.query.get_or_404(transaction_id)
+    if transaction.user_id != session.get('user_id'):
+        abort(404)
+    flash('Online payment was not completed. You can pay any time with "Pay online".', 'info')
+    placed = {'placed': transaction.order.order_number} if transaction.order else {}
+    return redirect(_paymongo_back_page(transaction, **placed))
+
+@app.route('/paymongo/webhook', methods=['POST'])
+@csrf.exempt
+@limiter.exempt
+def paymongo_webhook():
+    """PayMongo's server calls this when a checkout is paid. The body is
+    verified by its signature; events we don't act on are acknowledged."""
+    raw = request.get_data(cache=False)
+    try:
+        event = paymongo_service.parse_webhook(app, raw, request.headers.get('Paymongo-Signature', ''))
+    except paymongo_service.PaymongoError as exc:
+        app.logger.warning('PayMongo webhook rejected: %s', exc)
+        return jsonify({'ok': False}), 400
+    info = paymongo_service.event_summary(event)
+    if info['event_type'] != paymongo_service.PAID_EVENT or not info['reference_number'] or not info['payment_id']:
+        return jsonify({'ok': True, 'ignored': True})
+    if info['livemode'] == paymongo_service.is_test_mode(app):
+        return jsonify({'ok': True, 'ignored': 'other mode'})   # live event on a test setup, or the reverse
+    transaction = Transaction.query.filter_by(transaction_number=info['reference_number']).first()
+    if not transaction:
+        app.logger.warning('PayMongo webhook for unknown transaction %s', info['reference_number'])
+        return jsonify({'ok': True, 'unknown_reference': True})
+    result = confirm_paymongo_payment(transaction, info['payment_id'], info['amount_centavos'], 'webhook')
+    return jsonify({'ok': True, 'result': result})
 
 def receipt_url(transaction):
     """Authenticated URL for a transaction's receipt, or '' if it has none."""
@@ -3800,7 +4080,8 @@ def api_cart_checkout():
     gcash_reference = (data.get('gcash_reference') or '').strip()[:50]
     proof = request.files.get('payment_proof')
 
-    if payment_method not in ('cod', 'gcash'):
+    if payment_method not in ('cod', 'gcash', 'paymongo') or \
+            (payment_method == 'paymongo' and not paymongo_service.is_enabled(app)):
         return jsonify({'success': False, 'message': 'Please select a valid payment method.'}), 400
 
     proof_ext = None
@@ -3953,7 +4234,18 @@ def api_cart_checkout():
         raise
     cache.delete('active_products')  # stock just changed
 
-    if payment_method == 'gcash':
+    redirect_url = None
+    if payment_method == 'paymongo':
+        try:
+            redirect_url = start_paymongo_checkout(transaction)
+        except paymongo_service.PaymongoError as exc:
+            app.logger.warning('PayMongo checkout failed for %s: %s %s', transaction.transaction_number,
+                               exc.status, exc.body)
+        notif_message = (
+            f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. Complete your online '
+            f'payment to have it prepared. Estimated delivery: {eta["label"]}.'
+        )
+    elif payment_method == 'gcash':
         notif_message = (
             f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. Our team is checking '
             f'your GCash payment screenshot. Estimated delivery: {eta["label"]}.'
@@ -3973,7 +4265,11 @@ def api_cart_checkout():
         'message': 'Order placed successfully!',
         'order_number': order.order_number,
         'total': float(total_amount),
-        'eta': eta['label']
+        'eta': eta['label'],
+        # Online payment: the page sends the customer to PayMongo. If PayMongo could
+        # not be reached the order still exists and can be paid from My Orders.
+        'redirect_url': redirect_url,
+        'payment_link_failed': payment_method == 'paymongo' and not redirect_url
     })
 
 @app.route('/api/checkout/summary')
@@ -4061,6 +4357,9 @@ def _cancel_order(order, cancelled_by='system', payout_account=None):
     for any payment that was confirmed or that the customer sent proof for.
     Commits. Returns the refunds it opened. Callers check whether the order may
     be cancelled first."""
+    for txn in order.transactions:
+        sync_paymongo_payment(txn)          # paid online but not recorded yet? record it first
+        close_paymongo_checkout(txn)        # no paying an unpaid link after this
     for item in order.items:
         product = Product.query.get(item.product_id)
         if product:
@@ -4091,7 +4390,8 @@ def _cancel_order(order, cancelled_by='system', payout_account=None):
             opened.append(refund)
     db.session.commit()
     cache.delete('active_products')
-    if opened:
+    # Online payments go straight back through PayMongo; the rest wait for an admin.
+    if [r for r in opened if not paymongo_auto_refund(r)]:
         notify_admins('Refund to process',
                       f'Order {order.order_number} was cancelled with a paid or possibly paid charge. See Refunds.',
                       'warning')
@@ -4118,16 +4418,20 @@ def api_order_cancel(order_id):
     data = request.get_json(silent=True) or {}
     paid = _order_paid_transactions(order)
     payout = re.sub(r'[\s-]', '', str(data.get('refund_to') or ''))
-    if paid and not GCASH_NUMBER_RE.fullmatch(payout):
+    # Online (PayMongo) payments go back to the card / e-wallet automatically.
+    manual = [t for t in paid if t.payment_method != 'paymongo']
+    if manual and not GCASH_NUMBER_RE.fullmatch(payout):
         return jsonify({'success': False, 'error': 'refund_number_required',
                         'message': 'Enter the GCash number (09XXXXXXXXX) where we should send your refund.'}), 400
 
     refunds = _cancel_order(order, cancelled_by=f'customer #{user_id}', payout_account=payout or None)
     msg = f'Your order #{order.order_number} has been cancelled.'
-    if refunds:
-        amount = sum(r.amount for r in refunds)
-        msg += (f' ₱{amount:,.2f} will be refunded to GCash {payout} once our team confirms the payment; '
-                f'you can follow it in My Orders and on your Transactions page.')
+    for r in refunds:
+        if r.status == 'refunded':
+            msg += f' ₱{r.amount:,.2f} was refunded to the card or e-wallet you paid with.'
+        else:
+            msg += (f' ₱{r.amount:,.2f} will be refunded to GCash {payout or r.payout_account} once our team '
+                    f'confirms the payment; you can follow it in My Orders.')
     create_notification(user_id, 'Order Cancelled', msg, 'warning', role='customer')
     return jsonify({'success': True, 'message': msg, 'refund_opened': bool(refunds)})
 
@@ -4158,7 +4462,10 @@ def api_order_detail(order_id):
         'status_label': ORDER_STATUS_LABELS.get(order.status, order.status.title()),
         'can_cancel': blocked is None,
         'cancel_blocked_reason': blocked if order.status not in ('completed', 'cancelled') else None,
-        'refund_on_cancel': float(sum(t.amount for t in paid)) if paid else 0,
+        'refund_on_cancel': float(sum(t.amount for t in paid if t.payment_method != 'paymongo')) if paid else 0,
+        'refund_online': float(sum(t.amount for t in paid if t.payment_method == 'paymongo')),
+        'pay_online_url': (url_for('user_payment_paymongo', transaction_id=txn.id)
+                           if txn and order.payment_method in ('paymongo', 'cod') and can_pay_online(txn) else ''),
         'refund_to_suggestion': customer.phone if customer and customer.phone else '',
         'eta': eta,
         'delivered_at': _ph_time(order.delivered_at),
@@ -4211,7 +4518,13 @@ def _order_tracking(order, txn):
     """The order's progress, step by step, for the customer's tracking timeline."""
     rank = {'pending': 0, 'processing': 1, 'out_for_delivery': 2, 'completed': 3}.get(order.status, -1)
     steps = [{'key': 'placed', 'label': 'Order placed', 'done': True, 'at': _ph_time(order.created_at)}]
-    if order.payment_method == 'gcash':
+    if order.payment_method == 'paymongo':
+        state = txn.payment_status if txn else 'pending'
+        steps.append({'key': 'payment', 'done': order.payment_status in ('confirmed', 'refunded'),
+                      'label': 'Paid online' if order.payment_status in ('confirmed', 'refunded')
+                      else 'Waiting for your online payment',
+                      'at': _ph_time(txn.paymongo_paid_at) if txn and txn.paymongo_paid_at else None})
+    elif order.payment_method == 'gcash':
         state = txn.payment_status if txn else 'pending'
         steps.append({'key': 'payment', 'done': order.payment_status in ('confirmed', 'refunded'),
                       'problem': state == 'rejected',
@@ -5479,6 +5792,7 @@ def payment_method_label(method):
     """Display name for a stored payment method (bookings use 'GCash' / 'C.A.R',
     shop orders 'gcash' / 'cod', unpaid extra charges 'unpaid')."""
     return {'gcash': 'GCash', 'cod': 'Cash on delivery', 'c.a.r': 'C.A.R (Cash After Repair)',
+            'paymongo': 'Online (PayMongo)',
             'unpaid': 'Not yet chosen', '': 'Not yet chosen'}.get((method or '').lower(), method)
 
 app.jinja_env.globals['payment_method_label'] = payment_method_label
@@ -6309,6 +6623,7 @@ def init_db():
         add_technician_verification_columns()
         add_booking_device_columns()
         add_shop_delivery_columns()
+        add_paymongo_columns()
         
         # No default admin is ever created here. Create one with
         # `flask --app app create-admin` (or /setup/first-admin with SETUP_TOKEN).

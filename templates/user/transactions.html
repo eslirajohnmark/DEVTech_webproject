@@ -166,6 +166,14 @@
                         <button class="user-btn-primary small" onclick="openPaymentModal('{{ transaction.id }}')">
                             <i class="fas fa-credit-card"></i> Pay Now
                         </button>
+                        {% if can_pay_online(transaction) %}
+                        <form method="POST" action="{{ url_for('user_payment_paymongo', transaction_id=transaction.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="user-btn-primary small" title="Card, GCash, Maya, GrabPay or QR Ph through PayMongo">
+                                <i class="fas fa-shield-halved"></i> Pay online
+                            </button>
+                        </form>
+                        {% endif %}
                         <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
                             <i class="fas fa-eye"></i> View Details
                         </button>
@@ -189,6 +197,14 @@
                         <button class="user-btn-primary small" onclick="retryPayment('{{ transaction.id }}')">
                             <i class="fas fa-redo"></i> Retry Payment
                         </button>
+                        {% if can_pay_online(transaction) %}
+                        <form method="POST" action="{{ url_for('user_payment_paymongo', transaction_id=transaction.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="user-btn-primary small" title="Card, GCash, Maya, GrabPay or QR Ph through PayMongo">
+                                <i class="fas fa-shield-halved"></i> Pay online
+                            </button>
+                        </form>
+                        {% endif %}
                     {% endif %}
                 </div>
             </div>

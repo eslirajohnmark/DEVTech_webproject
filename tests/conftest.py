@@ -21,6 +21,9 @@ def app(tmp_path):
     flask_app.config['TESTING'] = True
     flask_app.config['WTF_CSRF_ENABLED'] = False
     flask_app.config['RATELIMIT_ENABLED'] = False
+    # Tests never call PayMongo for real; test_paymongo.py switches it on with a fake API.
+    flask_app.config.update(PAYMONGO_ENABLED=False, PAYMONGO_SECRET_KEY='sk_test_dummy',
+                            PAYMONGO_WEBHOOK_SECRET='')
     flask_app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     flask_app.config['TECH_UPLOAD_FOLDER'] = str(tmp_path / 'tech')
     flask_app.config['RECEIPT_UPLOAD_FOLDER'] = str(tmp_path / 'receipts')

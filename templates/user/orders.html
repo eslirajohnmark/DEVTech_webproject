@@ -122,6 +122,11 @@
                 <input type="tel" id="cancelRefundTo" inputmode="tel" maxlength="16" placeholder="09XXXXXXXXX" autocomplete="tel">
                 <small>Our team sends it after confirming your payment was received. You can follow it in this order's details.</small>
             </div>
+            <p class="ord-refund-box" id="cancelOnlineNote" hidden>
+                <span><i class="fas fa-rotate-left" aria-hidden="true"></i>
+                    You paid <strong id="cancelOnlineAmount"></strong> online. It goes back to the same card or
+                    e-wallet automatically through PayMongo.</span>
+            </p>
             <p class="ord-form-error" id="cancelError" role="alert" hidden></p>
         </div>
         <div class="user-modal-footer">
@@ -181,6 +186,24 @@
 
     function setFooter(order) {
         footer.innerHTML = '';
+        if (order && order.pay_online_url) {
+            // A real form POST (with the CSRF token), so the server sends the browser to PayMongo.
+            const f = document.createElement('form');
+            f.method = 'POST';
+            f.action = order.pay_online_url;
+            f.className = 'ord-pay-form';
+            const t = document.createElement('input');
+            t.type = 'hidden';
+            t.name = 'csrf_token';
+            t.value = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+            const b = document.createElement('button');
+            b.type = 'submit';
+            b.className = 'user-btn-primary';
+            b.innerHTML = '<i class="fas fa-shield-halved"></i> Pay online · ' + peso(order.total_amount);
+            f.addEventListener('submit', () => { b.disabled = true; b.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Opening secure payment…'; });
+            f.append(t, b);
+            footer.append(f);
+        }
         if (order && order.can_cancel) {
             const c = document.createElement('button');
             c.type = 'button';
@@ -320,6 +343,8 @@
         const needsRefund = order.refund_on_cancel > 0;
         document.getElementById('cancelRefundBox').hidden = !needsRefund;
         document.getElementById('cancelRefundAmount').textContent = peso(order.refund_on_cancel);
+        document.getElementById('cancelOnlineNote').hidden = !(order.refund_online > 0);
+        document.getElementById('cancelOnlineAmount').textContent = peso(order.refund_online);
         const input = document.getElementById('cancelRefundTo');
         input.value = needsRefund ? (order.refund_to_suggestion || '') : '';
         document.getElementById('cancelError').hidden = true;

@@ -421,6 +421,23 @@ fa-{% if category == 'memory' %}memory{% elif category == 'storage' %}hdd{% elif
                         </span>
                         <span class="user-payment-option-check"><i class="fas fa-check-circle"></i></span>
                     </label>
+                    {% if site().online_payments %}
+                    <label class="user-payment-option" id="paymentOptionOnline">
+                        <input type="radio" name="paymentMethod" value="paymongo" onchange="selectPaymentMethod('paymongo')">
+                        <span class="user-payment-option-icon online"><i class="fas fa-shield-halved"></i></span>
+                        <span class="user-payment-option-info">
+                            <strong>Pay online</strong>
+                            <small>Card, GCash, Maya, GrabPay or QR Ph · confirmed instantly</small>
+                        </span>
+                        <span class="user-payment-option-check"><i class="fas fa-check-circle"></i></span>
+                    </label>
+                    {% endif %}
+                </div>
+
+                <div class="shop-online-note" id="onlinePayGroup" hidden>
+                    <i class="fas fa-lock" aria-hidden="true"></i>
+                    <p>After you place the order you go to <strong>PayMongo's secure payment page</strong> to pay
+                        <strong id="onlineAmount"></strong>. Your payment is confirmed automatically; no screenshot needed.</p>
                 </div>
 
                 <div class="shop-gcash" id="gcashPayGroup" hidden>
@@ -920,6 +937,10 @@ function selectPaymentMethod(method) {
     document.getElementById('paymentOptionCod').classList.toggle('selected', method === 'cod');
     document.getElementById('paymentOptionGcash').classList.toggle('selected', method === 'gcash');
     document.getElementById('gcashPayGroup').hidden = method !== 'gcash';
+    const online = document.getElementById('paymentOptionOnline');
+    if (online) online.classList.toggle('selected', method === 'paymongo');
+    document.getElementById('onlinePayGroup').hidden = method !== 'paymongo';
+    document.getElementById('onlineAmount').textContent = document.getElementById('paymentModalTotal').textContent;
     updatePlaceOrderState();
 }
 
@@ -997,8 +1018,17 @@ function confirmCheckout() {
             }
             cartItems = []; cartTotal = 0; cartCount = 0;
             renderCart();
+            if (data.redirect_url) {                       // online payment: on to PayMongo
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Opening secure payment…';
+                window.location.href = data.redirect_url;
+                return;
+            }
             closePaymentModal();
-            shopToast(`Order ${data.order_number} placed! Estimated delivery: ${data.eta || 'to be confirmed'}.`, 'success');
+            if (data.payment_link_failed) {
+                shopToast(`Order ${data.order_number} placed, but the payment page could not open. Use "Pay online" in My Orders.`, 'warning', 7000);
+            } else {
+                shopToast(`Order ${data.order_number} placed! Estimated delivery: ${data.eta || 'to be confirmed'}.`, 'success');
+            }
             setTimeout(() => {
                 window.location.href = "{{ url_for('user_orders') }}?placed=" + encodeURIComponent(data.order_number || '');
             }, 1100);

@@ -165,7 +165,7 @@ def register_commands(app):
         for patch in ('update_payment_method_column', 'add_receipt_image_column',
                       'add_service_category_columns', 'add_profile_columns', 'add_workflow_columns',
                       'add_technician_verification_columns', 'add_booking_device_columns',
-                      'add_shop_delivery_columns'):
+                      'add_shop_delivery_columns', 'add_paymongo_columns'):
             getattr(app_module, patch)()
         app_module.move_legacy_receipts()
         released = app_module.release_reserved_cart_stock()
