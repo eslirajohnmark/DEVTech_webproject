@@ -27,9 +27,9 @@ def service(app):
 
 
 def _book(client, service, **overrides):
-    data = {'service_id': str(service.id), 'device_type': 'Laptop', 'problem_description': 'Cracked screen',
+    data = {'service_id': str(service.id), 'device_type': 'Laptop', 'problem_description': 'The laptop screen is cracked after it fell off the table',
             'booking_date': TOMORROW, 'booking_time': '10:00', 'in_shop': 'on',
-            'payment_method': 'GCash', 'accept_terms': 'on'}
+            'payment_method': 'QR Ph', 'accept_terms': 'on'}
     data.update(overrides)
     return client.post('/user/service-request', data={k: v for k, v in data.items() if v is not None})
 
@@ -180,13 +180,14 @@ def test_customer_payment_submission_is_validated(client, customer, admin, assig
     login_as(client, customer)
     client.post(f'/user/payments/{t.id}', data={'payment_method': 'Bitcoin', 'reference_number': 'X1'})
     assert db.session.get(Transaction, t.id).payment_status == 'rejected'
-    client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'reference_number': ''})
-    assert db.session.get(Transaction, t.id).payment_status == 'rejected'           # needs reference or receipt
-    client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'reference_number': 'R' * 51})
-    assert db.session.get(Transaction, t.id).payment_status == 'rejected'
+    # GCash was replaced by QR Ph through PayMongo: GCash references are no longer taken.
     client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'reference_number': 'GC-778899'})
+    assert db.session.get(Transaction, t.id).payment_status == 'rejected'
+    client.post(f'/user/payments/{t.id}', data={'payment_method': 'C.A.R', 'reference_number': 'R' * 51})
+    assert db.session.get(Transaction, t.id).payment_status == 'rejected'           # reference too long
+    client.post(f'/user/payments/{t.id}', data={'payment_method': 'C.A.R'})
     t = db.session.get(Transaction, t.id)
-    assert t.payment_status == 'pending' and t.gcash_reference == 'GC-778899'
+    assert t.payment_status == 'pending' and t.payment_method == 'C.A.R'
     assert _admin_notes('Payment Awaiting') == 1
 
 

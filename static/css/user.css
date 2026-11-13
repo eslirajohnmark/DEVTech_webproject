@@ -12627,6 +12627,11 @@ html, body {
 .shop-online-note[hidden] { display: none; }
 .shop-online-note i { color: var(--user-primary); margin-top: 0.2rem; }
 .shop-online-note p { margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--user-text-primary); }
-.ord-pay-form { margin: 0 auto 0 0; display: flex; }
+.ord-pay-btn { margin-right: auto; }
 #cancelOnlineNote { margin: 0.8rem 0 0; font-size: 0.88rem; }
 .user-transaction-actions form { display: inline-flex; margin: 0; }
+
+/* Booking: the description check under the issue field */
+.user-field-hint.is-error { color: var(--user-danger); }
+.user-field-hint.is-ok { color: #12B76A; }
+.user-transaction-note { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--user-text-muted); }

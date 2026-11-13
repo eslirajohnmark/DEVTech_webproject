@@ -163,16 +163,13 @@
                 <!-- Transaction Actions -->
                 <div class="user-transaction-actions">
                     {% if transaction.payment_status == 'pending' %}
-                        <button class="user-btn-primary small" onclick="openPaymentModal('{{ transaction.id }}')">
-                            <i class="fas fa-credit-card"></i> Pay Now
-                        </button>
                         {% if can_pay_online(transaction) %}
-                        <form method="POST" action="{{ url_for('user_payment_paymongo', transaction_id=transaction.id) }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="user-btn-primary small" title="Card, GCash, Maya, GrabPay or QR Ph through PayMongo">
-                                <i class="fas fa-shield-halved"></i> Pay online
-                            </button>
-                        </form>
+                        <button type="button" class="user-btn-primary small" data-pay="{{ transaction.id }}"
+                                data-title="Pay {{ transaction.transaction_number }}">
+                            <i class="fas fa-qrcode"></i> Pay by QR
+                        </button>
+                        {% elif transaction.payment_method == 'C.A.R' %}
+                        <span class="user-transaction-note"><i class="fas fa-store"></i> Pay at the shop after the repair</span>
                         {% endif %}
                         <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
                             <i class="fas fa-eye"></i> View Details
@@ -194,16 +191,13 @@
                         <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
                             <i class="fas fa-eye"></i> View Details
                         </button>
-                        <button class="user-btn-primary small" onclick="retryPayment('{{ transaction.id }}')">
-                            <i class="fas fa-redo"></i> Retry Payment
-                        </button>
                         {% if can_pay_online(transaction) %}
-                        <form method="POST" action="{{ url_for('user_payment_paymongo', transaction_id=transaction.id) }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="user-btn-primary small" title="Card, GCash, Maya, GrabPay or QR Ph through PayMongo">
-                                <i class="fas fa-shield-halved"></i> Pay online
-                            </button>
-                        </form>
+                        <button type="button" class="user-btn-primary small" data-pay="{{ transaction.id }}"
+                                data-title="Pay {{ transaction.transaction_number }}">
+                            <i class="fas fa-qrcode"></i> Pay by QR
+                        </button>
+                        {% elif transaction.payment_method == 'C.A.R' %}
+                        <span class="user-transaction-note"><i class="fas fa-store"></i> Pay at the shop after the repair</span>
                         {% endif %}
                     {% endif %}
                 </div>
@@ -225,138 +219,6 @@
 <!-- ============================================ -->
 <!-- PAYMENT MODAL -->
 <!-- ============================================ -->
-<div class="user-modal" id="paymentModal">
-    <div class="user-modal-content" style="max-width: 550px;">
-        <div class="user-modal-header">
-            <h2><i class="fas fa-credit-card"></i> Make Payment</h2>
-            <button class="user-modal-close" onclick="closePaymentModal()">&times;</button>
-        </div>
-        <div class="user-modal-body">
-            <form method="POST" id="paymentForm" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" id="paymentTransactionId" name="transaction_id" value="">
-                
-                <!-- Payment Summary -->
-                <div class="user-payment-summary">
-                    <div class="user-payment-item">
-                        <span>Transaction</span>
-                        <span id="paymentTransactionNumber">-</span>
-                    </div>
-                    <div class="user-payment-item">
-                        <span>Service</span>
-                        <span id="paymentServiceName">-</span>
-                    </div>
-                    <div class="user-payment-item">
-                        <span>Booking</span>
-                        <span id="paymentBookingNumber">-</span>
-                    </div>
-                    <div class="user-payment-item user-payment-total">
-                        <span>Total Amount</span>
-                        <span id="paymentAmount">₱0.00</span>
-                    </div>
-                </div>
-
-                <!-- Payment Method -->
-                <div class="user-payment-methods">
-                    <h4>Select Payment Method</h4>
-                    <div class="user-payment-options">
-                        <label class="user-payment-option" for="pay-gcash">
-                            <input type="radio" name="payment_method" id="pay-gcash" value="GCash" checked onchange="togglePaymentMethod()">
-                            <div class="user-payment-option-content">
-                                <i class="fas fa-mobile-alt" style="color:#0073e6;"></i>
-                                <span>GCash</span>
-                            </div>
-                        </label>
-                        <label class="user-payment-option" for="pay-car">
-                            <input type="radio" name="payment_method" id="pay-car" value="C.A.R" onchange="togglePaymentMethod()">
-                            <div class="user-payment-option-content">
-                                <i class="fas fa-money-bill-wave" style="color:#22c55e;"></i>
-                                <span>C.A.R</span>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- GCash Payment Info -->
-                <div class="user-payment-gcash" id="gcashInfo">
-                    <div class="user-gcash-header">
-                        <i class="fas fa-mobile-alt" style="color:#0073e6; font-size:1.2rem;"></i>
-                        <h4>GCash Payment Instructions</h4>
-                    </div>
-                    <div class="user-gcash-details">
-                        <div class="user-gcash-row">
-                            <span>GCash Number:</span>
-                            <span><strong>{{ site().gcash_account or 'Ask our team for the number' }}</strong></span>
-                        </div>
-                        <div class="user-gcash-row">
-                            <span>Account Name:</span>
-                            <span><strong>{{ site().gcash_name }}</strong></span>
-                        </div>
-                        <div class="user-gcash-row">
-                            <span>Amount to Pay:</span>
-                            <span><strong id="gcashAmount">₱0.00</strong></span>
-                        </div>
-                        <div class="user-gcash-row">
-                            <span>Reference:</span>
-                            <span><strong id="gcashReference">-</strong></span>
-                        </div>
-                    </div>
-                    
-                    <div class="user-gcash-note">
-                        <i class="fas fa-info-circle"></i>
-                        <span>Please send the exact amount and use your transaction number as reference.</span>
-                    </div>
-
-                    <!-- GCash Reference Input -->
-                    <div class="user-form-group" style="margin-top:0.8rem;">
-                        <label for="gcashReferenceInput">GCash Reference Number <span class="user-required-star">*</span></label>
-                        <input type="text" id="gcashReferenceInput" name="reference_number" class="user-form-input" placeholder="Enter GCash reference number">
-                        <small class="user-field-hint"><i class="fas fa-info-circle"></i> Enter the reference number from your GCash transaction</small>
-                    </div>
-
-                    <!-- Receipt Upload -->
-                    <div class="user-form-group" style="margin-top:0.8rem;">
-                        <label for="receiptUpload">Upload GCash Receipt/Screenshot <span class="user-optional">(Optional)</span></label>
-                        <div class="user-file-upload">
-                            <input type="file" id="receiptUpload" name="receipt_image" accept="image/*,.pdf" onchange="previewReceipt(this)">
-                            <div class="user-file-upload-area" id="fileUploadArea">
-                                <i class="fas fa-cloud-upload-alt"></i>
-                                <p>Click or drag to upload receipt</p>
-                                <span class="user-file-types">PNG, JPG, GIF, PDF (Max 5MB)</span>
-                            </div>
-                            <div class="user-file-preview" id="filePreview" style="display:none;">
-                                <img id="filePreviewImage" src="#" alt="Receipt Preview">
-                                <button type="button" class="user-file-remove" onclick="removeReceipt()">&times;</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- C.A.R Info -->
-                <div class="user-payment-car" id="carInfo" style="display:none;">
-                    <div class="user-car-header">
-                        <i class="fas fa-money-bill-wave" style="color:#22c55e; font-size:1.2rem;"></i>
-                        <h4>C.A.R (Cash After Repair)</h4>
-                    </div>
-                    <div class="user-car-details">
-                        <p><i class="fas fa-check-circle" style="color:var(--success);"></i> You only pay after the repair is completed</p>
-                        <p><i class="fas fa-check-circle" style="color:var(--success);"></i> Pay at the DEVTech store when you pick up your device</p>
-                        <p><i class="fas fa-check-circle" style="color:var(--success);"></i> No need to upload a receipt</p>
-                        <p><i class="fas fa-info-circle" style="color:var(--primary);"></i> You will be notified when your repair is ready</p>
-                    </div>
-                </div>
-
-                <div class="user-modal-footer" style="padding:0; margin-top:1.5rem; border-top:1px solid var(--user-border); padding-top:1rem;">
-                    <button type="button" class="user-btn-secondary" onclick="closePaymentModal()">Cancel</button>
-                    <button type="submit" class="user-btn-primary" id="submitPayment">
-                        <i class="fas fa-check"></i> Submit Payment
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
 <!-- ============================================ -->
 <!-- TRANSACTION DETAILS MODAL -->
 <!-- ============================================ -->
@@ -541,122 +403,6 @@
     // PAYMENT MODAL
     // ============================================
 
-    function openPaymentModal(transactionId) {
-        currentTransactionId = transactionId;
-        document.getElementById('paymentTransactionId').value = transactionId;
-        
-        // Find transaction data from the page
-        const item = document.querySelector(`.user-transaction-item[data-status]`);
-        if (item) {
-            const header = item.querySelector('.user-transaction-header');
-            const body = item.querySelector('.user-transaction-body');
-            const amount = item.querySelector('.user-transaction-price');
-            
-            if (header) {
-                const id = header.querySelector('.user-transaction-id');
-                if (id) document.getElementById('paymentTransactionNumber').textContent = id.textContent.trim();
-            }
-            
-            if (body) {
-                const h4 = body.querySelector('h4');
-                if (h4) document.getElementById('paymentServiceName').textContent = h4.textContent;
-                
-                const pTags = body.querySelectorAll('p');
-                pTags.forEach(p => {
-                    if (p.textContent.includes('Booking')) {
-                        document.getElementById('paymentBookingNumber').textContent = p.textContent.replace('Booking', '').trim();
-                    }
-                });
-            }
-            
-            if (amount) {
-                document.getElementById('paymentAmount').textContent = amount.textContent;
-                document.getElementById('gcashAmount').textContent = amount.textContent;
-            }
-            
-            // Set reference
-            const ref = document.querySelector('.user-transaction-id');
-            if (ref) {
-                document.getElementById('gcashReference').textContent = ref.textContent.trim();
-            }
-        }
-        
-        document.getElementById('paymentModal').classList.add('active');
-        document.body.style.overflow = 'hidden';
-    }
-
-    function closePaymentModal() {
-        document.getElementById('paymentModal').classList.remove('active');
-        document.body.style.overflow = '';
-        document.getElementById('paymentForm').reset();
-        removeReceipt();
-    }
-
-    function togglePaymentMethod() {
-        const gcashRadio = document.getElementById('pay-gcash');
-        const gcashInfo = document.getElementById('gcashInfo');
-        const carInfo = document.getElementById('carInfo');
-        
-        if (gcashRadio.checked) {
-            gcashInfo.style.display = 'block';
-            carInfo.style.display = 'none';
-        } else {
-            gcashInfo.style.display = 'none';
-            carInfo.style.display = 'block';
-        }
-    }
-
-    // ============================================
-    // RECEIPT UPLOAD
-    // ============================================
-
-    function previewReceipt(input) {
-        const file = input.files[0];
-        if (!file) return;
-        
-        // Check file size (max 5MB)
-        if (file.size > 5 * 1024 * 1024) {
-            showUserToast('File too large. Maximum size is 5MB.', 'error');
-            input.value = '';
-            return;
-        }
-        
-        // Check file type
-        const validTypes = ['image/png', 'image/jpeg', 'image/gif', 'application/pdf'];
-        if (!validTypes.includes(file.type)) {
-            showUserToast('Invalid file type. Please upload PNG, JPG, GIF, or PDF.', 'error');
-            input.value = '';
-            return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const preview = document.getElementById('filePreview');
-            const image = document.getElementById('filePreviewImage');
-            const uploadArea = document.getElementById('fileUploadArea');
-            
-            image.src = e.target.result;
-            preview.style.display = 'block';
-            uploadArea.style.display = 'none';
-        };
-        reader.readAsDataURL(file);
-    }
-
-    function removeReceipt() {
-        const input = document.getElementById('receiptUpload');
-        const preview = document.getElementById('filePreview');
-        const uploadArea = document.getElementById('fileUploadArea');
-        
-        input.value = '';
-        preview.style.display = 'none';
-        uploadArea.style.display = 'block';
-        document.getElementById('filePreviewImage').src = '#';
-    }
-
-    // ============================================
-    // TRANSACTION DETAILS
-    // ============================================
-
     function viewTransactionDetails(transactionId) {
         const modal = document.getElementById('transactionDetailsModal');
         const content = document.getElementById('transactionDetailsContent');
@@ -743,51 +489,9 @@
     }
 
     // ============================================
-    // RETRY PAYMENT
-    // ============================================
-
-    function retryPayment(transactionId) {
-        openPaymentModal(transactionId);
-    }
-
-    // ============================================
-    // PAYMENT FORM SUBMISSION
-    // ============================================
-
-    document.getElementById('paymentForm').addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        const transactionId = document.getElementById('paymentTransactionId').value;
-        const paymentMethod = document.querySelector('input[name="payment_method"]:checked');
-        const reference = document.getElementById('gcashReferenceInput').value;
-        const receiptFile = document.getElementById('receiptUpload').files[0];
-        
-        if (!paymentMethod) {
-            showUserToast('Please select a payment method.', 'error');
-            return;
-        }
-        
-        if (paymentMethod.value === 'GCash' && !reference) {
-            showUserToast('Please enter the GCash reference number.', 'error');
-            document.getElementById('gcashReferenceInput').focus();
-            return;
-        }
-        
-        // Submit the form
-        const formData = new FormData(this);
-        this.submit();
-    });
-
-    // ============================================
     // MODAL CLOSE HANDLERS
     // ============================================
     
-    document.getElementById('paymentModal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            closePaymentModal();
-        }
-    });
-
     document.getElementById('transactionDetailsModal').addEventListener('click', function(e) {
         if (e.target === this) {
             closeTransactionDetails();
@@ -802,7 +506,6 @@
 
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
-            closePaymentModal();
             closeTransactionDetails();
             closeReceiptViewer();
         }
@@ -830,6 +533,9 @@
     }, 5000);
 
 
-    console.log('✅ Transactions page initialized');
+    // QR payment (PayMongo): the dialog confirms by itself, then the page refreshes.
+    document.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', () => {
+        DevtechPay.open({transactionId: btn.dataset.pay, title: btn.dataset.title, onPaid: () => location.reload()});
+    }));
 </script>
 {% endblock %}

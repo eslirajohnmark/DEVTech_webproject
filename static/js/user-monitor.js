@@ -665,29 +665,24 @@
                       '<p>Your technician found something that needs your OK before the repair continues. ' +
                       'Work is paused until you answer.</p>' +
                   '</div>' +
-                  '<div class="usr-rating-block">' +
-                      '<label class="usr-rating-block-label">What they found</label>' +
-                      '<p style="white-space:pre-wrap;">' + esc(ap.findings) + '</p>' +
-                  '</div>' +
-                  '<div class="usr-rating-block">' +
-                      '<label class="usr-rating-block-label">Proposed work</label>' +
-                      '<p style="white-space:pre-wrap;">' + esc(ap.proposedWork) + '</p>' +
-                  '</div>' +
-                  '<div class="usr-rating-block">' +
-                      '<label class="usr-rating-block-label">Extra cost and time</label>' +
-                      '<p><strong>&#8369;' + esc(Number(ap.additionalCost || 0).toFixed(2)) + '</strong>' +
-                      (ap.extraDays ? ' &middot; about ' + esc(ap.extraDays) + ' extra day(s)' : '') + '</p>' +
-                  '</div>' +
+                  '<dl class="usr-approval-facts">' +
+                      '<div><dt>What they found</dt><dd>' + esc(ap.findings) + '</dd></div>' +
+                      '<div><dt>Proposed work</dt><dd>' + esc(ap.proposedWork) + '</dd></div>' +
+                  '</dl>' +
+                  '<p class="usr-approval-cost"><span>Extra cost</span> <strong>&#8369;' +
+                      esc(Number(ap.additionalCost || 0).toFixed(2)) + '</strong>' +
+                      (ap.extraDays ? '<span>about ' + esc(ap.extraDays) + ' more day' + (Number(ap.extraDays) === 1 ? '' : 's') + '</span>' : '') +
+                  '</p>' +
                   '<form id="approvalForm" novalidate>' +
                       '<div class="usr-rating-block">' +
                           '<label class="usr-rating-block-label" for="approvalNote">Note for the technician (optional)</label>' +
-                          '<textarea id="approvalNote" class="usr-underline-input" rows="2" maxlength="1000"></textarea>' +
+                          '<textarea id="approvalNote" class="g-field" rows="2" maxlength="1000"></textarea>' +
                       '</div>' +
                       '<div class="usr-rating-actions" style="display:flex; gap:0.6rem; flex-wrap:wrap;">' +
-                          '<button type="button" class="usr-btn usr-btn--primary" data-decision="approve">' +
+                          '<button type="button" class="g-btn g-btn--primary" data-decision="approve">' +
                               '<i class="fas fa-circle-check"></i> Approve' +
                           '</button>' +
-                          '<button type="button" class="usr-btn" data-decision="decline">' +
+                          '<button type="button" class="g-btn g-btn--quiet" data-decision="decline">' +
                               '<i class="fas fa-circle-xmark"></i> Decline' +
                           '</button>' +
                       '</div>' +

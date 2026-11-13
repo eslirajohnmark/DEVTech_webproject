@@ -518,6 +518,15 @@ function initBookingForm() {
 // ==========================================
 
 const TACLOBAN_CENTER = [11.2444, 125.0039];
+
+// The same pin on every DEVTech map (booking, checkout, staff pages).
+function devtechPinIcon(color) {
+    return L.divIcon({
+        className: 'devtech-pin',
+        html: '<svg viewBox="0 0 32 44" width="32" height="44" aria-hidden="true"><path d="M16 1C7.7 1 1 7.6 1 15.8 1 27 16 43 16 43s15-16 15-27.2C31 7.6 24.3 1 16 1z" fill="' + (color || '#2563EB') + '" stroke="#fff" stroke-width="2"/><circle cx="16" cy="16" r="5.5" fill="#fff"/></svg>',
+        iconSize: [32, 44], iconAnchor: [16, 43]
+    });
+}
 const TACLOBAN_BOUNDARY_URL = '/static/data/tacloban_boundary.geojson';
 
 let TACLOBAN_BOUNDARY_GEOJSON = null;  // raw GeoJSON, kept for drawing on the map
@@ -1017,8 +1026,9 @@ function initAddressMap(lat, lng) {
     // is already initialized" - re-center the existing instance instead
     // of creating a second one when the address form is reopened.
     if (addressMapInstance) {
-        addressMapInstance.setView(center, 15);
-        placeAddressMarker(center[0], center[1]);
+        addressMapInstance.setView(center, hasPin ? 16 : 13);
+        if (hasPin) placeAddressMarker(center[0], center[1], true);
+        else clearAddressMarker();
         // The container is display:none until the address form is opened,
         // so Leaflet may have measured it as 0x0 at creation time - this
         // corrects the tile layout now that it's actually visible.
@@ -1028,7 +1038,7 @@ function initAddressMap(lat, lng) {
 
     addressMapInstance = L.map('addressMap', {
         center: center,
-        zoom: 15,
+        zoom: hasPin ? 16 : 13,
         zoomControl: true
     });
 
@@ -1056,7 +1066,8 @@ function initAddressMap(lat, lng) {
         }
     });
 
-    placeAddressMarker(center[0], center[1]);
+    if (hasPin) placeAddressMarker(center[0], center[1], true);
+    else clearAddressMarker();
 
     addressMapInstance.on('click', function(e) {
         placeAddressMarker(e.latlng.lat, e.latlng.lng);
@@ -1065,24 +1076,64 @@ function initAddressMap(lat, lng) {
     setTimeout(function() { addressMapInstance.invalidateSize(); }, 100);
 }
 
-function placeAddressMarker(lat, lng) {
+function clearAddressMarker() {
+    pickedLat = null;
+    pickedLng = null;
+    if (addressMapMarker && addressMapInstance) addressMapInstance.removeLayer(addressMapMarker);
+    addressMapMarker = null;
+    const coordsEl = document.getElementById('addressCoords');
+    if (coordsEl) coordsEl.innerHTML = '<i class="fas fa-map-pin"></i> <span>Tap the map where the rider should deliver, then drag the pin to adjust.</span>';
+}
+
+function placeAddressMarker(lat, lng, saved) {
     pickedLat = lat;
     pickedLng = lng;
 
     const coordsEl = document.getElementById('addressCoords');
     if (coordsEl) {
-        coordsEl.innerHTML = '<i class="fas fa-map-pin"></i> <span>Pinned: ' + lat.toFixed(6) + ', ' + lng.toFixed(6) + '</span>';
+        coordsEl.innerHTML = '<i class="fas fa-map-pin"></i> <span>' + (saved ? 'Your saved pin' : 'Pinned') + ' (' +
+            lat.toFixed(5) + ', ' + lng.toFixed(5) + ')</span>';
     }
 
     if (addressMapMarker) {
         addressMapMarker.setLatLng([lat, lng]);
     } else {
-        addressMapMarker = L.marker([lat, lng], { draggable: true }).addTo(addressMapInstance);
+        addressMapMarker = L.marker([lat, lng], { draggable: true, icon: devtechPinIcon(), title: 'Delivery location' })
+            .addTo(addressMapInstance);
         addressMapMarker.on('dragend', function() {
             const pos = addressMapMarker.getLatLng();
             placeAddressMarker(pos.lat, pos.lng);
         });
     }
+    if (!saved) describePinnedAddress(lat, lng);
+}
+
+// Name the pinned place, and fill in a city / province the customer left empty.
+function describePinnedAddress(lat, lng) {
+    fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&lat=' + lat + '&lon=' + lng)
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+            if (!data || pickedLat !== lat || pickedLng !== lng) return;      // moved again meanwhile
+            const a = data.address || {};
+            const city = a.city || a.town || a.municipality || a.village || '';
+            const province = a.province || a.state || a.region || '';
+            const fill = function(id, value) {
+                const el = document.getElementById(id);
+                if (el && value && !el.value.trim()) el.value = value;
+            };
+            fill('addrCity', city.replace(/^City of /, ''));
+            fill('addrProvince', province);
+            fill('addrPostal', a.postcode || '');
+            const coordsEl = document.getElementById('addressCoords');
+            if (coordsEl && data.display_name) {
+                const span = document.createElement('span');
+                span.textContent = 'Near ' + data.display_name.split(',').slice(0, 3).join(',');
+                coordsEl.innerHTML = '<i class="fas fa-map-pin"></i> ';
+                coordsEl.appendChild(span);
+            }
+            if (typeof updatePlaceOrderState === 'function') updatePlaceOrderState();
+        })
+        .catch(function() {});
 }
 
 function locateMeOnMap() {

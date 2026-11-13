@@ -1,0 +1,100 @@
+/* ==========================================================================
+   DEVTech sign-in pages (log in, create account, forgot / reset password):
+   a frosted card on the circuit board, same material as the customer portal.
+   Loaded after style.css on those pages only.
+   ========================================================================== */
+:root {
+    --a-ink: #0F1E3D; --a-ink-2: #3E4C69; --a-muted: #6A7792;
+    --a-blue: #2563EB; --a-blue-deep: #1D3FBF; --a-wash: rgba(37, 99, 235, 0.08);
+    --a-line: rgba(15, 30, 61, 0.1); --a-edge: rgba(255, 255, 255, 0.85);
+    --a-font: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --a-head: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+}
+body {
+    font-family: var(--a-font);
+    color: var(--a-ink);
+    background-color: #EEF3FC;
+    background-image:
+        radial-gradient(60rem 30rem at 85% -10%, rgba(37, 99, 235, 0.12), transparent 60%),
+        radial-gradient(40rem 24rem at -10% 110%, rgba(18, 183, 106, 0.07), transparent 60%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%232563EB' stroke-opacity='.09' stroke-width='1.2'%3E%3Cpath d='M0 40h60l20 20h60M140 60l20-20h80M30 120h50l30 30v90M110 150h70l20-20h40M180 0v40M60 240v-50l-20-20H0M200 240v-60l20-20h20M120 0v20l-20 20'/%3E%3C/g%3E%3Cg fill='%232563EB' fill-opacity='.1'%3E%3Ccircle cx='60' cy='40' r='3'/%3E%3Ccircle cx='140' cy='60' r='3'/%3E%3Ccircle cx='80' cy='120' r='3'/%3E%3Ccircle cx='180' cy='150' r='3'/%3E%3Ccircle cx='180' cy='40' r='3'/%3E%3Ccircle cx='40' cy='170' r='3'/%3E%3Ccircle cx='220' cy='160' r='3'/%3E%3C/g%3E%3C/svg%3E");
+    background-attachment: fixed;
+    padding: 0 16px;
+}
+button, input, select, textarea { font-family: inherit; }
+
+/* ---------- the card ---------- */
+.login-container, body > .card {
+    background: rgba(255, 255, 255, 0.66);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    backdrop-filter: blur(22px) saturate(160%);
+    border: 1px solid var(--a-edge);
+    border-radius: 26px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 30px 70px -36px rgba(29, 63, 191, 0.45);
+}
+.login-container { min-height: 600px; }
+.login-container .left { background: transparent; }
+
+h1, h2, .welcome, .form-title { font-family: var(--a-head); letter-spacing: -0.01em; }
+.login-container .left .welcome, body > .card .form-title { font-size: 2.2rem; font-weight: 600; color: var(--a-ink); }
+.login-container .left .subtitle { color: var(--a-ink-2); }
+.login-container .left .subtitle span { color: var(--a-blue); font-weight: 600; }
+body > .card .form-title { border-bottom-color: var(--a-line); }
+
+/* labels in sentence case */
+.login-container .input-group label, body > .card label { text-transform: none; letter-spacing: 0; font-size: 0.9rem; font-weight: 600; color: var(--a-ink-2); }
+
+/* fields */
+.login-container .input-box, body > .card .input-group input {
+    background: rgba(255, 255, 255, 0.85); border: 1px solid var(--a-line); border-radius: 14px;
+}
+.login-container .input-box:hover { border-color: rgba(37, 99, 235, 0.35); }
+.login-container .input-box:focus-within, body > .card .input-group input:focus {
+    border-color: var(--a-blue); box-shadow: 0 0 0 4px var(--a-wash); outline: none;
+}
+.login-container .input-box:focus-within i { color: var(--a-blue); }
+.login-container .input-box input { color: var(--a-ink); }
+
+/* the action: solid blue, no glow, no pulse */
+.login-container .login-btn, body > .card .btn-primary {
+    background: var(--a-blue); color: #fff; border: 0; border-radius: 14px; box-shadow: none;
+    font-weight: 600; letter-spacing: 0; text-transform: none; animation: none;
+}
+.login-container .login-btn::before { display: none; }
+.login-container .login-btn:hover, body > .card .btn-primary:hover { background: var(--a-blue-deep); transform: none; box-shadow: none; }
+.login-container .login-btn:focus-visible, body > .card .btn-primary:focus-visible { outline: 3px solid rgba(37, 99, 235, 0.45); outline-offset: 2px; }
+
+.login-container .forgot-link, .login-container .signup-link a, body > .card .signin-link { color: var(--a-blue); }
+.login-container .social-btn { background: rgba(255, 255, 255, 0.8); border: 1px solid var(--a-line); border-radius: 14px; }
+.login-container .social-btn:hover { border-color: var(--a-blue); transform: none; box-shadow: none; }
+.login-container .divider { color: var(--a-muted); }
+
+/* ---------- the right side: the dark board ---------- */
+.login-container .right {
+    background-color: #0F1E3D;
+    background-image:
+        radial-gradient(34rem 20rem at 100% 0%, rgba(37, 99, 235, 0.5), transparent 65%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%2393B4FF' stroke-opacity='.16' stroke-width='1.2'%3E%3Cpath d='M0 40h60l20 20h60M140 60l20-20h80M30 120h50l30 30v90M110 150h70l20-20h40M180 0v40M60 240v-50l-20-20H0M200 240v-60l20-20h20M120 0v20l-20 20'/%3E%3C/g%3E%3Cg fill='%2312B76A' fill-opacity='.35'%3E%3Ccircle cx='60' cy='40' r='3'/%3E%3Ccircle cx='180' cy='150' r='3'/%3E%3C/g%3E%3C/svg%3E");
+}
+.login-container .right::before, .login-container .right::after { display: none; }
+.login-container .right .brand h1 { font-size: 2.6rem; font-weight: 600; }
+.login-container .right .brand .service-tag { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14); }
+
+/* what you get after signing in (login page) */
+.auth-mark { display: inline-flex; align-items: center; gap: 0.55rem; font: 600 1.05rem/1 var(--a-head); color: #fff; margin: 0 0 2rem; }
+.auth-mark i { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--a-blue); }
+.auth-pitch { font: 600 2rem/1.15 var(--a-head); color: #fff; margin: 0 0 1.6rem; max-width: 20ch; }
+.auth-points { list-style: none; margin: 0 0 2rem; padding: 0; display: grid; gap: 1.1rem; }
+.auth-points li { display: grid; grid-template-columns: 34px 1fr; gap: 0.8rem; align-items: start; color: rgba(255, 255, 255, 0.78); font-size: 0.95rem; line-height: 1.5; }
+.auth-points i { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(147, 180, 255, 0.6); color: #93B4FF; font-size: 0.85rem; }
+.auth-points strong { color: #fff; font-weight: 600; display: block; }
+.auth-new { display: inline-flex; align-items: center; gap: 0.55rem; min-height: 46px; padding: 0 1.3rem; border-radius: 14px;
+    background: #fff; color: var(--a-ink); font-weight: 600; text-decoration: none; }
+.auth-new:hover { background: #E4ECFF; }
+.auth-new:focus-visible { outline: 3px solid rgba(147, 180, 255, 0.8); outline-offset: 2px; }
+.auth-where { margin: 1.4rem 0 0; color: rgba(255, 255, 255, 0.6); font-size: 0.88rem; }
+.auth-where i { margin-right: 0.35rem; }
+
+@media (max-width: 900px) {
+    .auth-pitch { font-size: 1.6rem; }
+}

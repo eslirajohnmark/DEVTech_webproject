@@ -1,5 +1,10 @@
 {% extends 'base/technician_base.html' %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/map-view.css') }}">
+{% endblock %}
+
 {% block title %}Job {{ job.booking_number }}{% endblock %}
 {% block meta_title %}{{ job.booking_number }}{% endblock %}
 {% block meta_subtitle %}{{ job.service.name }}{% endblock %}
@@ -24,6 +29,8 @@
 {% set current_index = stage_keys.index(job.status) if job.status in stage_keys else 0 %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/map-view.js') }}"></script>
 <script nonce="{{ tech_nonce }}">
     document.querySelectorAll('.tech-banner-close').forEach(function (btn) {
         btn.addEventListener('click', function () { btn.parentElement.remove(); });
@@ -168,6 +175,9 @@
                     <div class="tech-kv-item">
                         <span class="tech-kv-key">Service address</span>
                         <span class="tech-kv-val">{{ job.address or '—' }}</span>
+                        {% if job.latitude is not none and job.longitude is not none %}
+                        <div class="map-view" data-map-lat="{{ job.latitude }}" data-map-lng="{{ job.longitude }}" data-map-label="Customer's pin"></div>
+                        {% endif %}
                     </div>
 
                     <div class="tech-kv-item">

@@ -1,0 +1,107 @@
+/* ==========================================================================
+   DEVTech admin: navy glass over the circuit board.
+   The colours live in admin.css (:root); this sheet adds the material:
+   the board behind the content, frosted panels, IBM Plex type, sentence-case
+   labels, and the stat cards as one readout strip (as on the customer side).
+   ========================================================================== */
+
+:root { color-scheme: dark; }
+
+body {
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background-color: var(--dark-bg);
+    background-image:
+        radial-gradient(70rem 36rem at 90% -15%, rgba(91, 140, 255, 0.16), transparent 60%),
+        radial-gradient(50rem 30rem at -10% 110%, rgba(18, 183, 106, 0.07), transparent 60%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%235B8CFF' stroke-opacity='.11' stroke-width='1.2'%3E%3Cpath d='M0 40h60l20 20h60M140 60l20-20h80M30 120h50l30 30v90M110 150h70l20-20h40M180 0v40M60 240v-50l-20-20H0M200 240v-60l20-20h20M120 0v20l-20 20'/%3E%3C/g%3E%3Cg fill='%235B8CFF' fill-opacity='.14'%3E%3Ccircle cx='60' cy='40' r='3'/%3E%3Ccircle cx='140' cy='60' r='3'/%3E%3Ccircle cx='80' cy='120' r='3'/%3E%3Ccircle cx='180' cy='150' r='3'/%3E%3Ccircle cx='180' cy='40' r='3'/%3E%3Ccircle cx='40' cy='170' r='3'/%3E%3Ccircle cx='220' cy='160' r='3'/%3E%3C/g%3E%3C/svg%3E");
+    background-attachment: fixed;
+}
+.admin-dashboard-wrapper, .admin-main-content { background: transparent; }
+button, input, select, textarea { font-family: inherit; }
+select option { background: var(--dark-solid); color: var(--text-primary); }
+
+h1, h2, h3, h4, .admin-brand-name, .admin-stat-number, .admin-metric-value {
+    font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+}
+.admin-page-title h1 { font-weight: 600; letter-spacing: -0.01em; }
+.admin-page-title p { color: var(--text-secondary); }
+
+/* sidebar: the darkest glass, pinned to the board */
+.admin-sidebar {
+    background: rgba(8, 14, 32, 0.72);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    backdrop-filter: blur(22px) saturate(150%);
+    border-right: 1px solid var(--dark-border);
+}
+.admin-logo-icon { background: var(--primary); color: #fff; border: 0; box-shadow: none; }
+.admin-nav-item.active { background: rgba(91, 140, 255, 0.14); color: #fff; }
+.admin-nav-item.active i { color: var(--primary-light); }
+
+/* frosted panels */
+:is(.admin-grid-panel, .admin-chart-card, .admin-table-container, .admin-settings-section, .admin-metric-card,
+    .admin-card, .admin-welcome-banner, .admin-request-card, .admin-payment-card, .desk-list, .desk-thread, .desk-context) {
+    background: var(--dark-card);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    border: 1px solid var(--dark-border);
+    box-shadow: var(--shadow-glow);
+}
+:is(.admin-grid-panel, .admin-chart-card, .admin-table-container, .admin-settings-section) { border-radius: 20px; }
+:is(.admin-grid-panel, .admin-chart-card, .admin-metric-card, .admin-card, .admin-stat-card, .admin-btn):hover { transform: none; }
+
+/* modals: thick glass over a blurred page */
+.admin-modal { -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.admin-modal-content {
+    background: rgba(19, 29, 56, 0.9);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid var(--dark-border-light);
+    border-radius: 22px;
+    box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+}
+
+/* stat cards: one readout strip with hairline dividers */
+.admin-stats-grid {
+    gap: 0; overflow: hidden; border-radius: 20px;
+    background: var(--dark-card);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    border: 1px solid var(--dark-border);
+    box-shadow: var(--shadow-glow);
+}
+.admin-stats-grid .admin-stat-card,
+.admin-stats-grid .admin-stat-card:hover {
+    background: transparent; border: 0; border-radius: 0;
+    box-shadow: -1px 0 0 var(--dark-border), 0 -1px 0 var(--dark-border);
+}
+.admin-stats-grid .admin-stat-card:hover { background: rgba(91, 140, 255, 0.07); }
+.admin-stats-grid .admin-stat-card::before, .admin-stats-grid .admin-stat-card::after { display: none; }
+.admin-stat-icon {
+    width: 32px; height: 32px; border-radius: 50%; font-size: 0.85rem;
+    background: transparent !important; box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.admin-stat-number { font-weight: 600; font-variant-numeric: tabular-nums; }
+.admin-stat-info { min-width: 0; }
+/* LED | number and label, with the weekly change underneath */
+.admin-stats-grid .admin-stat-card { display: grid; grid-template-columns: auto 1fr; column-gap: 0.85rem; row-gap: 0.5rem; align-items: start; }
+.admin-stat-icon { margin-top: 0.3rem; }
+.admin-stat-trend { grid-column: 2; justify-self: start; white-space: nowrap; }
+
+/* labels and badges in sentence case */
+.admin-main-content * { text-transform: none; }
+.admin-main-content :is(th, [class*="badge"], [class*="label"], [class*="status"]) { letter-spacing: 0; }
+.admin-table th { color: var(--text-secondary); font-weight: 600; background: rgba(8, 15, 34, 0.35); }
+.admin-table tbody tr:hover { background: rgba(91, 140, 255, 0.06); }
+
+/* buttons and fields */
+.admin-btn-primary, .admin-btn-confirm { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: none; }
+.admin-btn-primary:hover, .admin-btn-confirm:hover { background: var(--primary-dark); border-color: var(--primary-dark); box-shadow: none; }
+:is(.admin-btn, .admin-icon-btn, .admin-nav-item):focus-visible { outline: 3px solid rgba(91, 140, 255, 0.55); outline-offset: 2px; }
+:is(.admin-form-group input, .admin-form-group select, .admin-form-group textarea, .admin-filter-select,
+    .admin-setting-input, .admin-search-wrapper input):focus {
+    border-color: var(--primary); box-shadow: 0 0 0 4px rgba(91, 140, 255, 0.16); outline: none;
+}
+
+@media (max-width: 768px) {
+    .admin-stats-grid .admin-stat-card { padding: 0.9rem 1rem; }
+}

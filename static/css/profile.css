@@ -19,13 +19,13 @@
 }
 .admin-dashboard-wrapper, .pf-scope-admin {
     --pf-surface: var(--dark-card, #111);
-    --pf-surface-2: var(--dark-input, #1a1a1a);
+    --pf-surface-2: var(--dark-input, #0B1328);
     --pf-text: var(--text-primary, #e5e5e5);
     --pf-muted: var(--text-muted, #666);
     --pf-soft: var(--text-secondary, #888);
     --pf-border: var(--dark-border-light, #2a2a2a);
-    --pf-accent: var(--primary, #00ff88);
-    --pf-accent-soft: rgba(0, 255, 136, 0.1);
+    --pf-accent: var(--primary, #5B8CFF);
+    --pf-accent-soft: rgba(91, 140, 255, 0.1);
     --pf-on-accent: #03140b;
     --pf-radius: 16px;
 }
@@ -148,9 +148,9 @@
 }
 .pf-banner--matrix {
     background:
-        repeating-linear-gradient(90deg, transparent 0 14px, rgba(0, 255, 136, 0.16) 14px 16px),
-        repeating-linear-gradient(0deg, transparent 0 9px, rgba(0, 255, 136, 0.08) 9px 10px),
-        radial-gradient(100% 140% at 50% 0%, rgba(0, 255, 136, 0.35), transparent 60%),
+        repeating-linear-gradient(90deg, transparent 0 14px, rgba(91, 140, 255, 0.16) 14px 16px),
+        repeating-linear-gradient(0deg, transparent 0 9px, rgba(91, 140, 255, 0.08) 9px 10px),
+        radial-gradient(100% 140% at 50% 0%, rgba(91, 140, 255, 0.35), transparent 60%),
         #020a05;
 }
 .pf-banner--carbon {
@@ -160,7 +160,7 @@
         linear-gradient(27deg, #222 5px, transparent 5px) 0 10px / 20px 20px,
         linear-gradient(207deg, #222 5px, transparent 5px) 10px 5px / 20px 20px,
         linear-gradient(90deg, #1b1b1b 10px, transparent 10px) 0 0 / 20px 20px,
-        linear-gradient(#1d1d1d 25%, #1a1a1a 25%, #1a1a1a 50%, transparent 50%,
+        linear-gradient(#18233F 25%, #131D38 25%, #131D38 50%, transparent 50%,
                         transparent 75%, #242424 75%, #242424) 0 0 / 20px 20px,
         #131313;
 }
@@ -846,3 +846,4 @@
 @media (max-width: 768px) {
     body:has(> .user-dashboard-wrapper) { padding: 0 !important; }
 }
+.pf-drop strong.is-error { color: #E5484D; }

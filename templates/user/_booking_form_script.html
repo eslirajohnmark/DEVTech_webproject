@@ -151,7 +151,7 @@
             locationValid.classList.add('show');
             document.getElementById('isValidLocation').value = '1';
             isLocationValid = true;
-            showUserToast('✅ Location is within Tacloban City!', 'success');
+            showUserToast('Location pinned inside Tacloban City. Drag the pin to adjust it.', 'success');
         } else {
             pinResult.classList.add('show', 'invalid');
             pinResult.classList.remove('valid');
@@ -325,13 +325,13 @@
     // ============================================
 
     function updatePaymentInfo() {
-        const gcashRadio = document.getElementById('payment-gcash');
+        const qrRadio = document.getElementById('payment-qr');
         const paymentInfoText = document.getElementById('paymentInfoText');
         const paymentSummary = document.getElementById('summaryPayment');
         
-        if (gcashRadio.checked) {
-            paymentInfoText.textContent = 'After booking, pay with GCash from Transactions and enter your reference number or upload the receipt. An admin then confirms it.';
-            paymentSummary.textContent = 'GCash';
+        if (qrRadio.checked) {
+            paymentInfoText.textContent = "After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.";
+            paymentSummary.textContent = 'QR Ph';
         } else {
             paymentInfoText.textContent = 'C.A.R (Cash After Repair) - You pay after the repair is completed and you are satisfied with the service.';
             paymentSummary.textContent = 'C.A.R';
@@ -410,15 +410,12 @@
             map.removeLayer(marker);
         }
         
-        // Custom marker with Tacloban city style
-        const icon = L.divIcon({
-            className: 'custom-marker',
-            html: `<div style="background:#22c55e; width:24px; height:24px; border-radius:50%; border:3px solid white; box-shadow: 0 2px 10px rgba(0,0,0,0.3);"></div>`,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12]
+        // The same draggable pin as every other DEVTech map.
+        marker = L.marker([lat, lng], { icon: devtechPinIcon(), draggable: true, title: 'Service location' }).addTo(map);
+        marker.on('dragend', function () {
+            const pos = marker.getLatLng();
+            placeMarker(pos.lat, pos.lng);
         });
-        
-        marker = L.marker([lat, lng], { icon: icon }).addTo(map);
         document.getElementById('pinnedLat').value = lat;
         document.getElementById('pinnedLng').value = lng;
         
@@ -442,7 +439,6 @@
                 console.error('Error getting address:', error);
             });
         
-        showUserToast('✅ Location pinned successfully within Tacloban City!', 'success');
         updateSummary();
     }
 
@@ -672,8 +668,78 @@
             box.hidden = false;
         }
 
+        // Only services offered for the chosen device are listed ("Other" shows all).
+        const DEVICE_KEYS = {'Laptop': 'laptop', 'Desktop PC': 'desktop', 'Tablet': 'tablet', 'Smartphone': 'smartphone',
+                             'Monitor': 'monitor', 'Storage Device': 'storage'};
+        function filterServicesByDevice() {
+            if (!serviceSelect) return;
+            const checked = document.querySelector('input[name="device_type"]:checked');
+            const key = checked ? DEVICE_KEYS[checked.value] : null;
+            let shown = 0;
+            Array.from(serviceSelect.options).forEach(opt => {
+                if (!opt.value || opt.value === 'other') return;
+                const devices = (opt.dataset.devices || '').split(',').filter(Boolean);
+                const fits = !key || !devices.length || devices.includes(key);
+                opt.hidden = opt.disabled = !fits;
+                if (fits) shown++;
+            });
+            const current = serviceSelect.options[serviceSelect.selectedIndex];
+            if (current && current.disabled) {
+                serviceSelect.value = '';
+                showServiceInfo();
+                showUserToast(`That service isn't offered for a ${checked.value.toLowerCase()}. Please choose another.`, 'warning');
+            }
+            let note = document.getElementById('serviceDeviceNote');
+            if (!note) {
+                note = document.createElement('small');
+                note.id = 'serviceDeviceNote';
+                note.className = 'user-field-hint';
+                serviceSelect.insertAdjacentElement('afterend', note);
+            }
+            note.textContent = key ? `${shown} service${shown === 1 ? '' : 's'} for ${checked.value.toLowerCase()}s` : '';
+            updateSummary();
+        }
+        filterServicesByDevice();
+
+        // The description must be a real sentence about the problem (same rule as the server).
+        function descriptionProblem(text) {
+            const t = (text || '').trim();
+            const words = t.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
+            if (t.length < 15 || words.length < 3) return 'Describe what the device does in a full sentence.';
+            const junk = words.filter(w => {
+                const x = w.toLowerCase();
+                if (x.length < 4) return false;
+                const vowels = (x.match(/[aeiouy]/g) || []).length;
+                return vowels === 0 || vowels / x.length < 0.2 || /[^aeiouy]{5,}/.test(x) || /(.)\1{3,}/.test(x)
+                    || ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'].some(r => r.includes(x));
+            });
+            if (junk.length * 3 >= words.length) return 'This looks like random letters. Tell us what happens and when it started.';
+            return '';
+        }
+        const desc = document.getElementById('problemDesc');
+        const descHint = document.getElementById('problemDescHint');
+        function checkDescription(show) {
+            const problem = descriptionProblem(desc.value);
+            desc.setCustomValidity(problem);
+            if (show || !problem) {
+                descHint.innerHTML = problem
+                    ? '<i class="fas fa-circle-exclamation"></i> ' + problem
+                    : '<i class="fas fa-circle-check"></i> Clear enough for the technician';
+                descHint.classList.toggle('is-error', !!problem);
+                descHint.classList.toggle('is-ok', !problem);
+            }
+        }
+        if (desc) {
+            desc.addEventListener('blur', () => checkDescription(true));
+            desc.addEventListener('input', () => checkDescription(desc.classList.contains('touched') || !descriptionProblem(desc.value)));
+            desc.addEventListener('blur', () => desc.classList.add('touched'));
+            document.getElementById('charCount').textContent = desc.value.length;
+            if (desc.value) checkDescription(true);
+        }
+
         // Device radio change
         document.querySelectorAll('input[name="device_type"]').forEach(radio => {
+            radio.addEventListener('change', filterServicesByDevice);
             radio.addEventListener('change', function() {
                 const customGroup = document.getElementById('customDeviceGroup');
                 if (this.value === 'Other') {

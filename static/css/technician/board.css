@@ -1,0 +1,53 @@
+/* ============================================================================
+ * BOARD — the DEVTech material shared by all three portals: glass over a
+ * circuit board, IBM Plex type, labels in sentence case. The technician
+ * portal keeps its own tool-yellow accent.
+ * ==========================================================================*/
+body {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: var(--t-bg);
+    background-image:
+        radial-gradient(70rem 36rem at 92% -12%, rgba(250, 204, 21, 0.10), transparent 60%),
+        radial-gradient(60rem 34rem at -8% 108%, rgba(59, 130, 246, 0.16), transparent 62%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%2393B4FF' stroke-opacity='.10' stroke-width='1.2'%3E%3Cpath d='M0 40h60l20 20h60M140 60l20-20h80M30 120h50l30 30v90M110 150h70l20-20h40M180 0v40M60 240v-50l-20-20H0M200 240v-60l20-20h20M120 0v20l-20 20'/%3E%3C/g%3E%3Cg fill='%23FACC15' fill-opacity='.16'%3E%3Ccircle cx='60' cy='40' r='3'/%3E%3Ccircle cx='140' cy='60' r='3'/%3E%3Ccircle cx='80' cy='120' r='3'/%3E%3Ccircle cx='180' cy='150' r='3'/%3E%3Ccircle cx='180' cy='40' r='3'/%3E%3Ccircle cx='40' cy='170' r='3'/%3E%3Ccircle cx='220' cy='160' r='3'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat, repeat;
+    background-attachment: fixed;
+}
+html[data-theme="light"] body {
+    background-image:
+        radial-gradient(70rem 36rem at 92% -12%, rgba(217, 119, 6, 0.07), transparent 60%),
+        radial-gradient(60rem 34rem at -8% 108%, rgba(37, 99, 235, 0.08), transparent 62%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%232563EB' stroke-opacity='.08' stroke-width='1.2'%3E%3Cpath d='M0 40h60l20 20h60M140 60l20-20h80M30 120h50l30 30v90M110 150h70l20-20h40M180 0v40M60 240v-50l-20-20H0M200 240v-60l20-20h20M120 0v20l-20 20'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+h1, h2, h3, h4, .tech-brand-name, .tech-stat-num {
+    font-family: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+/* sentence case: these were tracked-out capitals */
+.tech-brand-sub, .tech-kv-key, .tech-parts th, .tech-bell-head, .tech-reg-section legend, .tech-reg-subhead {
+    text-transform: none;
+    letter-spacing: 0;
+}
+.tech-brand-sub { font-size: 0.74rem; font-weight: 500; }
+
+/* sign-in and registration: the same board, no colour blobs */
+.tech-login-page, .tech-login-page--split {
+    background-color: var(--t-bg);
+    background-image:
+        radial-gradient(70rem 36rem at 92% -12%, rgba(250, 204, 21, 0.10), transparent 60%),
+        radial-gradient(60rem 34rem at -8% 108%, rgba(59, 130, 246, 0.16), transparent 62%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%2393B4FF' stroke-opacity='.10' stroke-width='1.2'%3E%3Cpath d='M0 40h60l20 20h60M140 60l20-20h80M30 120h50l30 30v90M110 150h70l20-20h40M180 0v40M60 240v-50l-20-20H0M200 240v-60l20-20h20M120 0v20l-20 20'/%3E%3C/g%3E%3Cg fill='%23FACC15' fill-opacity='.16'%3E%3Ccircle cx='60' cy='40' r='3'/%3E%3Ccircle cx='140' cy='60' r='3'/%3E%3Ccircle cx='80' cy='120' r='3'/%3E%3Ccircle cx='180' cy='150' r='3'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat, repeat;
+    background-attachment: fixed;
+}
+.tech-auth-hero {
+    background: rgba(7, 11, 24, 0.55);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+.tech-auth-hero::before { display: none; }
+.tech-auth-hero-title { font-weight: 600; letter-spacing: -0.015em; }
+.tech-auth-hero-title span { background: none; color: inherit; }
+.tech-auth-divider { text-transform: none; letter-spacing: 0; font-size: 0.82rem; }
+.tech-brand-mark { background: var(--t-yellow); color: #0B1328; box-shadow: none; }

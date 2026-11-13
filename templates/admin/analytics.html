@@ -42,7 +42,7 @@
 <!-- Key Metrics -->
 <div class="admin-analytics-metrics">
     <div class="admin-metric-card">
-        <div class="admin-metric-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+        <div class="admin-metric-icon" style="background:rgba(91, 140, 255,0.08); color:var(--primary);">
             <i class="fas fa-peso-sign"></i>
         </div>
         <div class="admin-metric-info">
@@ -259,7 +259,7 @@
 </div>
 <div class="admin-analytics-metrics">
     <div class="admin-metric-card">
-        <div class="admin-metric-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+        <div class="admin-metric-icon" style="background:rgba(91, 140, 255,0.08); color:var(--primary);">
             <i class="fas fa-user-check"></i>
         </div>
         <div class="admin-metric-info">
@@ -387,7 +387,13 @@
     // ============================================
     
     let chartInstances = {};
-    
+
+    // The portal's type and colours; bars stay bar-shaped when there are only a few.
+    Chart.defaults.font.family = "'IBM Plex Sans', system-ui, sans-serif";
+    Chart.defaults.color = '#A3AEC6';
+    Chart.defaults.borderColor = 'rgba(148, 170, 220, 0.12)';
+    Chart.defaults.datasets.bar.maxBarThickness = 48;
+
     // ============================================
     // REVENUE CHART
     // ============================================
@@ -395,8 +401,8 @@
     function initRevenueChart() {
         const ctx = document.getElementById('revenueChart').getContext('2d');
         const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-        gradient.addColorStop(0, 'rgba(0, 255, 136, 0.25)');
-        gradient.addColorStop(1, 'rgba(0, 255, 136, 0.01)');
+        gradient.addColorStop(0, 'rgba(91, 140, 255, 0.25)');
+        gradient.addColorStop(1, 'rgba(91, 140, 255, 0.01)');
         
         const labels = {{ revenue_labels|tojson }};
         const data = {{ revenue_data|tojson }};
@@ -410,11 +416,11 @@
                 datasets: [{
                     label: 'Revenue (₱)',
                     data: data,
-                    borderColor: '#00ff88',
+                    borderColor: '#5B8CFF',
                     backgroundColor: gradient,
                     fill: true,
                     tension: 0.4,
-                    pointBackgroundColor: '#00ff88',
+                    pointBackgroundColor: '#5B8CFF',
                     pointBorderColor: '#0a0e17',
                     pointBorderWidth: 2,
                     pointRadius: 4,
@@ -500,8 +506,8 @@
         if (chartInstances.dailyRevenue) chartInstances.dailyRevenue.destroy();
         
         const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-        gradient.addColorStop(0, 'rgba(0, 255, 136, 0.2)');
-        gradient.addColorStop(1, 'rgba(0, 255, 136, 0.01)');
+        gradient.addColorStop(0, 'rgba(91, 140, 255, 0.2)');
+        gradient.addColorStop(1, 'rgba(91, 140, 255, 0.01)');
         
         chartInstances.dailyRevenue = new Chart(ctx, {
             type: 'bar',
@@ -734,10 +740,10 @@
                     {
                         label: 'Revenue (₱)',
                         data: revenueData,
-                        borderColor: '#00ff88',
+                        borderColor: '#5B8CFF',
                         backgroundColor: 'transparent',
                         tension: 0.3,
-                        pointBackgroundColor: '#00ff88',
+                        pointBackgroundColor: '#5B8CFF',
                         pointRadius: 3,
                         yAxisID: 'y',
                     },
@@ -795,7 +801,7 @@
                 datasets: [{
                     label: 'Units Sold',
                     data: {{ top_product_data|tojson }},
-                    backgroundColor: '#00ff88',
+                    backgroundColor: '#5B8CFF',
                     borderRadius: 6
                 }]
             },
@@ -873,7 +879,7 @@
                 labels: ['New Customers', 'Returning Customers'],
                 datasets: [{
                     data: [{{ new_customers_count }}, {{ returning_customers }}],
-                    backgroundColor: ['#3b82f6', '#00ff88'],
+                    backgroundColor: ['#3b82f6', '#5B8CFF'],
                     borderWidth: 0
                 }]
             },

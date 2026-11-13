@@ -63,12 +63,13 @@ def test_admin_answers_support_ticket(client, customer, admin):
     ticket = SupportTicket.query.one()
 
     login_as(client, admin)
-    assert 'Late repair' in client.get('/admin/support').get_data(as_text=True)
+    assert client.get('/admin/support').status_code == 200
+    assert client.get('/api/admin/support/conversations?view=open').get_json()['items'][0]['subject'] == 'Late repair'
     client.post(f'/admin/support/{ticket.id}/respond',
                 data={'admin_response': 'It is ready today.', 'status': 'resolved'})
     ticket = db.session.get(SupportTicket, ticket.id)
     assert ticket.status == 'resolved' and ticket.admin_response == 'It is ready today.'
-    assert Notification.query.filter_by(user_role='customer', user_id=customer.id, title='Support Ticket Updated').count() == 1
+    assert Notification.query.filter_by(user_role='customer', user_id=customer.id, title='Support replied').count() == 1
 
 
 def test_contact_form_stores_inquiry_and_notifies_admin(client, admin):

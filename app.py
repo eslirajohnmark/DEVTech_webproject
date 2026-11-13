@@ -38,7 +38,7 @@ from flask_talisman import Talisman
 from commands import register_commands
 from flask import send_file
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from services import email_service, profile_presets, delivery_eta, gcash_qr, paymongo_service
+from services import email_service, profile_presets, delivery_eta, paymongo_service, troubleshooter
 from services.job_status import (STAGES, STATUS_LABELS, ACTIVE_STATUSES,
                                  FINISHED_STATUSES, SLOT_STATUSES)
  
@@ -164,7 +164,7 @@ def nav_count_values(role, uid):
         'messages': Message.query.filter_by(recipient_role=role, recipient_id=uid, is_read=False).count(),
     }
     if role == 'admin':
-        counts['tickets'] = SupportTicket.query.filter(SupportTicket.status != 'resolved').count()
+        counts['tickets'] = SupportTicket.query.filter(SupportTicket.status == 'open').count()
         counts['inquiries'] = ContactInquiry.query.filter_by(status='new').count()
         counts['support'] = counts['tickets'] + counts['inquiries']
         counts['refunds'] = Refund.query.filter_by(status='pending').count()
@@ -224,9 +224,6 @@ def _inject_site_details():
                 'email': values.get('contact_email') or values.get('system_email', ''),
                 'address': values.get('contact_address', ''),
                 'hours': values.get('business_hours', ''),
-                'gcash_account': values.get('gcash_account', ''),
-                'gcash_name': values.get('gcash_name') or values.get('system_name') or 'DEVTech Computer Services',
-                'gcash_enabled': values.get('enable_gcash', 'true') == 'true',
                 'cod_enabled': values.get('enable_cod', 'true') == 'true',
                 'online_payments': paymongo_service.is_enabled(app),
             }
@@ -335,7 +332,6 @@ FILE_SIGNATURES = {
     'gif': [b'GIF87a', b'GIF89a'], 'pdf': [b'%PDF-'],
 }
 MAX_RECEIPT_SIZE = 5 * 1024 * 1024
-PAYMENT_PROOF_EXTENSIONS = ('png', 'jpg', 'jpeg')    # GCash screenshots
  
 def validate_uploaded_file(file_storage, extension):
     signatures = FILE_SIGNATURES.get(extension, [])
@@ -710,9 +706,24 @@ class Service(db.Model):
     price = db.Column(db.Numeric(10, 2), nullable=False)
     estimated_hours = db.Column(db.Integer, default=1)
     is_active = db.Column(db.Boolean, default=True)
+    device_types = db.Column(db.String(120))      # e.g. "laptop,desktop"; empty = any device
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     bookings = db.relationship('Booking', backref='service', lazy=True)
+
+    @property
+    def device_list(self):
+        return [d for d in (self.device_types or '').split(',') if d]
+
+    def fits_device(self, device_label):
+        """True if this service is offered for the booking form's device label."""
+        key = BOOKING_DEVICE_KEYS.get(device_label)
+        return key is None or not self.device_list or key in self.device_list
+
+# Device types on the booking form, and the catalog key each one maps to
+# ("Other" fits every service: the customer describes it themselves).
+BOOKING_DEVICE_KEYS = {'Laptop': 'laptop', 'Desktop PC': 'desktop', 'Tablet': 'tablet', 'Smartphone': 'smartphone',
+                       'Monitor': 'monitor', 'Storage Device': 'storage', 'Other': None}
 
 class Booking(db.Model):
     __tablename__ = 'bookings'
@@ -727,6 +738,8 @@ class Booking(db.Model):
     device_type = db.Column(db.String(50), nullable=False)
     device_brand = db.Column(db.String(50))     # optional, from the booking form
     device_model = db.Column(db.String(80))     # optional, "if known"
+    latitude = db.Column(db.Numeric(10, 7))     # home service: where the customer pinned on the map
+    longitude = db.Column(db.Numeric(10, 7))
     description = db.Column(db.Text, nullable=False)
     address = db.Column(db.String(255))
     booking_date = db.Column(db.Date, nullable=False)
@@ -774,6 +787,7 @@ class Transaction(db.Model):
     paymongo_checkout_id = db.Column(db.String(64), nullable=True, index=True)
     paymongo_payment_id  = db.Column(db.String(64), nullable=True, index=True)
     paymongo_paid_at     = db.Column(db.DateTime, nullable=True)
+    paymongo_intent_id   = db.Column(db.String(64), nullable=True, index=True)   # QR Ph payment
 
 class Refund(db.Model):
     """Money owed back to a customer for a payment (a cancelled paid booking or
@@ -895,14 +909,44 @@ class SupportTicket(db.Model):
     subject = db.Column(db.String(200), nullable=False)
     message = db.Column(db.Text, nullable=False)
     category = db.Column(db.String(50), default='general')
-    status = db.Column(db.String(20), default='open')
-    admin_response = db.Column(db.Text)
+    status = db.Column(db.String(20), default='open')     # open (needs a reply) | waiting (on the customer) | resolved
+    admin_response = db.Column(db.Text)                   # first-version single reply, kept for old tickets
+    assigned_admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=True)
+    last_message_at = db.Column(db.DateTime)
+    last_customer_message_at = db.Column(db.DateTime)
+    last_admin_message_at = db.Column(db.DateTime)
+    customer_seen_at = db.Column(db.DateTime)
+    admin_seen_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     customer = db.relationship('Customer', back_populates='support_tickets')
+    assigned_admin = db.relationship('Admin')
+    messages = db.relationship('SupportMessage', backref='ticket', lazy=True,
+                               order_by='SupportMessage.id', cascade='all, delete-orphan')
     user_id = db.synonym('customer_id')
     user = db.synonym('customer')
+
+    @property
+    def unread_for_admin(self):
+        return bool(self.last_customer_message_at and
+                    (not self.admin_seen_at or self.last_customer_message_at > self.admin_seen_at))
+
+    @property
+    def unread_for_customer(self):
+        return bool(self.last_admin_message_at and
+                    (not self.customer_seen_at or self.last_admin_message_at > self.customer_seen_at))
+
+class SupportMessage(db.Model):
+    """One message in a support conversation (customer, admin, or a system note)."""
+    __tablename__ = 'support_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('support_tickets.id'), nullable=False, index=True)
+    sender_role = db.Column(db.String(20), nullable=False)        # customer | admin | system
+    sender_id = db.Column(db.Integer)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class ContactInquiry(db.Model):
     """Message sent from the public landing-page contact form (no account needed)."""
@@ -1321,6 +1365,8 @@ def add_booking_device_columns():
     with app.app_context():
         _try_sql("ALTER TABLE bookings ADD COLUMN device_brand VARCHAR(50) NULL")
         _try_sql("ALTER TABLE bookings ADD COLUMN device_model VARCHAR(80) NULL")
+        _try_sql("ALTER TABLE bookings ADD COLUMN latitude DECIMAL(10,7) NULL")
+        _try_sql("ALTER TABLE bookings ADD COLUMN longitude DECIMAL(10,7) NULL")
 
 def add_shop_delivery_columns():
     """Sale prices, delivery tracking on orders and the refund payout account.
@@ -1333,6 +1379,49 @@ def add_shop_delivery_columns():
         _try_sql("ALTER TABLE orders ADD CONSTRAINT fk_orders_rider FOREIGN KEY (rider_id) REFERENCES delivery_riders(id)")
         _try_sql("ALTER TABLE refunds ADD COLUMN payout_account VARCHAR(60) NULL")
 
+def support_messages_from_ticket(t):
+    """An old-style ticket (one message, one reply) as chat messages. Returns True if
+    it changed anything. Does not commit."""
+    if t.messages:
+        return False
+    first = t.created_at or datetime.utcnow()
+    db.session.add(SupportMessage(ticket_id=t.id, sender_role='customer', sender_id=t.customer_id,
+                                  body=f'{t.subject}\n\n{t.message}' if t.subject else t.message, created_at=first))
+    t.last_message_at = t.last_customer_message_at = first
+    if t.admin_response:
+        replied = t.updated_at or first
+        db.session.add(SupportMessage(ticket_id=t.id, sender_role='admin', body=t.admin_response, created_at=replied))
+        t.last_message_at = t.last_admin_message_at = replied
+        t.admin_seen_at = replied
+    if t.status == 'in_progress':
+        t.status = 'waiting' if t.admin_response else 'open'
+    db.session.flush()
+    db.session.refresh(t)
+    return True
+
+def add_support_chat_columns():
+    """Support tickets become conversations: their columns, and each old ticket's
+    message and reply carried over as the first chat messages. Safe to repeat."""
+    with app.app_context():
+        for col, kind in (('assigned_admin_id', 'INT'), ('last_message_at', 'DATETIME'),
+                          ('last_customer_message_at', 'DATETIME'), ('last_admin_message_at', 'DATETIME'),
+                          ('customer_seen_at', 'DATETIME'), ('admin_seen_at', 'DATETIME')):
+            _try_sql(f"ALTER TABLE support_tickets ADD COLUMN {col} {kind} NULL")
+        try:
+            moved = sum(1 for t in SupportTicket.query.filter(SupportTicket.last_message_at.is_(None)).all()
+                        if support_messages_from_ticket(t))
+            db.session.commit()
+            if moved:
+                print(f'Support: {moved} old ticket(s) moved into conversations.')
+        except Exception as exc:          # table not there yet on a brand-new database
+            db.session.rollback()
+            print(f'Note: support conversation backfill skipped: {exc}')
+
+def add_service_device_column():
+    """Which device types each service is for. Safe to repeat."""
+    with app.app_context():
+        _try_sql("ALTER TABLE services ADD COLUMN device_types VARCHAR(120) NULL")
+
 def add_paymongo_columns():
     """PayMongo checkout/payment ids on transactions. Safe to run every
     startup: each statement is a no-op once the column exists."""
@@ -1342,6 +1431,8 @@ def add_paymongo_columns():
         _try_sql("ALTER TABLE transactions ADD COLUMN paymongo_paid_at DATETIME NULL")
         _try_sql("CREATE INDEX ix_transactions_paymongo_checkout ON transactions (paymongo_checkout_id)")
         _try_sql("CREATE INDEX ix_transactions_paymongo_payment ON transactions (paymongo_payment_id)")
+        _try_sql("ALTER TABLE transactions ADD COLUMN paymongo_intent_id VARCHAR(64) NULL")
+        _try_sql("CREATE INDEX ix_transactions_paymongo_intent ON transactions (paymongo_intent_id)")
         
 def add_service_category_columns():
     """Same columns as database/migrate_service_categories.sql, for DBs created before it."""
@@ -2525,7 +2616,7 @@ def api_services():
                     for s in Service.query.filter_by(is_active=True).all()])
  
 # ==================== SERVICE REQUEST / CATALOG / BOOKING ====================
-BOOKING_PAYMENT_METHODS = ('GCash', 'C.A.R')       # values of the booking form's radio buttons
+BOOKING_PAYMENT_METHODS = ('QR Ph', 'C.A.R')       # values of the booking form's radio buttons
 BOOKING_SLOT_HOURS = range(8, 18)                  # 08:00 ... 17:00, on the hour
 SLOT_CAPACITY = 5
 BOOKING_MAX_DAYS_AHEAD = 90
@@ -2551,6 +2642,7 @@ def request_service():
             flash('Please choose a payment method.', 'danger')
             return redirect(url_for('request_service'))
  
+        chosen = None
         if service_id == 'other':
             custom_service = request.form.get('custom_service', '').strip()
             if not custom_service:
@@ -2580,6 +2672,17 @@ def request_service():
                 return redirect(url_for('request_service'))
             service_id_for_booking = chosen.id
  
+        if device_type not in BOOKING_DEVICE_KEYS:
+            flash('Please choose your device type.', 'danger')
+            return redirect(url_for('request_service'))
+        if service_id != 'other' and chosen and not chosen.fits_device(device_type):
+            flash(f'{chosen.name} is not offered for a {device_type.lower()}. Please choose a service for your device.',
+                  'danger')
+            return redirect(url_for('request_service'))
+        specific, why = troubleshooter.is_specific(description)
+        if not specific:
+            flash(why, 'danger')
+            return redirect(url_for('request_service'))
         if device_type == 'Other':
             custom_device = request.form.get('custom_device', '').strip()
             if not custom_device:
@@ -2613,6 +2716,7 @@ def request_service():
             return redirect(url_for('request_service'))
  
         # Server-side location check for home service (client check alone is bypassable)
+        lat = lng = None
         if not is_in_shop:
             try:
                 lat = float(request.form.get('pinned_lat', ''))
@@ -2655,6 +2759,7 @@ def request_service():
                           device_model=device_model or None,
                           description=description or 'No description provided',
                           address=address if not is_in_shop else 'In-shop repair',
+                          latitude=lat, longitude=lng,
                           booking_date=booking_date_obj, booking_time=booking_time_obj,
                           is_in_shop=is_in_shop, status='pending', terms_accepted_at=datetime.utcnow())
         db.session.add(booking)
@@ -2663,7 +2768,8 @@ def request_service():
         booking_number = booking.booking_number
         transaction = Transaction(transaction_number=placeholder_number(), booking_id=booking.id,
                                   user_id=user_id, amount=service_obj.price,
-                                  payment_method=payment_method, payment_status='pending')
+                                  payment_method='paymongo' if payment_method == 'QR Ph' else payment_method,
+                                  payment_status='pending')
         db.session.add(transaction)
         db.session.flush()
         assign_transaction_number(transaction)
@@ -2709,7 +2815,8 @@ def book_appointment(category_slug=None):
     if category:
         q = q.filter_by(category_id=category.id)
     return render_template('user/book_appointment.html', services=q.order_by(Service.name).all(),
-                           category=category, notifications=_unread_notifs(session.get('user_id')))
+                           category=category, device_types=list(BOOKING_DEVICE_KEYS),
+                           notifications=_unread_notifs(session.get('user_id')))
  
 # ==================== DEVICE MONITOR ====================
  
@@ -3097,18 +3204,105 @@ def confirm_paymongo_payment(transaction, payment_id, amount_centavos, source):
     return 'confirmed'
 
 def sync_paymongo_payment(transaction):
-    """Ask PayMongo whether an open online payment was paid and record it.
-    Returns the confirm result, 'unpaid', or 'unknown' if PayMongo can't be reached."""
-    if transaction.payment_method != 'paymongo' or not transaction.paymongo_checkout_id \
-            or transaction.paymongo_payment_id or not paymongo_service.is_enabled(app):
+    """Ask PayMongo whether an open online payment (QR Ph or hosted checkout) was
+    paid and record it. Returns the confirm result, 'unpaid', or 'unknown' if
+    PayMongo can't be reached."""
+    if transaction.payment_method != 'paymongo' or transaction.paymongo_payment_id \
+            or not paymongo_service.is_enabled(app):
         return 'unpaid'
     try:
-        attrs = paymongo_service.retrieve_checkout_session(app, transaction.paymongo_checkout_id)
+        if transaction.paymongo_intent_id:
+            paid = paymongo_service.intent_paid_payment(
+                paymongo_service.retrieve_payment_intent(app, transaction.paymongo_intent_id))
+            if paid:
+                return confirm_paymongo_payment(transaction, paid[0], paid[1], 'QR status check')
+        if transaction.paymongo_checkout_id:
+            paid = paymongo_service.paid_payment(
+                paymongo_service.retrieve_checkout_session(app, transaction.paymongo_checkout_id))
+            if paid:
+                return confirm_paymongo_payment(transaction, paid[0], paid[1], 'status check')
     except paymongo_service.PaymongoError:
-        app.logger.warning('Could not check PayMongo session for %s', transaction.transaction_number)
+        app.logger.warning('Could not check PayMongo payment for %s', transaction.transaction_number)
         return 'unknown'
-    paid = paymongo_service.paid_payment(attrs)
-    return confirm_paymongo_payment(transaction, paid[0], paid[1], 'status check') if paid else 'unpaid'
+    return 'unpaid'
+
+def start_qr_payment(transaction):
+    """The QR Ph code to pay this transaction: the open one if it is still valid,
+    otherwise a new one. Raises PaymongoError if PayMongo can't be reached. Commits."""
+    if transaction.paymongo_intent_id:
+        try:
+            attrs = paymongo_service.retrieve_payment_intent(app, transaction.paymongo_intent_id)
+            details = paymongo_service.qr_details(attrs)
+            if attrs.get('status') == 'awaiting_next_action' and details['image'] and not _qr_expired(details):
+                return details
+        except paymongo_service.PaymongoError:
+            pass                                       # stale: make a new code
+    what = (f'Shop order {transaction.order.order_number}' if transaction.order
+            else transaction.booking.service.name if transaction.booking and transaction.booking.service
+            else 'DEVTech payment')
+    customer = transaction.customer
+    intent_id, details = paymongo_service.create_qr_payment(
+        app, amount=transaction.amount, description=f'{what} ({transaction.transaction_number})',
+        billing={'name': customer.full_name if customer else '', 'email': customer.email if customer else '',
+                 'phone': customer.phone if customer else ''},
+        metadata={'transaction_number': transaction.transaction_number, 'customer_id': transaction.customer_id})
+    transaction.paymongo_intent_id = intent_id
+    transaction.payment_method = 'paymongo'
+    transaction.payment_status = 'pending'
+    transaction.rejection_reason = None
+    transaction.updated_at = datetime.utcnow()
+    if transaction.order:
+        transaction.order.payment_method = 'paymongo'
+        transaction.order.payment_status = 'pending'
+    db.session.commit()
+    return details
+
+def _qr_expired(details):
+    """True once the QR's expiry (unix seconds or an ISO time) has passed."""
+    exp = details.get('expires_at')
+    try:
+        stamp = float(exp) if not isinstance(exp, str) or exp.replace('.', '', 1).isdigit() \
+            else datetime.fromisoformat(exp.replace('Z', '+00:00')).timestamp()
+    except (TypeError, ValueError):
+        return False
+    return stamp <= time.time() + 30
+
+def _owned_transaction(transaction_id):
+    t = Transaction.query.get_or_404(transaction_id)
+    if t.user_id != session.get('user_id'):
+        abort(404)
+    return t
+
+@app.route('/api/payments/<int:transaction_id>/qr', methods=['POST'])
+@login_required
+def api_payment_qr(transaction_id):
+    """The QR Ph code (a PNG data URL) with the exact amount for this payment."""
+    transaction = _owned_transaction(transaction_id)
+    if transaction.payment_status == 'confirmed':
+        return jsonify({'status': 'paid'})
+    if not can_pay_online(transaction):
+        return jsonify({'status': 'unavailable', 'message': 'This payment can no longer be paid online.'}), 400
+    try:
+        details = start_qr_payment(transaction)
+    except paymongo_service.PaymongoError as exc:
+        app.logger.warning('PayMongo QR failed for %s: %s %s', transaction.transaction_number, exc.status, exc.body)
+        return jsonify({'status': 'error', 'message': 'The QR code could not be created. Please try again.'}), 502
+    return jsonify({'status': 'pending', 'qr': details['image'], 'expires_at': details['expires_at'],
+                    'amount': f'{float(transaction.amount):,.2f}', 'reference': transaction.transaction_number,
+                    'test_url': details['test_url'] if paymongo_service.is_test_mode(app) else '',
+                    'card_url': url_for('user_payment_paymongo', transaction_id=transaction.id)})
+
+@app.route('/api/payments/<int:transaction_id>/status')
+@limiter.exempt
+@login_required
+def api_payment_status(transaction_id):
+    """Polled by the QR dialog until the payment arrives."""
+    transaction = _owned_transaction(transaction_id)
+    if transaction.payment_status != 'confirmed':
+        sync_paymongo_payment(transaction)
+        db.session.refresh(transaction)
+    return jsonify({'status': {'confirmed': 'paid', 'refunded': 'refunded', 'cancelled': 'cancelled'}.get(
+        transaction.payment_status, 'pending')})
 
 def close_paymongo_checkout(transaction):
     """Expire an unpaid checkout so the link can't be paid after a cancellation."""
@@ -3228,11 +3422,16 @@ def paymongo_webhook():
         app.logger.warning('PayMongo webhook rejected: %s', exc)
         return jsonify({'ok': False}), 400
     info = paymongo_service.event_summary(event)
-    if info['event_type'] != paymongo_service.PAID_EVENT or not info['reference_number'] or not info['payment_id']:
+    if info['event_type'] not in (paymongo_service.PAID_EVENT, paymongo_service.QR_PAID_EVENT) \
+            or not info['payment_id']:
         return jsonify({'ok': True, 'ignored': True})
     if info['livemode'] == paymongo_service.is_test_mode(app):
         return jsonify({'ok': True, 'ignored': 'other mode'})   # live event on a test setup, or the reverse
-    transaction = Transaction.query.filter_by(transaction_number=info['reference_number']).first()
+    transaction = None
+    if info['payment_intent_id']:
+        transaction = Transaction.query.filter_by(paymongo_intent_id=info['payment_intent_id']).first()
+    if transaction is None and info['reference_number']:
+        transaction = Transaction.query.filter_by(transaction_number=info['reference_number']).first()
     if not transaction:
         app.logger.warning('PayMongo webhook for unknown transaction %s', info['reference_number'])
         return jsonify({'ok': True, 'unknown_reference': True})
@@ -3269,24 +3468,149 @@ def receipt_file(transaction_id, name):
     abort(404)
 
 # ==================== SUPPORT ROUTE ====================
+SUPPORT_TOPICS = {'booking': 'Repair booking', 'payment': 'Payment or refund', 'order': 'Shop order',
+                  'account': 'My account', 'technical': 'Technical question', 'general': 'Something else'}
+SUPPORT_MESSAGE_MAX = 2000
+SUPPORT_QUICK_REPLIES = [
+    'Thanks for reaching out! Let me check that for you.',
+    'Could you send your booking or order number so I can look it up?',
+    'Your device is ready for pickup at the shop. See you soon!',
+    'The refund has been sent. It can take 3 to 5 banking days to show in your account.',
+    'Is there anything else I can help you with?',
+]
+
+def support_post(ticket, role, sender_id, body, status=None):
+    """Add a message to a support conversation and keep its state in step. Commits."""
+    now = datetime.utcnow()
+    db.session.add(SupportMessage(ticket_id=ticket.id, sender_role=role, sender_id=sender_id, body=body, created_at=now))
+    ticket.last_message_at = now
+    if role == 'customer':
+        ticket.last_customer_message_at = now
+        ticket.customer_seen_at = now
+        ticket.status = 'open'                      # the customer is waiting for us again
+    elif role == 'admin':
+        ticket.last_admin_message_at = now
+        ticket.admin_seen_at = now
+        ticket.status = status or 'waiting'
+        if not ticket.assigned_admin_id:
+            ticket.assigned_admin_id = sender_id
+    ticket.updated_at = now
+    db.session.commit()
+
+def _support_time(dt):
+    return delivery_eta.to_ph(dt).strftime('%b %d, %I:%M %p').replace(' 0', ' ') if dt else ''
+
+def _support_message_json(m, admins):
+    who = 'You'
+    if m.sender_role == 'admin':
+        a = admins.get(m.sender_id)
+        who = (a.shown_name if a else 'DEVTech Support')
+    elif m.sender_role == 'system':
+        who = ''
+    return {'id': m.id, 'role': m.sender_role, 'who': who, 'body': m.body, 'at': _support_time(m.created_at),
+            'iso': m.created_at.isoformat() if m.created_at else ''}
+
+def _support_admin_names(messages):
+    ids = {m.sender_id for m in messages if m.sender_role == 'admin' and m.sender_id}
+    return {a.id: a for a in Admin.query.filter(Admin.id.in_(ids)).all()} if ids else {}
+
+def _support_ticket_json(t, viewer='customer'):
+    last = t.messages[-1] if t.messages else None
+    return {'id': t.id, 'subject': t.subject, 'topic': SUPPORT_TOPICS.get(t.category, (t.category or 'General').title()),
+            'status': t.status if t.status in ('open', 'waiting', 'resolved') else 'open',
+            'last_at': _support_time(t.last_message_at or t.created_at),
+            'snippet': (last.body[:90] if last else t.message[:90]),
+            'unread': t.unread_for_customer if viewer == 'customer' else t.unread_for_admin,
+            'assigned': t.assigned_admin.shown_name if t.assigned_admin else ''}
+
 @app.route('/support', methods=['GET', 'POST'])
 @login_required
 def support():
     user_id = session.get('user_id')
-    if request.method == 'POST':
+    if request.method == 'POST':                 # plain form (no JavaScript): starts a conversation
         subject, message = request.form.get('subject'), request.form.get('message')
-        category = request.form.get('category')
         if not subject or not message:
             flash('Please fill in all required fields.', 'danger')
             return redirect(url_for('support'))
-        db.session.add(SupportTicket(customer_id=user_id, subject=subject, message=message[:1000],
-                                     category=category or 'general'))
-        db.session.commit()
-        notify_admins('New Support Ticket', f'New support ticket from {current_account().full_name}: {subject}')
-        flash('Your support ticket has been submitted. We will get back to you shortly.', 'success')
+        _start_support_conversation(user_id, request.form.get('category') or 'general', message, subject=subject)
+        flash('Your message was sent to our support team.', 'success')
         return redirect(url_for('support'))
-    tickets = SupportTicket.query.filter_by(customer_id=user_id).order_by(SupportTicket.created_at.desc()).all()
-    return render_template('user/support.html', tickets=tickets, notifications=_unread_notifs(user_id))
+    tickets = SupportTicket.query.filter_by(customer_id=user_id)\
+        .order_by(db.func.coalesce(SupportTicket.last_message_at, SupportTicket.created_at).desc()).all()
+    return render_template('user/support.html', tickets=tickets, topics=SUPPORT_TOPICS,
+                           conversations=[_support_ticket_json(t) for t in tickets],
+                           notifications=_unread_notifs(user_id))
+
+def _start_support_conversation(customer_id, category, body, subject=None):
+    category = category if category in SUPPORT_TOPICS else 'general'
+    body = body.strip()[:SUPPORT_MESSAGE_MAX]
+    subject = (subject or '').strip()[:200] or (SUPPORT_TOPICS[category] + ': ' + ' '.join(body.split())[:60])
+    t = SupportTicket(customer_id=customer_id, subject=subject, message=body, category=category, status='open')
+    db.session.add(t)
+    db.session.flush()
+    support_post(t, 'customer', customer_id, body)
+    customer = db.session.get(Customer, customer_id)
+    notify_admins('New support chat', f'{customer.full_name if customer else "A customer"} asked about '
+                  f'{SUPPORT_TOPICS[category].lower()}: {" ".join(body.split())[:80]}', 'info')
+    return t
+
+def _own_ticket(ticket_id):
+    t = SupportTicket.query.get_or_404(ticket_id)
+    if t.customer_id != session.get('user_id'):
+        abort(404)
+    return t
+
+@app.route('/api/support/conversations', methods=['POST'])
+@login_required
+@limiter.limit('20 per hour')
+def api_support_start():
+    data = request.get_json(silent=True) or {}
+    body = str(data.get('body') or '').strip()
+    if len(body) < 5:
+        return jsonify({'success': False, 'message': 'Tell us a little more so we can help (at least a few words).'}), 400
+    t = _start_support_conversation(session.get('user_id'), str(data.get('topic') or 'general'), body)
+    return jsonify({'success': True, 'id': t.id})
+
+@app.route('/api/support/conversations/<int:ticket_id>')
+@limiter.exempt
+@login_required
+def api_support_thread(ticket_id):
+    """The conversation (new messages after ?after=<id>). Marks it seen."""
+    t = _own_ticket(ticket_id)
+    if support_messages_from_ticket(t):        # an old-style ticket, opened for the first time
+        db.session.commit()
+    after = request.args.get('after', type=int) or 0
+    msgs = [m for m in t.messages if m.id > after]
+    if t.unread_for_customer:
+        t.customer_seen_at = datetime.utcnow()
+        db.session.commit()
+    return jsonify({'conversation': _support_ticket_json(t),
+                    'messages': [_support_message_json(m, _support_admin_names(msgs)) for m in msgs]})
+
+@app.route('/api/support/conversations/<int:ticket_id>/messages', methods=['POST'])
+@login_required
+@limiter.limit('60 per hour')
+def api_support_reply(ticket_id):
+    t = _own_ticket(ticket_id)
+    body = str((request.get_json(silent=True) or {}).get('body') or '').strip()[:SUPPORT_MESSAGE_MAX]
+    if not body:
+        return jsonify({'success': False, 'message': 'Write a message first.'}), 400
+    was = t.status
+    support_post(t, 'customer', t.customer_id, body)
+    if was != 'open':                                # don't notify on every line of a running chat
+        notify_admins('Support reply', f'{t.customer.full_name if t.customer else "A customer"} replied in '
+                      f'"{t.subject}"' + (' (reopened)' if was == 'resolved' else '') + '.', 'info')
+    return jsonify({'success': True})
+
+@app.errorhandler(413)
+def upload_too_large(_error):
+    """A file bigger than the upload limit: say so instead of showing an error page."""
+    message = 'That file is too large to upload. Photos can be up to 3 MB; please choose a smaller one.'
+    if request.path.startswith('/api/') or request.accept_mimetypes.best == 'application/json':
+        return jsonify({'success': False, 'message': message}), 413
+    flash(message, 'danger')
+    target = request.referrer if request.referrer and request.referrer.startswith(request.host_url) else url_for('home')
+    return redirect(target)
 
 # ==================== PROFILE LOOK (all three account types) ====================
 AVATAR_NAME_RE = re.compile(r'^[0-9a-f]{24}\.(jpg|png|webp|gif)$')
@@ -3362,7 +3686,7 @@ def account_appearance():
     """Save the profile look: display name, headline, avatar (photo / icon /
     initials), avatar colour and frame, and banner."""
     account = current_account()
-    back = redirect(url_for(PROFILE_ENDPOINT[account.role]) + '#look')
+    back = redirect(url_for(PROFILE_ENDPOINT[account.role]))      # the message shows at the top
     form = request.form
 
     display_name = (form.get('display_name') or '').strip()
@@ -4073,29 +4397,13 @@ def api_cart_clear():
 def api_cart_checkout():
     user_id = session.get('user_id')
     user = db.session.get(Customer, user_id)
-    # The shop page sends multipart form data (it carries the payment screenshot).
     data = request.get_json(silent=True) or request.form
 
+    # Cash on delivery, or QR Ph through PayMongo (paid right after the order is placed).
     payment_method = (data.get('payment_method') or '').strip().lower()
-    gcash_reference = (data.get('gcash_reference') or '').strip()[:50]
-    proof = request.files.get('payment_proof')
-
-    if payment_method not in ('cod', 'gcash', 'paymongo') or \
+    if payment_method not in ('cod', 'paymongo') or \
             (payment_method == 'paymongo' and not paymongo_service.is_enabled(app)):
         return jsonify({'success': False, 'message': 'Please select a valid payment method.'}), 400
-
-    proof_ext = None
-    if payment_method == 'gcash':
-        # The screenshot of the successful GCash payment is the proof an admin reviews.
-        if not (proof and proof.filename):
-            return jsonify({'success': False, 'error': 'proof_required',
-                            'message': 'Upload a screenshot of your successful GCash payment.'}), 400
-        proof_ext = proof.filename.rsplit('.', 1)[-1].lower() if '.' in proof.filename else ''
-        if proof_ext not in PAYMENT_PROOF_EXTENSIONS:
-            return jsonify({'success': False, 'message': 'The screenshot must be a JPG or PNG image.'}), 400
-        ok, err = validate_uploaded_file(proof, proof_ext)
-        if not ok:
-            return jsonify({'success': False, 'message': err}), 400
 
     # The delivery address lives on the user's account (single saved address
     # per user, same as the profile page). It must be complete before an
@@ -4204,55 +4512,20 @@ def api_cart_checkout():
         user_id=user_id,
         amount=total_amount,
         payment_method=payment_method,
-        payment_status='pending',
-        gcash_reference=(gcash_reference or None) if payment_method == 'gcash' else None
+        payment_status='pending'
     )
     db.session.add(transaction)
     db.session.flush()
     assign_transaction_number(transaction)
 
-    saved_proof = None
-    if proof_ext:
-        receipts_dir = app.config['RECEIPT_UPLOAD_FOLDER']
-        os.makedirs(receipts_dir, exist_ok=True)
-        stamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        name = secure_filename(f"receipt_{transaction.transaction_number}_{stamp}_{secrets.token_hex(4)}.{proof_ext}")
-        saved_proof = os.path.join(receipts_dir, name)
-        try:
-            proof.save(saved_proof)
-        except OSError:
-            db.session.rollback()
-            return jsonify({'success': False, 'message': 'Could not save your screenshot. Please try again.'}), 500
-        transaction.receipt_image = name
-
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        if saved_proof and os.path.exists(saved_proof):
-            os.remove(saved_proof)
-        raise
+    db.session.commit()
     cache.delete('active_products')  # stock just changed
 
-    redirect_url = None
     if payment_method == 'paymongo':
-        try:
-            redirect_url = start_paymongo_checkout(transaction)
-        except paymongo_service.PaymongoError as exc:
-            app.logger.warning('PayMongo checkout failed for %s: %s %s', transaction.transaction_number,
-                               exc.status, exc.body)
         notif_message = (
-            f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. Complete your online '
-            f'payment to have it prepared. Estimated delivery: {eta["label"]}.'
+            f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. Scan the QR code to pay; '
+            f'we start preparing it as soon as the payment arrives. Estimated delivery: {eta["label"]}.'
         )
-    elif payment_method == 'gcash':
-        notif_message = (
-            f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. Our team is checking '
-            f'your GCash payment screenshot. Estimated delivery: {eta["label"]}.'
-        )
-        notify_admins('Payment Awaiting Confirmation',
-                      f'Order {order.order_number}: GCash payment of ₱{total_amount:,.2f} with a screenshot '
-                      f'({transaction.transaction_number}) needs checking.', 'info')
     else:
         notif_message = (
             f'Your order #{order.order_number} (₱{total_amount:,.2f}) has been placed. '
@@ -4266,34 +4539,22 @@ def api_cart_checkout():
         'order_number': order.order_number,
         'total': float(total_amount),
         'eta': eta['label'],
-        # Online payment: the page sends the customer to PayMongo. If PayMongo could
-        # not be reached the order still exists and can be paid from My Orders.
-        'redirect_url': redirect_url,
-        'payment_link_failed': payment_method == 'paymongo' and not redirect_url
+        # QR Ph: the page now shows the QR code for this transaction (see /api/payments/<id>/qr).
+        'transaction_id': transaction.id if payment_method == 'paymongo' else None
     })
 
 @app.route('/api/checkout/summary')
 @login_required
 def api_checkout_summary():
     """What the checkout window shows: the amount to pay (worked out here, not
-    trusted from the page), the delivery estimate for the saved address, and the
-    shop's GCash QR with that exact amount in it."""
+    trusted from the page) and the delivery estimate for the saved address."""
     user = db.session.get(Customer, session.get('user_id'))
     cart = ShoppingCart.query.filter_by(user_id=user.id, status='active').first()
     items = CartItem.query.filter_by(cart_id=cart.id).all() if cart else []
     total = sum((i.product.effective_price * i.quantity for i in items if i.product and i.product.is_active), 0)
-    values = _setting_values('gcash_qr_payload', 'gcash_account', 'gcash_name', 'system_name')
-    qr = None
-    if total and values.get('gcash_qr_payload'):
-        try:
-            qr = gcash_qr.qr_svg_data_uri(gcash_qr.with_amount(values['gcash_qr_payload'], total))
-        except gcash_qr.InvalidQrPayload:
-            app.logger.warning('The saved GCash QR code is not valid; re-upload it in Settings.')
     return jsonify({
         'total': float(total),
         'eta': _eta_json(delivery_estimate(_address_point(user))),
-        'gcash': {'qr': qr, 'amount': f'{total:,.2f}', 'account': values.get('gcash_account', ''),
-                  'name': values.get('gcash_name') or values.get('system_name') or 'DEVTech Computer Services'},
     })
 # Add this to app.py - Order Cancellation with Stock Restoration
 
@@ -4466,6 +4727,8 @@ def api_order_detail(order_id):
         'refund_online': float(sum(t.amount for t in paid if t.payment_method == 'paymongo')),
         'pay_online_url': (url_for('user_payment_paymongo', transaction_id=txn.id)
                            if txn and order.payment_method in ('paymongo', 'cod') and can_pay_online(txn) else ''),
+        'pay_transaction_id': (txn.id if txn and order.payment_method in ('paymongo', 'cod') and can_pay_online(txn)
+                               else None),
         'refund_to_suggestion': customer.phone if customer and customer.phone else '',
         'eta': eta,
         'delivered_at': _ph_time(order.delivered_at),
@@ -4544,11 +4807,36 @@ def _order_tracking(order, txn):
     return steps
 # ==================== TROUBLESHOOTING ROUTE ====================
 
+@app.route('/api/troubleshoot', methods=['POST'])
+@login_required
+def api_troubleshoot():
+    """Match the customer's description to the knowledge base (services/troubleshooter.py)
+    and attach the service to book, with its starting price and a pre-filled booking link."""
+    data = request.get_json(silent=True) or {}
+    device = str(data.get('device') or '')
+    description = str(data.get('description') or '')[:500]
+    result = troubleshooter.diagnose(device, str(data.get('category') or ''), description)
+    if result['status'] != 'ok':
+        return jsonify(result), 422
+    svc = Service.query.filter(func.lower(Service.name) == result['service'].lower(),
+                               Service.is_active.is_(True)).first()
+    result['service'] = None
+    if svc and svc.category:
+        label = troubleshooter.DEVICES.get(device, 'Laptop')
+        result['service'] = {
+            'id': svc.id, 'name': svc.name, 'price': float(svc.price or 0), 'hours': svc.estimated_hours or 1,
+            'book_url': url_for('book_appointment', category_slug=svc.category.slug, service=svc.id,
+                                device=label, issue=description.strip()),
+        }
+    result['support_url'] = url_for('support')
+    return jsonify(result)
+
 @app.route('/user/troubleshooting')
 @login_required
 def user_troubleshooting():
     notifications = _unread_notifs(session.get('user_id'))
-    return render_template('user/troubleshooting.html', notifications=notifications)
+    return render_template('user/troubleshooting.html', notifications=notifications,
+                           devices=troubleshooter.DEVICES, categories=troubleshooter.CATEGORIES)
 
 # ==================== ADMIN ROUTES ====================
 
@@ -4977,6 +5265,8 @@ def api_booking_detail(booking_id):
         'device_model': booking.device_model,
         'description': booking.description,
         'address': booking.address,
+        'latitude': float(booking.latitude) if booking.latitude is not None else None,
+        'longitude': float(booking.longitude) if booking.longitude is not None else None,
         'is_in_shop': booking.is_in_shop,
         'booking_date': booking.booking_date.strftime('%b %d, %Y') if booking.booking_date else None,
         'booking_time': booking.booking_time.strftime('%I:%M %p') if booking.booking_time else None,
@@ -5308,6 +5598,8 @@ def api_admin_booking_detail(booking_id):
         'device_model': booking.device_model,
         'description': booking.description,
         'address': booking.address,
+        'latitude': float(booking.latitude) if booking.latitude is not None else None,
+        'longitude': float(booking.longitude) if booking.longitude is not None else None,
         'is_in_shop': booking.is_in_shop,
         'booking_date': booking.booking_date.strftime('%b %d, %Y') if booking.booking_date else None,
         'booking_time': booking.booking_time.strftime('%I:%M %p') if booking.booking_time else None,
@@ -5378,8 +5670,9 @@ def admin_order_status(order_id):
 
     rider = None
     if new_status == 'out_for_delivery':
-        if order.payment_method == 'gcash' and order.payment_status != 'confirmed':
-            flash(f'Confirm the GCash payment for {order.order_number} (Payments) before sending it out.', 'danger')
+        if order.payment_method in ('gcash', 'paymongo') and order.payment_status != 'confirmed':
+            flash(f'{order.order_number} is not paid yet. Wait for the payment (or confirm it under Payments) '
+                  f'before sending it out.', 'danger')
             return redirect(url_for('admin_orders', status=request.args.get('filter', 'all')))
         rider = DeliveryRider.query.filter_by(id=request.form.get('rider_id', type=int),
                                               is_active=True, on_duty=True).first()
@@ -5579,14 +5872,16 @@ def _service_from_form(form):
     category = db.session.get(ServiceCategory, form.get('category_id', type=int) or 0)
     if not category:
         return None, 'Choose a category.'
-    price, err = _decimal_field(form.get('price'), 'Price')
+    price, err = _decimal_field(form.get('price'), 'Starting price', minimum=1)
     if err:
         return None, err
     hours, err = _int_field(form.get('estimated_hours') or 1, 'Estimated hours', 1, 200)
     if err:
         return None, err
+    devices = [d for d in form.getlist('device_types') if d in BOOKING_DEVICE_KEYS.values() and d]
     return {'name': name, 'category_id': category.id, 'price': price, 'estimated_hours': hours,
-            'description': (form.get('description') or '').strip()[:2000] or None}, None
+            'description': (form.get('description') or '').strip()[:2000] or None,
+            'device_types': ','.join(devices) or None}, None
 
 @app.route('/admin/services', methods=['POST'])
 @admin_required
@@ -5660,34 +5955,135 @@ def admin_category_toggle(category_id):
 @app.route('/admin/support')
 @admin_required
 def admin_support():
-    status_order = db.case((SupportTicket.status == 'open', 0), (SupportTicket.status == 'in_progress', 1), else_=2)
-    tickets = SupportTicket.query.order_by(status_order, SupportTicket.created_at.desc()).limit(200).all()
     inquiries = ContactInquiry.query.order_by(
         (ContactInquiry.status == 'new').desc(), ContactInquiry.created_at.desc()).limit(200).all()
-    return render_template('admin/support.html', tickets=tickets, inquiries=inquiries)
+    counts = dict(db.session.query(SupportTicket.status, func.count(SupportTicket.id)).group_by(SupportTicket.status).all())
+    return render_template('admin/support.html', inquiries=inquiries, counts=counts,
+                           quick_replies=SUPPORT_QUICK_REPLIES, me=current_account())
+
+@app.route('/api/admin/support/conversations')
+@limiter.exempt
+@admin_required
+def api_admin_support_list():
+    view = request.args.get('view', 'open')
+    q = SupportTicket.query
+    if view in ('open', 'waiting', 'resolved'):
+        q = q.filter(SupportTicket.status == view)
+    elif view == 'mine':
+        q = q.filter(SupportTicket.assigned_admin_id == session.get('user_id'), SupportTicket.status != 'resolved')
+    term = (request.args.get('q') or '').strip()
+    if term:
+        like = f'%{term}%'
+        q = q.join(Customer, Customer.id == SupportTicket.customer_id).filter(or_(
+            SupportTicket.subject.ilike(like), Customer.full_name.ilike(like), Customer.email.ilike(like)))
+    tickets = q.order_by(db.func.coalesce(SupportTicket.last_message_at, SupportTicket.created_at).desc()).limit(200).all()
+    counts = dict(db.session.query(SupportTicket.status, func.count(SupportTicket.id)).group_by(SupportTicket.status).all())
+    items = []
+    for t in tickets:
+        d = _support_ticket_json(t, viewer='admin')
+        d.update(customer=t.customer.full_name if t.customer else 'Customer', customer_id=t.customer_id)
+        items.append(d)
+    return jsonify({'items': items, 'counts': {k: counts.get(k, 0) for k in ('open', 'waiting', 'resolved')}})
+
+@app.route('/api/admin/support/conversations/<int:ticket_id>')
+@limiter.exempt
+@admin_required
+def api_admin_support_thread(ticket_id):
+    """A conversation for the desk: new messages after ?after=<id>, plus who the customer is."""
+    t = SupportTicket.query.get_or_404(ticket_id)
+    if support_messages_from_ticket(t):        # an old-style ticket, opened for the first time
+        db.session.commit()
+    after = request.args.get('after', type=int) or 0
+    msgs = [m for m in t.messages if m.id > after]
+    if t.unread_for_admin:
+        t.admin_seen_at = datetime.utcnow()
+        db.session.commit()
+    names = _support_admin_names(msgs)
+    out = {'conversation': _support_ticket_json(t, viewer='admin'),
+           'messages': [dict(_support_message_json(m, names), who=(
+               (names[m.sender_id].shown_name if m.sender_id in names else 'Support') if m.sender_role == 'admin'
+               else (t.customer.full_name if m.sender_role == 'customer' and t.customer else ''))) for m in msgs]}
+    if not after:
+        c = t.customer
+        bookings = Booking.query.filter_by(customer_id=t.customer_id).order_by(Booking.created_at.desc()).limit(3).all()
+        orders = Order.query.filter_by(customer_id=t.customer_id).order_by(Order.created_at.desc()).limit(3).all()
+        out['customer'] = {
+            'name': c.full_name if c else 'Customer', 'email': c.email if c else '', 'phone': c.phone if c else '',
+            'city': c.city if c else '', 'joined': c.created_at.strftime('%b %Y') if c and c.created_at else '',
+            'bookings': [{'number': b.booking_number, 'status': b.status.replace('_', ' '),
+                          'service': b.service.name if b.service else ''} for b in bookings],
+            'orders': [{'number': o.order_number, 'status': ORDER_STATUS_LABELS.get(o.status, o.status),
+                        'total': f'{float(o.total_amount):,.2f}'} for o in orders],
+            'conversations': SupportTicket.query.filter_by(customer_id=t.customer_id).count(),
+        }
+    return jsonify(out)
+
+@app.route('/api/admin/support/conversations/<int:ticket_id>/messages', methods=['POST'])
+@admin_required
+def api_admin_support_reply(ticket_id):
+    t = SupportTicket.query.get_or_404(ticket_id)
+    data = request.get_json(silent=True) or {}
+    body = str(data.get('body') or '').strip()[:SUPPORT_MESSAGE_MAX]
+    if not body:
+        return jsonify({'success': False, 'message': 'Write a reply first.'}), 400
+    admin = current_account()
+    support_post(t, 'admin', admin.id, body, status='resolved' if data.get('resolve') else 'waiting')
+    create_notification(t.customer_id, 'Support replied',
+                        f'{admin.shown_name} replied to "{t.subject}": {" ".join(body.split())[:120]}', 'info',
+                        role='customer')
+    return jsonify({'success': True})
+
+@app.route('/api/admin/support/conversations/<int:ticket_id>/status', methods=['POST'])
+@admin_required
+def api_admin_support_status(ticket_id):
+    t = SupportTicket.query.get_or_404(ticket_id)
+    data = request.get_json(silent=True) or {}
+    admin = current_account()
+    if 'assign' in data:
+        t.assigned_admin_id = admin.id if data['assign'] == 'me' else None
+        note = f'{admin.shown_name} took this conversation.' if data['assign'] == 'me' else 'Conversation unassigned.'
+    else:
+        status = data.get('status')
+        if status not in ('open', 'waiting', 'resolved') or status == t.status:
+            return jsonify({'success': False, 'message': 'Nothing to change.'}), 400
+        t.status = status
+        note = {'resolved': f'{admin.shown_name} marked this conversation as resolved.',
+                'open': f'{admin.shown_name} reopened this conversation.',
+                'waiting': f'{admin.shown_name} is waiting for your reply.'}[status]
+        if status == 'resolved':
+            create_notification(t.customer_id, 'Support conversation resolved',
+                                f'"{t.subject}" was marked as resolved. Reply any time if you need more help.',
+                                'success', role='customer')
+    now = datetime.utcnow()
+    db.session.add(SupportMessage(ticket_id=t.id, sender_role='system', body=note, created_at=now))
+    t.last_message_at = now
+    t.updated_at = now
+    db.session.commit()
+    return jsonify({'success': True})
 
 @app.route('/admin/support/<int:ticket_id>/respond', methods=['POST'])
 @admin_required
 def admin_ticket_respond(ticket_id):
+    """Plain-form reply (no JavaScript): same as replying in the desk."""
     ticket = SupportTicket.query.get_or_404(ticket_id)
     response = (request.form.get('admin_response') or '').strip()
-    status = request.form.get('status', 'resolved')
-    if status not in ('open', 'in_progress', 'resolved'):
-        status = 'resolved'
+    status = request.form.get('status', 'waiting')
+    status = {'in_progress': 'waiting'}.get(status, status)
+    if status not in ('open', 'waiting', 'resolved'):
+        status = 'waiting'
     if not response and status == ticket.status:
         flash('Write a reply or change the status.', 'danger')
         return redirect(url_for('admin_support'))
     if response:
         ticket.admin_response = response[:5000]
-    ticket.status = status
-    ticket.updated_at = datetime.utcnow()
-    db.session.commit()
-    msg = f'Your support ticket "{ticket.subject}" is now {status.replace("_", " ")}.'
-    if response:
-        msg += ' We replied: ' + (response[:300] + ('…' if len(response) > 300 else ''))
-    create_notification(ticket.user_id, 'Support Ticket Updated', msg, 'info', role='customer')
+        support_post(ticket, 'admin', session.get('user_id'), response[:SUPPORT_MESSAGE_MAX], status=status)
+    else:
+        ticket.status = status
+        db.session.commit()
+    create_notification(ticket.user_id, 'Support replied',
+                        f'We replied to "{ticket.subject}". Open Support to read it.', 'info', role='customer')
     log_activity(session.get('user_id'), 'ticket_respond', f'Ticket #{ticket.id} -> {status}')
-    flash('Ticket updated and the customer was notified.', 'success')
+    flash('Reply sent.', 'success')
     return redirect(url_for('admin_support'))
 
 @app.route('/admin/inquiries/<int:inquiry_id>/status', methods=['POST'])
@@ -5792,7 +6188,7 @@ def payment_method_label(method):
     """Display name for a stored payment method (bookings use 'GCash' / 'C.A.R',
     shop orders 'gcash' / 'cod', unpaid extra charges 'unpaid')."""
     return {'gcash': 'GCash', 'cod': 'Cash on delivery', 'c.a.r': 'C.A.R (Cash After Repair)',
-            'paymongo': 'Online (PayMongo)',
+            'paymongo': 'QR Ph / online (PayMongo)',
             'unpaid': 'Not yet chosen', '': 'Not yet chosen'}.get((method or '').lower(), method)
 
 app.jinja_env.globals['payment_method_label'] = payment_method_label
@@ -6488,13 +6884,6 @@ def _float_between(value, low, high):
     except ValueError:
         return False
 
-def _valid_gcash_qr(value):
-    try:
-        gcash_qr.validate_payload(value)
-        return True
-    except gcash_qr.InvalidQrPayload:
-        return False
-
 # Settings the admin Settings page may write, with their validators.
 # Anything else in the request (including csrf_token) is ignored.
 EDITABLE_SETTINGS = {
@@ -6513,8 +6902,6 @@ EDITABLE_SETTINGS = {
     'contact_address':  lambda v: len(v) <= 200,
     'business_hours':   lambda v: len(v) <= 100,
     'gcash_name':       lambda v: len(v) <= 100,
-    # The shop's GCash QR as QR Ph text (the page decodes the uploaded QR image).
-    'gcash_qr_payload': lambda v: v == '' or _valid_gcash_qr(v),
     # Where deliveries start from: used for distance and delivery estimates.
     'shop_latitude':    lambda v: v == '' or _float_between(v, -90, 90),
     'shop_longitude':   lambda v: v == '' or _float_between(v, -180, 180),
@@ -6526,7 +6913,9 @@ EDITABLE_SETTINGS = {
 @admin_required
 def admin_settings():
     values = {row.setting_key: row.value for row in SystemSetting.query.all()}
-    return render_template('admin/settings.html', settings=values)
+    paymongo = {'enabled': paymongo_service.is_enabled(app), 'test_mode': paymongo_service.is_test_mode(app),
+                'webhook': bool(app.config.get('PAYMONGO_WEBHOOK_SECRET'))}
+    return render_template('admin/settings.html', settings=values, paymongo=paymongo)
 
 @app.route('/admin/settings/update', methods=['POST'])
 @admin_required
@@ -6624,6 +7013,8 @@ def init_db():
         add_booking_device_columns()
         add_shop_delivery_columns()
         add_paymongo_columns()
+        add_service_device_column()
+        add_support_chat_columns()
         
         # No default admin is ever created here. Create one with
         # `flask --app app create-admin` (or /setup/first-admin with SETUP_TOKEN).

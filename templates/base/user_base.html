@@ -44,6 +44,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive-fixes.css') }}" />
     <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}" />
     <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
 </head>
 <body>
@@ -424,6 +426,7 @@
     
 
     <script src="{{ url_for('static', filename='js/user.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/qr-pay.js') }}"></script>
     {% block extra_js %}{% endblock %}
     <script type="application/json" id="devtechLiveBoot">{{ live_boot()|tojson }}</script>
 </body>

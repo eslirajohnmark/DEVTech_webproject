@@ -33,9 +33,10 @@ TIMEOUT = 15  # seconds
 # Payment options shown on PayMongo's checkout page (all enabled on test accounts).
 PAYMENT_METHOD_TYPES = ['card', 'gcash', 'paymaya', 'grab_pay', 'qrph']
 
-# The only event we act on. It carries the checkout session (with our
-# reference_number) and its paid payment.
+# Events we act on: a hosted checkout was paid (carries our reference_number), or a
+# QR Ph payment was paid (carries the payment intent id we stored).
 PAID_EVENT = 'checkout_session.payment.paid'
+QR_PAID_EVENT = 'payment.paid'
 
 # Webhook signatures older than this are refused (replay protection).
 SIGNATURE_MAX_AGE = 5 * 60
@@ -148,6 +149,57 @@ def paid_payment(session_attributes):
 
 
 # --------------------------------------------------------------------------- #
+# QR Ph payments (shown on our own page; scanned with GCash, Maya or a bank app)
+# --------------------------------------------------------------------------- #
+
+def _qr_details(intent_attributes):
+    code = ((intent_attributes.get('next_action') or {}).get('code')) or {}
+    return {'image': code.get('image_url') or '', 'expires_at': code.get('expires_at'),
+            'test_url': code.get('test_url') or '', 'status': intent_attributes.get('status') or ''}
+
+
+def create_qr_payment(app, *, amount, description, billing, metadata=None):
+    """Create a QR Ph payment for the exact amount. Returns (intent_id, details)
+    where details has the QR image (a data: URL), when it expires and, in test
+    mode, a link that simulates the customer paying."""
+    attributes = {'amount': to_centavos(amount), 'currency': 'PHP', 'payment_method_allowed': ['qrph'],
+                  'description': (description or '')[:255]}
+    if metadata:
+        attributes['metadata'] = {str(k)[:40]: str(v)[:255] for k, v in metadata.items()}
+    intent = _request(app, 'POST', '/payment_intents', {'data': {'attributes': attributes}})
+    intent_id = (intent.get('data') or {}).get('id')
+    method = _request(app, 'POST', '/payment_methods', {'data': {'attributes': {
+        'type': 'qrph', 'billing': {k: v for k, v in billing.items() if v}}}})
+    attached = _request(app, 'POST', f'/payment_intents/{intent_id}/attach', {'data': {'attributes': {
+        'payment_method': (method.get('data') or {}).get('id')}}})
+    details = _qr_details((attached.get('data') or {}).get('attributes') or {})
+    if not intent_id or not details['image']:
+        raise PaymongoError('PayMongo did not return a QR code.', body=attached)
+    return intent_id, details
+
+
+def retrieve_payment_intent(app, intent_id):
+    """The payment intent's attributes (status, next_action with the QR, payments)."""
+    body = _request(app, 'GET', f'/payment_intents/{intent_id}')
+    return (body.get('data') or {}).get('attributes') or {}
+
+
+def qr_details(intent_attributes):
+    return _qr_details(intent_attributes)
+
+
+def intent_paid_payment(intent_attributes):
+    """(payment_id, amount_centavos) once the intent has succeeded, else None."""
+    if intent_attributes.get('status') != 'succeeded':
+        return None
+    for p in intent_attributes.get('payments') or []:
+        attrs = p.get('attributes') or {}
+        if attrs.get('status') == 'paid':
+            return p.get('id') or '', int(attrs.get('amount') or 0)
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Refunds
 # --------------------------------------------------------------------------- #
 
@@ -208,11 +260,16 @@ def event_summary(event):
     resource = attrs.get('data') or {}
     r_attrs = resource.get('attributes') or {}
     metadata = r_attrs.get('metadata') or {}
-    paid = paid_payment(r_attrs)
+    if resource.get('type') == 'payment':
+        # payment.paid (QR Ph and other payment-intent payments): the resource is the payment.
+        paid = (resource.get('id') or '', int(r_attrs.get('amount') or 0)) if r_attrs.get('status') == 'paid' else None
+    else:
+        paid = paid_payment(r_attrs)
     return {
         'event_type': attrs.get('type') or '',
         'livemode': bool(attrs.get('livemode')),
         'checkout_session_id': resource.get('id') if resource.get('type') == 'checkout_session' else '',
+        'payment_intent_id': r_attrs.get('payment_intent_id') or '',
         'reference_number': r_attrs.get('reference_number') or metadata.get('transaction_number') or '',
         'payment_id': paid[0] if paid else '',
         'amount_centavos': paid[1] if paid else 0,

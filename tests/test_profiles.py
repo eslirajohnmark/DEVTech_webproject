@@ -38,7 +38,7 @@ def test_every_role_can_save_its_look(client, request, who, back):
     login_as(client, account)
     r = _look(client, display_name='Neo', headline='Fixes things', avatar_mode='icon',
               avatar_icon='robot', avatar_color='grape', avatar_frame='pulse', banner='nebula')
-    assert r.status_code == 302 and r.headers['Location'].endswith(back + '#look')
+    assert r.status_code == 302 and r.headers['Location'].endswith(back)     # top of the page, where the message is
     db.session.refresh(account)
     assert (account.shown_name, account.headline, account.avatar_icon, account.avatar_color,
             account.avatar_frame, account.banner) == ('Neo', 'Fixes things', 'robot', 'grape', 'pulse', 'nebula')
@@ -160,3 +160,17 @@ def test_layouts_show_avatar_and_password_toggle_script(client, customer, techni
     for url in ('/login', '/register', '/admin/login', '/technician/login', '/technician/register'):
         client.get('/logout')
         assert 'password-toggle.js' in client.get(url).get_data(as_text=True), url
+
+
+def test_a_too_large_upload_gets_a_message_not_an_error_page(customer_logged_in, app):
+    import io
+    app.config['MAX_CONTENT_LENGTH'] = 1024
+    try:
+        r = customer_logged_in.post('/account/appearance', data={'avatar_mode': 'photo',
+                                    'avatar_photo': (io.BytesIO(b'\xff\xd8\xff' + b'0' * 4096), 'big.jpg')},
+                                    content_type='multipart/form-data', headers={'Referer': 'http://localhost/user/profile'})
+        assert r.status_code == 302 and r.headers['Location'].endswith('/user/profile')
+        with customer_logged_in.session_transaction() as s:
+            assert any('too large' in m for _, m in s.get('_flashes', []))
+    finally:
+        app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024

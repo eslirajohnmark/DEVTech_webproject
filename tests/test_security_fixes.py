@@ -201,9 +201,7 @@ def test_admin_confirm_updates_order_and_blocks_self_cancel(client, customer, ad
     p = _product(stock=3)
     login_as(client, customer)
     client.post('/api/cart/add', json={'product_id': p.id, 'quantity': 1})
-    client.post('/api/cart/checkout', data={'payment_method': 'gcash',
-                                            'payment_proof': (io.BytesIO(b'\x89PNG\r\n\x1a\n' + b'0' * 32), 'paid.png')},
-                content_type='multipart/form-data')
+    client.post('/api/cart/checkout', json={'payment_method': 'cod'})
     order = Order.query.one()
     txn = Transaction.query.filter_by(order_id=order.id).one()
 

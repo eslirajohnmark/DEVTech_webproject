@@ -16,12 +16,20 @@
         </select>
     </div>
     <div class="admin-form-group">
-        <label>Starting price (₱) <span class="admin-muted">· 0 = price upon diagnosis</span></label>
-        <input type="number" name="price" min="0" step="0.01" required value="{{ '%.2f'|format(s.price) if s else '' }}">
+        <label>Starting price (₱)</label>
+        <input type="number" name="price" min="1" step="0.01" required value="{{ '%.2f'|format(s.price) if s else '' }}">
     </div>
     <div class="admin-form-group">
         <label>Estimated hours</label>
         <input type="number" name="estimated_hours" min="1" max="200" step="1" value="{{ s.estimated_hours if s and s.estimated_hours else 1 }}">
+    </div>
+    <div class="admin-form-group admin-form-wide">
+        <label>For devices <span class="admin-muted">(none ticked = any device)</span></label>
+        <div class="admin-device-checks">
+            {% for key, label in [('laptop', 'Laptop'), ('desktop', 'Desktop PC'), ('tablet', 'Tablet'), ('smartphone', 'Smartphone'), ('monitor', 'Monitor'), ('storage', 'Storage device')] %}
+            <label><input type="checkbox" name="device_types" value="{{ key }}" {% if s and key in s.device_list %}checked{% endif %}> {{ label }}</label>
+            {% endfor %}
+        </div>
     </div>
     <div class="admin-form-group admin-form-wide">
         <label>Description</label>

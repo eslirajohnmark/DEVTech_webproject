@@ -186,23 +186,17 @@
 
     function setFooter(order) {
         footer.innerHTML = '';
-        if (order && order.pay_online_url) {
-            // A real form POST (with the CSRF token), so the server sends the browser to PayMongo.
-            const f = document.createElement('form');
-            f.method = 'POST';
-            f.action = order.pay_online_url;
-            f.className = 'ord-pay-form';
-            const t = document.createElement('input');
-            t.type = 'hidden';
-            t.name = 'csrf_token';
-            t.value = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
-            const b = document.createElement('button');
-            b.type = 'submit';
-            b.className = 'user-btn-primary';
-            b.innerHTML = '<i class="fas fa-shield-halved"></i> Pay online · ' + peso(order.total_amount);
-            f.addEventListener('submit', () => { b.disabled = true; b.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Opening secure payment…'; });
-            f.append(t, b);
-            footer.append(f);
+        if (order && order.pay_transaction_id && window.DevtechPay) {
+            const pay = document.createElement('button');
+            pay.type = 'button';
+            pay.className = 'user-btn-primary ord-pay-btn';
+            pay.innerHTML = '<i class="fas fa-qrcode"></i> Pay now (' + peso(order.total_amount) + ')';
+            pay.addEventListener('click', () => DevtechPay.open({
+                transactionId: order.pay_transaction_id,
+                title: `Pay for order ${order.order_number}`,
+                onPaid: () => { modal.dataset.reloadOnClose = '1'; viewOrderDetails(order.id); }
+            }));
+            footer.append(pay);
         }
         if (order && order.can_cancel) {
             const c = document.createElement('button');

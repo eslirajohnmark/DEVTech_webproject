@@ -1,48 +1,78 @@
 {% extends "base/admin_base.html" %}
 {% block title %}Support{% endblock %}
+{% block live_mode %}self{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/support-desk.css') }}">
+{% endblock %}
 {% block content %}
 <div class="admin-top-bar"><div class="admin-page-title">
-    <h1>Support</h1><p>Customer support tickets and website contact inquiries</p></div></div>
+    <h1>Support</h1><p>Chat with customers, and website inquiries from the contact form</p></div></div>
 
-<h3 class="admin-panel-title" style="margin:1rem 0;"><i class="fas fa-headset"></i> Support Tickets</h3>
-<div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
-<thead><tr><th>#</th><th>Customer</th><th>Subject</th><th>Message</th><th>Status</th><th>Reply</th></tr></thead>
-<tbody>
-{% for t in tickets %}
-<tr>
-    <td>{{ t.id }}</td>
-    <td>{{ t.user.full_name if t.user else 'Unknown' }}<br><span class="admin-muted">{{ t.user.email if t.user else '' }}</span></td>
-    <td><strong>{{ t.subject }}</strong><br><span class="admin-muted">{{ (t.category or 'general')|title }} · {{ t.created_at.strftime('%b %d, %Y %I:%M %p') if t.created_at else '' }}</span></td>
-    <td style="max-width:320px; white-space:pre-wrap;">{{ t.message }}</td>
-    <td><span class="admin-status-badge {{ 'active' if t.status == 'resolved' else 'warning' }}">{{ (t.status or 'open')|replace('_', ' ')|title }}</span></td>
-    <td style="min-width:260px;">
-        {% if t.admin_response %}<p class="admin-muted" style="white-space:pre-wrap; margin-bottom:0.5rem;"><strong>Sent:</strong> {{ t.admin_response }}</p>{% endif %}
-        <details class="admin-row-edit" {% if t.status == 'open' and not t.admin_response %}open{% endif %}>
-            <summary><i class="fas fa-reply"></i> {{ 'Update reply' if t.admin_response else 'Reply' }}</summary>
-            <form method="POST" action="{{ url_for('admin_ticket_respond', ticket_id=t.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="admin-form-group">
-                    <textarea name="admin_response" rows="3" maxlength="5000" placeholder="Your reply to the customer">{{ t.admin_response or '' }}</textarea>
+<div class="desk-tabs" role="tablist">
+    <button type="button" role="tab" class="desk-tab is-active" aria-selected="true" data-tab="chat">
+        <i class="fas fa-comments"></i> Customer chats <span class="desk-count" id="deskOpenCount">{{ counts.get('open', 0) }}</span></button>
+    <button type="button" role="tab" class="desk-tab" aria-selected="false" data-tab="inquiries">
+        <i class="fas fa-envelope-open-text"></i> Website inquiries
+        <span class="desk-count">{{ inquiries|selectattr('status', 'equalto', 'new')|list|length }}</span></button>
+</div>
+
+<!-- ============ customer chats ============ -->
+<section class="desk" id="deskChat" data-me="{{ me.id }}" data-quick='{{ quick_replies|tojson }}'>
+    <aside class="desk-list" aria-label="Conversations">
+        <div class="desk-views" role="tablist" aria-label="Show">
+            {% for key, label in [('open', 'Needs reply'), ('waiting', 'Waiting on customer'), ('mine', 'Mine'), ('resolved', 'Resolved')] %}
+            <button type="button" class="desk-view {% if loop.first %}is-active{% endif %}" data-view="{{ key }}">{{ label }}
+                {% if key in ('open', 'waiting') %}<span data-count="{{ key }}">{{ counts.get(key, 0) }}</span>{% endif %}</button>
+            {% endfor %}
+        </div>
+        <label class="desk-search"><i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+            <input type="search" id="deskSearch" placeholder="Search name, email or subject" aria-label="Search conversations"></label>
+        <ul class="desk-items" id="deskItems"></ul>
+    </aside>
+
+    <article class="desk-thread" id="deskThread" aria-label="Conversation">
+        <div class="desk-empty" id="deskEmpty">
+            <i class="fas fa-inbox" aria-hidden="true"></i>
+            <p>Choose a conversation on the left.</p>
+        </div>
+        <div class="desk-convo" id="deskConvo" hidden>
+            <header class="desk-thread-head">
+                <div>
+                    <h2 id="deskName"></h2>
+                    <p><span id="deskTopic"></span> <span class="desk-status" id="deskStatus"></span></p>
                 </div>
-                <div class="admin-form-group">
-                    <select name="status">
-                        {% for value, label in [('resolved', 'Mark resolved'), ('in_progress', 'In progress'), ('open', 'Keep open')] %}
-                        <option value="{{ value }}" {% if (t.status == value) or (value == 'resolved' and t.status != 'in_progress' and t.status != 'resolved') %}selected{% endif %}>{{ label }}</option>
-                        {% endfor %}
-                    </select>
+                <div class="desk-actions">
+                    <button type="button" class="admin-btn admin-btn-sm" id="deskAssign"></button>
+                    <button type="button" class="admin-btn admin-btn-sm" id="deskWaiting">Waiting on customer</button>
+                    <button type="button" class="admin-btn admin-btn-sm admin-btn-primary" id="deskResolve"><i class="fas fa-check"></i> Resolve</button>
                 </div>
-                <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Send &amp; notify customer</button>
+            </header>
+            <ol class="desk-messages" id="deskMessages" aria-live="polite"></ol>
+            <div class="desk-quick" id="deskQuick" aria-label="Quick replies"></div>
+            <form class="desk-composer" id="deskComposer" autocomplete="off">
+                <label for="deskInput" class="visually-hidden">Reply</label>
+                <textarea id="deskInput" rows="2" maxlength="2000" placeholder="Write a reply. Enter sends, Shift+Enter adds a line."></textarea>
+                <div class="desk-send">
+                    <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-paper-plane"></i> Send</button>
+                    <button type="button" class="admin-btn" id="deskSendResolve">Send &amp; resolve</button>
+                </div>
             </form>
-        </details>
-    </td>
-</tr>
-{% else %}
-<tr><td colspan="6" style="text-align:center;padding:1.5rem;">No support tickets.</td></tr>
-{% endfor %}
-</tbody></table></div>
+        </div>
+    </article>
 
-<h3 class="admin-panel-title" id="inquiries" style="margin:1.5rem 0 1rem;"><i class="fas fa-envelope-open-text"></i> Website Inquiries</h3>
-<p class="admin-muted" style="margin-bottom:0.8rem;">Sent from the contact form on the public home page. These visitors may not have an account, so reply by email.</p>
+    <aside class="desk-context" id="deskContext" aria-label="Customer details" hidden>
+        <h3>Customer</h3>
+        <dl id="deskCustomer"></dl>
+        <h4>Recent bookings</h4>
+        <ul id="deskBookings" class="desk-mini"></ul>
+        <h4>Recent orders</h4>
+        <ul id="deskOrders" class="desk-mini"></ul>
+    </aside>
+</section>
+
+<!-- ============ website inquiries ============ -->
+<section id="deskInquiries" hidden>
+<p class="admin-muted" style="margin:0 0 0.8rem;">Sent from the contact form on the public home page. These visitors may not have an account, so reply by email.</p>
 <div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
 <thead><tr><th>From</th><th>Subject</th><th>Message</th><th>Received</th><th>Status</th><th></th></tr></thead>
 <tbody>
@@ -64,4 +94,8 @@
 <tr><td colspan="6" style="text-align:center;padding:1.5rem;">No inquiries yet.</td></tr>
 {% endfor %}
 </tbody></table></div>
+</section>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/support-desk.js') }}"></script>
 {% endblock %}

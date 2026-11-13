@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS services (
 	price NUMERIC(10, 2) NOT NULL, 
 	estimated_hours INTEGER, 
 	is_active BOOL, 
+	device_types VARCHAR(120), 
 	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(category_id) REFERENCES service_categories (id)
@@ -258,10 +259,17 @@ CREATE TABLE IF NOT EXISTS support_tickets (
 	category VARCHAR(50), 
 	status VARCHAR(20), 
 	admin_response TEXT, 
+	assigned_admin_id INTEGER, 
+	last_message_at DATETIME, 
+	last_customer_message_at DATETIME, 
+	last_admin_message_at DATETIME, 
+	customer_seen_at DATETIME, 
+	admin_seen_at DATETIME, 
 	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(customer_id) REFERENCES customers (id)
+	FOREIGN KEY(customer_id) REFERENCES customers (id), 
+	FOREIGN KEY(assigned_admin_id) REFERENCES admins (id)
 );
 
 -- technicians
@@ -330,6 +338,8 @@ CREATE TABLE IF NOT EXISTS bookings (
 	device_type VARCHAR(50) NOT NULL, 
 	device_brand VARCHAR(50), 
 	device_model VARCHAR(80), 
+	latitude NUMERIC(10, 7), 
+	longitude NUMERIC(10, 7), 
 	description TEXT NOT NULL, 
 	address VARCHAR(255), 
 	booking_date DATE NOT NULL, 
@@ -373,6 +383,18 @@ CREATE TABLE IF NOT EXISTS order_items (
 	PRIMARY KEY (id), 
 	FOREIGN KEY(order_id) REFERENCES orders (id), 
 	FOREIGN KEY(product_id) REFERENCES products (id)
+);
+
+-- support_messages
+CREATE TABLE IF NOT EXISTS support_messages (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	ticket_id INTEGER NOT NULL, 
+	sender_role VARCHAR(20) NOT NULL, 
+	sender_id INTEGER, 
+	body TEXT NOT NULL, 
+	created_at DATETIME, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(ticket_id) REFERENCES support_tickets (id)
 );
 
 -- technician_credentials
@@ -578,6 +600,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 	paymongo_checkout_id VARCHAR(64), 
 	paymongo_payment_id VARCHAR(64), 
 	paymongo_paid_at DATETIME, 
+	paymongo_intent_id VARCHAR(64), 
 	PRIMARY KEY (id), 
 	UNIQUE (transaction_number), 
 	FOREIGN KEY(booking_id) REFERENCES bookings (id), 

@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DEVTech - Login</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth-glass.css') }}">
 
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
@@ -80,44 +81,18 @@
 
         <div class="right">
             <div class="brand">
-                <h1>DEVtech</h1>
-                <p class="tagline">Computer Service</p>
-                <div class="service-tag">
-                    <i class="fa-solid fa-laptop-code"></i>
-                    Professional IT Solutions
-                </div>
-
-                <div class="register-section">
-                    <div class="register-divider">
-                        <span>New Here?</span>
-                    </div>
-                    <h2>Create Account</h2>
-                    <p class="register-text">Join our community and get access to premium IT services</p>
-                    
-                    <div class="register-features">
-                        <div class="feature">
-                            <i class="fa-solid fa-shield-halved"></i>
-                            <span>Secure Access</span>
-                        </div>
-                        <div class="feature">
-                            <i class="fa-solid fa-clock"></i>
-                            <span>24/7 Support</span>
-                        </div>
-                        <div class="feature">
-                            <i class="fa-solid fa-rocket"></i>
-                            <span>Fast Solutions</span>
-                        </div>
-                    </div>
-
-                    <a href="{{ url_for('register') }}" class="register-btn">
-                        <i class="fa-solid fa-user-plus"></i>
-                        Sign Up Now
-                    </a>
-                    
-                    <p class="login-link">
-                        Already have an account? <a href="{{ url_for('login') }}">Log In</a>
-                    </p>
-                </div>
+                <p class="auth-mark"><i class="fas fa-microchip" aria-hidden="true"></i> DEVTech Computer Services</p>
+                <h2 class="auth-pitch">Your repair, from drop-off to pickup.</h2>
+                <ul class="auth-points">
+                    <li><i class="fas fa-tower-broadcast" aria-hidden="true"></i>
+                        <span><strong>Follow it live</strong>Each stage from diagnosis to ready for pickup, with repair notes along the way.</span></li>
+                    <li><i class="fas fa-qrcode" aria-hidden="true"></i>
+                        <span><strong>Pay by QR</strong>Scan with GCash, Maya or your bank app. Confirmed on the spot.</span></li>
+                    <li><i class="fas fa-headset" aria-hidden="true"></i>
+                        <span><strong>Chat with the shop</strong>Questions about a repair or an order go straight to our team.</span></li>
+                </ul>
+                <a href="{{ url_for('register') }}" class="auth-new"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Create an account</a>
+                <p class="auth-where"><i class="fas fa-location-dot" aria-hidden="true"></i>{{ site().address or 'Tacloban City, Leyte' }}</p>
             </div>
         </div>
     </div>

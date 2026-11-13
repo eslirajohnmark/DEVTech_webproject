@@ -102,26 +102,72 @@
             if (r) r.checked = true;
         }
 
+        function photoProblem(message) {
+            fileInput.value = '';
+            if (fileLabel) { fileLabel.textContent = message; fileLabel.classList.add('is-error'); }
+        }
+
+        function accept(file, dataUrl) {
+            pickedPhoto = dataUrl;
+            if (fileLabel) { fileLabel.textContent = file.name; fileLabel.classList.remove('is-error'); }
+            selectMode('photo');
+            renderAll();
+        }
+
+        // Phone photos are usually 3-8 MB: shrink them here (longest side 640 px) so
+        // they upload quickly and always fit the 3 MB limit, instead of refusing them.
         function usePhoto(file) {
             if (!file) return;
             if (TYPES.indexOf(file.type) === -1) {
-                alert('Please choose a JPG, PNG, WEBP or GIF image.');
-                fileInput.value = '';
+                photoProblem(/heic|heif/i.test(file.type + file.name)
+                    ? 'iPhone HEIC photos can\'t be read here. Choose a JPG or PNG (or a screenshot of the photo).'
+                    : 'Choose a JPG, PNG, WEBP or GIF image.');
                 return;
             }
-            if (file.size > MAX_BYTES) {
-                alert('That photo is larger than 3 MB. Please choose a smaller one.');
-                fileInput.value = '';
-                return;
-            }
+            // Read as a data: URL (the site's security policy does not allow blob: images).
             var reader = new FileReader();
-            reader.onload = function () {
-                pickedPhoto = reader.result;
-                if (fileLabel) fileLabel.textContent = file.name;
-                selectMode('photo');
-                renderAll();
-            };
+            reader.onerror = function () { photoProblem('This photo could not be read. Please choose another one.'); };
+            reader.onload = function () { shrink(file, reader.result); };
             reader.readAsDataURL(file);
+        }
+
+        function shrink(file, dataUrl) {
+            var img = new Image();
+            img.onload = function () {
+                var side = Math.max(img.naturalWidth, img.naturalHeight);
+                if (file.size <= MAX_BYTES && side <= 1024) {          // already small: keep it as it is
+                    accept(file, dataUrl);
+                    return;
+                }
+                var scale = Math.min(1, 640 / side);
+                var canvas = document.createElement('canvas');
+                canvas.width = Math.round(img.naturalWidth * scale);
+                canvas.height = Math.round(img.naturalHeight * scale);
+                var ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';                                  // transparent areas on white, not black
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                canvas.toBlob(function (blob) {
+                    if (!blob) { photoProblem('This photo could not be read. Please choose another one.'); return; }
+                    var name = (file.name.replace(/\.[^.]+$/, '') || 'photo') + '.jpg';
+                    var small = new File([blob], name, {type: 'image/jpeg'});
+                    try {
+                        var dt = new DataTransfer();
+                        dt.items.add(small);
+                        fileInput.files = dt.files;
+                    } catch (err) {
+                        if (file.size > MAX_BYTES) {
+                            photoProblem('This browser can\'t shrink the photo. Please choose one under 3 MB.');
+                            return;
+                        }
+                    }
+                    accept(small, canvas.toDataURL('image/jpeg', 0.88));
+                }, 'image/jpeg', 0.88);
+            };
+            img.onerror = function () {
+                photoProblem('This photo could not be read. Please choose another one.');
+            };
+            img.src = dataUrl;
         }
 
         form.addEventListener('change', function (e) {

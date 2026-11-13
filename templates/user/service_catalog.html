@@ -69,7 +69,7 @@
         </div>
         <div class="user-catalog-search">
             <i class="fas fa-search" aria-hidden="true"></i>
-            <input type="search" id="catalogSearch" placeholder="Search services, e.g. screen, virus, SSD"
+            <input type="search" id="catalogSearch" placeholder="Search services or devices, e.g. screen, smartphone, SSD"
                    aria-label="Search services" autocomplete="off">
         </div>
     </div>
@@ -90,13 +90,15 @@
             <div class="user-catalog-svc-body">
                 <ul>
                     {% for svc in services %}
-                    <li class="user-catalog-svc" data-search="{{ (svc.name ~ ' ' ~ (svc.description or '') ~ ' ' ~ cat.name)|lower }}">
+                    {% set for_devices = svc.device_list|map('replace', 'smartphone', 'smartphones')|map('replace', 'laptop', 'laptops')|map('replace', 'desktop', 'desktop PCs')|map('replace', 'tablet', 'tablets')|map('replace', 'monitor', 'monitors')|map('replace', 'storage', 'storage devices')|list %}
+                    <li class="user-catalog-svc" data-search="{{ (svc.name ~ ' ' ~ (svc.description or '') ~ ' ' ~ cat.name ~ ' ' ~ for_devices|join(' ') ~ ' ' ~ (svc.device_types or '')|replace(',', ' '))|lower }}">
                         <div class="user-catalog-svc-main">
                             <strong>{{ svc.name }}</strong>
                             {% if svc.description %}<p>{{ svc.description }}</p>{% endif %}
                             <span class="user-catalog-svc-meta">
                                 <span><i class="fas fa-tag" aria-hidden="true"></i>
                                     {% if svc.price and svc.price > 0 %}From ₱{{ "{:,.0f}".format(svc.price) }}{% else %}Price upon diagnosis{% endif %}</span>
+                                {% if for_devices %}<span><i class="fas fa-microchip" aria-hidden="true"></i> For {{ for_devices|join(', ') }}</span>{% endif %}
                                 <span><i class="fas fa-clock" aria-hidden="true"></i>
                                     ~{{ svc.estimated_hours or 1 }} hr{{ '' if (svc.estimated_hours or 1) == 1 else 's' }}</span>
                             </span>

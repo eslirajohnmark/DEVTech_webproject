@@ -172,12 +172,12 @@ form.admin-request-filters, form.admin-payment-filters { margin: 0 0 1.25rem; }
     padding: 1rem 1.2rem;
     color: var(--text-primary, #e5e5e5);
 }
-.refund-card--refunded { border-left-color: var(--primary, #00ff88); }
+.refund-card--refunded { border-left-color: var(--primary, #5B8CFF); }
 .refund-card--declined { border-left-color: var(--danger, #ef4444); opacity: 0.85; }
 .refund-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.8rem; flex-wrap: wrap; }
-.refund-status { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.25rem 0.65rem; border-radius: 999px; }
+.refund-status { font-size: 0.72rem; font-weight: 700; padding: 0.25rem 0.65rem; border-radius: 999px; }
 .refund-status--pending { background: rgba(245, 158, 11, 0.12); color: var(--warning, #f59e0b); }
-.refund-status--refunded { background: rgba(0, 255, 136, 0.1); color: var(--primary, #00ff88); }
+.refund-status--refunded { background: rgba(91, 140, 255, 0.1); color: var(--primary, #5B8CFF); }
 .refund-status--declined { background: rgba(239, 68, 68, 0.12); color: var(--danger, #ef4444); }
 .refund-card-body { margin-top: 0.6rem; }
 .refund-amount { font-size: 1.35rem; font-weight: 800; }
@@ -202,7 +202,7 @@ form.admin-request-filters, form.admin-payment-filters { margin: 0 0 1.25rem; }
 }
 .refund-form label { display: grid; gap: 0.3rem; font-size: 0.78rem; color: var(--text-secondary, #888); }
 .refund-form input, .refund-form select, .refund-open input {
-    background: var(--dark-input, #1a1a1a);
+    background: var(--dark-input, #0B1328);
     border: 1px solid var(--dark-border-light, #2a2a2a);
     color: var(--text-primary, #e5e5e5);
     border-radius: 8px;
@@ -214,7 +214,7 @@ form.admin-request-filters, form.admin-payment-filters { margin: 0 0 1.25rem; }
 .refund-open form { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
 .refund-open form input { flex: 1 1 200px; }
 .admin-payment-card-proof.refund-pending { border-color: var(--warning, #f59e0b); color: var(--warning, #f59e0b); }
-.admin-payment-card-proof.refund-refunded { border-color: var(--primary, #00ff88); color: var(--primary, #00ff88); }
+.admin-payment-card-proof.refund-refunded { border-color: var(--primary, #5B8CFF); color: var(--primary, #5B8CFF); }
 .admin-payment-card-proof.refund-declined { border-color: var(--danger, #ef4444); color: var(--danger, #ef4444); }
 .admin-payment-card-proof a { color: inherit; text-decoration: underline; }
 .admin-payment-card-status.refunded, .admin-payment-card-status.cancelled { opacity: 0.85; }

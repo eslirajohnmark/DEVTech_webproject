@@ -25,7 +25,7 @@
 <!-- Stats Cards -->
 <div class="admin-stats-grid">
     <div class="admin-stat-card">
-        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+        <div class="admin-stat-icon" style="background:rgba(91, 140, 255,0.08); color:var(--primary);">
             <i class="fas fa-users"></i>
         </div>
         <div class="admin-stat-info">
@@ -43,7 +43,7 @@
         </div>
     </div>
     <div class="admin-stat-card">
-        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+        <div class="admin-stat-icon" style="background:rgba(91, 140, 255,0.08); color:var(--primary);">
             <i class="fas fa-user-check"></i>
         </div>
         <div class="admin-stat-info">
@@ -371,7 +371,7 @@
     .detail-section-title {
         font-size: 0.8rem;
         font-weight: 700;
-        text-transform: uppercase;
+        text-transform: none;
         letter-spacing: 0.03em;
         opacity: 0.6;
         margin: 1.1rem 0 0.5rem;
@@ -427,7 +427,7 @@
     function userRowHtml(user) {
         const initials = (user.full_name || '?').trim().charAt(0).toUpperCase();
         const isSelf = user.key === currentAdminKey;
-        const roleCell = `<span class="admin-role-badge ${user.role}" style="background:rgba(0,255,136,0.1); color:var(--primary); display:inline-block; padding:0.3rem 0.6rem; border-radius:6px;">
+        const roleCell = `<span class="admin-role-badge ${user.role}" style="background:rgba(91, 140, 255,0.1); color:var(--primary); display:inline-block; padding:0.3rem 0.6rem; border-radius:6px;">
                    ${escapeHtml(user.role.charAt(0).toUpperCase() + user.role.slice(1))}${isSelf ? ' (you)' : ''}
                </span>`;
 

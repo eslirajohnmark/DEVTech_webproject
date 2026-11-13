@@ -68,49 +68,19 @@
                     <span class="user-step-number">01</span>
                     <h4 class="user-step-title">Device Type <span class="user-required-star">*</span></h4>
                 </div>
+                {% set icons = {'Laptop': 'fa-laptop', 'Desktop PC': 'fa-desktop', 'Tablet': 'fa-tablet-screen-button',
+                                'Smartphone': 'fa-mobile-screen', 'Monitor': 'fa-tv', 'Storage Device': 'fa-hard-drive',
+                                'Other': 'fa-circle-question'} %}
+                {% set chosen_device = request.args.get('device') if request.args.get('device') in device_types else 'Laptop' %}
                 <div class="user-device-grid">
-                    <label class="user-device-card" for="device-laptop">
-                        <input type="radio" name="device_type" id="device-laptop" value="Laptop" checked />
+                    {% for d in device_types %}
+                    <label class="user-device-card" for="device-{{ loop.index }}">
+                        <input type="radio" name="device_type" id="device-{{ loop.index }}" value="{{ d }}" {% if d == chosen_device %}checked{% endif %} />
                         <div class="user-device-content">
-                            <i class="fas fa-laptop"></i><span>Laptop</span>
+                            <i class="fas {{ icons[d] }}"></i><span>{{ d }}</span>
                         </div>
                     </label>
-                    <label class="user-device-card" for="device-desktop">
-                        <input type="radio" name="device_type" id="device-desktop" value="Desktop PC" />
-                        <div class="user-device-content">
-                            <i class="fas fa-desktop"></i><span>Desktop PC</span>
-                        </div>
-                    </label>
-                    <label class="user-device-card" for="device-aio">
-                        <input type="radio" name="device_type" id="device-aio" value="All-in-One PC" />
-                        <div class="user-device-content">
-                            <i class="fas fa-display"></i><span>All-in-One PC</span>
-                        </div>
-                    </label>
-                    <label class="user-device-card" for="device-monitor">
-                        <input type="radio" name="device_type" id="device-monitor" value="Monitor" />
-                        <div class="user-device-content">
-                            <i class="fas fa-tv"></i><span>Monitor</span>
-                        </div>
-                    </label>
-                    <label class="user-device-card" for="device-peripheral">
-                        <input type="radio" name="device_type" id="device-peripheral" value="Printer / Peripheral" />
-                        <div class="user-device-content">
-                            <i class="fas fa-print"></i><span>Printer / Peripheral</span>
-                        </div>
-                    </label>
-                    <label class="user-device-card" for="device-storage">
-                        <input type="radio" name="device_type" id="device-storage" value="Storage Device" />
-                        <div class="user-device-content">
-                            <i class="fas fa-hard-drive"></i><span>Storage Device</span>
-                        </div>
-                    </label>
-                    <label class="user-device-card" for="device-other">
-                        <input type="radio" name="device_type" id="device-other" value="Other" />
-                        <div class="user-device-content">
-                            <i class="fas fa-question-circle"></i><span>Other</span>
-                        </div>
-                    </label>
+                    {% endfor %}
                 </div>
                 <div class="user-form-group" id="customDeviceGroup" style="display:none;margin-top:0.5rem;">
                     <label for="custom_device">Specify your device <span class="user-required-star">*</span></label>
@@ -148,8 +118,9 @@
                                 data-price="{{ service.price }}"
                                 data-hours="{{ service.estimated_hours }}"
                                 data-description="{{ service.description or '' }}"
+                                data-devices="{{ service.device_types or '' }}"
                                 {% if wanted == service.id|string %}selected{% endif %}>
-                            {{ service.name }} - {% if service.price and service.price > 0 %}₱{{ "{:,.2f}".format(service.price) }}{% else %}Price upon diagnosis{% endif %}
+                            {{ service.name }} (from ₱{{ "{:,.0f}".format(service.price or 0) }})
                         </option>
                         {% endfor %}
                         <option value="other">Other Service (Custom)</option>
@@ -182,11 +153,11 @@
                 <div class="user-input-group">
                     <label for="problemDesc">What seems to be the problem?</label>
                     <textarea class="user-form-textarea" name="problem_description"
-                              id="problemDesc" required
-                              placeholder="Describe your issue in detail..."></textarea>
+                              id="problemDesc" required maxlength="500" aria-describedby="problemDescHint"
+                              placeholder="What does the device do, since when, and anything you see or hear. E.g. &quot;Screen flickers and shows lines since I dropped it on Monday&quot;">{{ request.args.get('issue', '')[:500] }}</textarea>
                     <div class="user-field-footer">
                         <span class="user-char-count"><span id="charCount">0</span> / 500</span>
-                        <span class="user-field-hint"><i class="fas fa-info-circle"></i> Be specific</span>
+                        <span class="user-field-hint" id="problemDescHint"><i class="fas fa-info-circle"></i> Describe the problem in a full sentence</span>
                     </div>
                 </div>
             </div>
@@ -304,11 +275,11 @@
                     <h4 class="user-step-title">Payment Method <span class="user-required-star">*</span></h4>
                 </div>
                 <div class="user-payment-options">
-                    <label class="user-payment-option" for="payment-gcash">
-                        <input type="radio" name="payment_method" id="payment-gcash" value="GCash" checked>
+                    <label class="user-payment-option" for="payment-qr">
+                        <input type="radio" name="payment_method" id="payment-qr" value="QR Ph" checked>
                         <div class="user-payment-option-content">
-                            <i class="fas fa-mobile-alt" style="color:#0073e6;"></i>
-                            <span>GCash</span>
+                            <i class="fas fa-qrcode" style="color:#2563eb;"></i>
+                            <span>QR Ph (GCash, Maya, bank apps)</span>
                         </div>
                     </label>
                     <label class="user-payment-option" for="payment-car">
@@ -322,7 +293,7 @@
                 <div id="paymentInfo" style="margin-top:0.8rem;padding:0.8rem 1rem;background:var(--user-bg);border-radius:var(--user-radius-sm);border:1px solid var(--user-border);">
                     <p id="paymentDetails" style="font-size:0.85rem;color:var(--user-text-secondary);">
                         <i class="fas fa-info-circle"></i>
-                        <span id="paymentInfoText">After booking, pay with GCash from Transactions and enter your reference number or upload the receipt. An admin then confirms it.</span>
+                        <span id="paymentInfoText">After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.</span>
                     </p>
                 </div>
             </div>
@@ -337,7 +308,7 @@
                     <ol>
                         <li><strong>Confirmation.</strong> This is a repair request. It is confirmed once DEVTech approves it and assigns a technician; you will be notified.</li>
                         <li><strong>Price and extra work.</strong> The listed price is the base price of the service. If the technician finds that more work or parts are needed, the job is put on hold and you are asked to approve or decline the extra cost first. Nothing extra is charged without your approval.</li>
-                        <li><strong>Payment.</strong> GCash payments are confirmed by DEVTech against your reference number or receipt. With C.A.R (Cash After Repair) you pay once the repair is done.</li>
+                        <li><strong>Payment.</strong> QR Ph payments go through PayMongo and are confirmed automatically. With C.A.R (Cash After Repair) you pay once the repair is done.</li>
                         <li><strong>Cancelling.</strong> You can cancel from My Bookings while the request is pending or confirmed. After work has started, contact us through Messages.</li>
                         <li><strong>Your data.</strong> Please back up your files before handing over your device. The technician records at intake whether you agreed to a data backup.</li>
                         <li><strong>Home service.</strong> Give an accurate address inside Tacloban City. Your technician's identity is verified by DEVTech; you can check this on Monitor Device.</li>
@@ -372,7 +343,7 @@
             <div class="user-summary-item"><label>Issue</label><p id="summaryIssue" class="user-summary-placeholder">Not described yet</p></div>
             <div class="user-summary-item"><label>Location</label><p id="summaryAddress">In-shop repair</p></div>
             <div class="user-summary-item"><label>Schedule</label><p id="summarySchedule" class="user-summary-placeholder">Not set</p></div>
-            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">GCash</p></div>
+            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">QR Ph</p></div>
         </div>
         <div class="user-summary-divider"></div>
         <div class="user-summary-total"><span>Estimated Duration</span><span class="user-total-value" id="summaryHours">1-2 hours</span></div>

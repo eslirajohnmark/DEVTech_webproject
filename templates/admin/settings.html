@@ -112,51 +112,6 @@
         </div>
     </div>
 
-    <!-- Appearance Settings -->
-    <div class="admin-settings-section">
-        <div class="admin-settings-header">
-            <h3><i class="fas fa-palette"></i> Appearance</h3>
-            <p>Customize the look and feel</p>
-        </div>
-        <div class="admin-settings-body">
-            <div class="admin-setting-item">
-                <div class="admin-setting-label">
-                    <span class="admin-setting-name">Theme</span>
-                    <span class="admin-setting-desc">Select your preferred theme</span>
-                </div>
-                <div class="admin-setting-control">
-                    <div class="admin-theme-selector">
-                        <button class="admin-theme-btn active" data-theme="dark" onclick="selectTheme('dark')">
-                            <i class="fas fa-moon"></i> Dark
-                        </button>
-                        <button class="admin-theme-btn" data-theme="light" onclick="selectTheme('light')">
-                            <i class="fas fa-sun"></i> Light
-                        </button>
-                        <button class="admin-theme-btn" data-theme="system" onclick="selectTheme('system')">
-                            <i class="fas fa-desktop"></i> System
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="admin-setting-item">
-                <div class="admin-setting-label">
-                    <span class="admin-setting-name">Primary Color</span>
-                    <span class="admin-setting-desc">Accent color for the interface</span>
-                </div>
-                <div class="admin-setting-control">
-                    <div class="admin-color-options">
-                        <button class="admin-color-btn active" style="background:#00ff88;" onclick="selectColor('#00ff88')"></button>
-                        <button class="admin-color-btn" style="background:#3b82f6;" onclick="selectColor('#3b82f6')"></button>
-                        <button class="admin-color-btn" style="background:#8b5cf6;" onclick="selectColor('#8b5cf6')"></button>
-                        <button class="admin-color-btn" style="background:#f59e0b;" onclick="selectColor('#f59e0b')"></button>
-                        <button class="admin-color-btn" style="background:#ef4444;" onclick="selectColor('#ef4444')"></button>
-                        <button class="admin-color-btn" style="background:#ec4899;" onclick="selectColor('#ec4899')"></button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Notification Settings -->
     <div class="admin-settings-section">
         <div class="admin-settings-header">
@@ -255,48 +210,22 @@
         <div class="admin-settings-body">
             <div class="admin-setting-item">
                 <div class="admin-setting-label">
-                    <span class="admin-setting-name">GCash</span>
-                    <span class="admin-setting-desc">Enable GCash payment gateway</span>
+                    <span class="admin-setting-name">Online payments (PayMongo)</span>
+                    <span class="admin-setting-desc">Customers pay by QR Ph (GCash, Maya, bank apps) or card. Payments are
+                        confirmed automatically and online refunds go back through PayMongo. Keys are kept in the server's
+                        .env file, not here.</span>
                 </div>
                 <div class="admin-setting-control">
-                    <label class="admin-toggle">
-                        <input type="checkbox" id="enable_gcash" data-setting {% if settings.get('enable_gcash', 'true') == 'true' %}checked{% endif %} />
-                        <span class="admin-toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-            <div class="admin-setting-item">
-                <div class="admin-setting-label">
-                    <span class="admin-setting-name">GCash Account</span>
-                    <span class="admin-setting-desc">Registered GCash account number</span>
-                </div>
-                <div class="admin-setting-control">
-                    <input type="text" value="{{ settings.get('gcash_account', '') }}" class="admin-setting-input" id="gcash_account" maxlength="30" />
-                </div>
-            </div>
-            <div class="admin-setting-item">
-                <div class="admin-setting-label">
-                    <span class="admin-setting-name">GCash Account Name</span>
-                    <span class="admin-setting-desc">Name customers should see when paying.</span>
-                </div>
-                <div class="admin-setting-control">
-                    <input type="text" value="{{ settings.get('gcash_name', '') }}" class="admin-setting-input" id="gcash_name" maxlength="100" placeholder="Account holder name" />
-                </div>
-            </div>
-            <div class="admin-setting-item">
-                <div class="admin-setting-label">
-                    <span class="admin-setting-name">GCash QR Code</span>
-                    <span class="admin-setting-desc">Upload the QR from your GCash app (Profile &rsaquo; My QR, or the QR you show customers).
-                        At checkout the exact order amount is written into it, so customers just scan and pay.</span>
-                    <span class="admin-setting-desc" id="gcashQrStatus" aria-live="polite"></span>
-                </div>
-                <div class="admin-setting-control admin-qr-control">
-                    <input type="hidden" id="gcash_qr_payload" value="{{ settings.get('gcash_qr_payload', '') }}" />
-                    <label class="admin-btn admin-btn-sm admin-btn-primary">
-                        <i class="fas fa-qrcode"></i> Upload QR image
-                        <input type="file" accept="image/*" id="gcashQrFile" hidden />
-                    </label>
-                    <button type="button" class="admin-btn admin-btn-sm" id="gcashQrRemove">Remove</button>
+                    {% if not paymongo.enabled %}
+                    <span class="admin-status-badge inactive">Off</span>
+                    {% elif paymongo.test_mode %}
+                    <span class="admin-status-badge warning">Test mode</span>
+                    {% else %}
+                    <span class="admin-status-badge active">Live</span>
+                    {% endif %}
+                    {% if paymongo.enabled and not paymongo.webhook %}
+                    <small class="admin-muted" style="display:block;margin-top:0.35rem;">Webhook not set: payments confirm when the customer returns to the site.</small>
+                    {% endif %}
                 </div>
             </div>
             <div class="admin-setting-item">
@@ -386,63 +315,12 @@
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/vendor/jsQR.js') }}"></script>
 <script>
     const SETTING_FIELDS = ['system_name', 'system_email', 'default_currency', 'timezone',
                             'contact_phone', 'contact_email', 'contact_address', 'business_hours',
-                            'gcash_account', 'gcash_name', 'service_fee', 'enable_gcash', 'enable_cod',
-                            'gcash_qr_payload', 'shop_latitude', 'shop_longitude', 'shop_city', 'shop_province'];
+                            'service_fee', 'enable_cod',
+                            'shop_latitude', 'shop_longitude', 'shop_city', 'shop_province'];
 
-    // ---- GCash QR: decode the uploaded image here; only the QR text is saved ----
-    function qrFields(text) {
-        const out = {};
-        let i = 0;
-        while (i + 4 <= text.length) {
-            const tag = text.slice(i, i + 2), len = parseInt(text.slice(i + 2, i + 4), 10);
-            if (isNaN(len)) break;
-            out[tag] = text.slice(i + 4, i + 4 + len);
-            i += 4 + len;
-        }
-        return out;
-    }
-    function showQrStatus() {
-        const v = document.getElementById('gcash_qr_payload').value;
-        const el = document.getElementById('gcashQrStatus');
-        if (!v) { el.textContent = 'No QR saved: customers see your GCash number instead.'; return; }
-        const f = qrFields(v);
-        el.textContent = '✅ QR saved' + (f['59'] ? ` for ${f['59']}` : '') + (f['60'] ? `, ${f['60']}` : '') + '. Click Save All after changing it.';
-    }
-    document.getElementById('gcashQrFile').addEventListener('change', function () {
-        const file = this.files && this.files[0];
-        if (!file) return;
-        const img = new Image();
-        img.onload = () => {
-            const scale = Math.min(1, 1200 / Math.max(img.width, img.height));
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.round(img.width * scale);
-            canvas.height = Math.round(img.height * scale);
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = window.jsQR && jsQR(data.data, data.width, data.height);
-            URL.revokeObjectURL(img.src);
-            if (!code || !code.data.startsWith('000201')) {
-                showAdminToast('⚠️ No GCash / QR Ph payment code found in that image. Upload a clear, uncropped QR.');
-                return;
-            }
-            document.getElementById('gcash_qr_payload').value = code.data;
-            showQrStatus();
-            showAdminToast('QR read. Click Save All to use it at checkout.');
-        };
-        img.onerror = () => showAdminToast('⚠️ That file is not an image.');
-        img.src = URL.createObjectURL(file);
-        this.value = '';
-    });
-    document.getElementById('gcashQrRemove').addEventListener('click', () => {
-        document.getElementById('gcash_qr_payload').value = '';
-        showQrStatus();
-        showAdminToast('QR removed. Click Save All to apply.');
-    });
     document.getElementById('shopLocateBtn').addEventListener('click', () => {
         if (!navigator.geolocation) { showAdminToast('⚠️ This browser cannot share its location.'); return; }
         navigator.geolocation.getCurrentPosition(pos => {
@@ -451,7 +329,6 @@
             showAdminToast('Location filled in. Click Save All to apply.');
         }, () => showAdminToast('⚠️ Location permission was denied.'), {enableHighAccuracy: true, timeout: 10000});
     });
-    showQrStatus();
 
     async function saveAllSettings() {
         const payload = {};
@@ -480,23 +357,6 @@
     // the action happened.
     function notAvailable() {
         showAdminToast('This option is not available yet.');
-    }
-
-    function selectTheme(theme) {
-        document.querySelectorAll('.admin-theme-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        document.querySelector(`.admin-theme-btn[data-theme="${theme}"]`).classList.add('active');
-        showAdminToast(`🎨 Theme changed to: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`);
-    }
-
-    function selectColor(color) {
-        document.querySelectorAll('.admin-color-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        event.target.classList.add('active');
-        document.documentElement.style.setProperty('--primary', color);
-        showAdminToast(`🎨 Primary color updated`);
     }
 
     function confirmReset() { notAvailable(); }

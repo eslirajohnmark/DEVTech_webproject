@@ -36,6 +36,9 @@ def app(tmp_path):
 
     # Rate-limit counters live for the whole run; start each test from zero.
     limiter.reset()
+    # So does the in-memory cache (e.g. the shop's product list): no data from earlier tests.
+    from app import cache
+    cache.clear()
 
     with flask_app.app_context():
         db.drop_all()

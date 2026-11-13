@@ -4,6 +4,21 @@
 {% block page_title %}Order Management{% endblock %}
 {% block page_subtitle %}View and manage all customer orders{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/map-view.css') }}">
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/map-view.js') }}"></script>
+<script>
+    // A pin's map is drawn the first time it is opened (a hidden map has no size).
+    document.querySelectorAll('.admin-order-map').forEach(d => d.addEventListener('toggle', () => {
+        if (d.open && window.DevtechMapView) DevtechMapView.render(d);
+    }));
+</script>
+{% endblock %}
+
 {% block content %}
 {% set on_duty = riders|selectattr('is_active')|selectattr('on_duty')|list %}
 
@@ -97,7 +112,9 @@
                 </td>
                 <td>{{ order.address_line or order.shipping_address or 'N/A' }}{% if order.city %}, {{ order.city }}{% endif %}
                     {% if order.latitude is not none and order.longitude is not none %}
-                    <br><a href="https://www.google.com/maps?q={{ order.latitude }},{{ order.longitude }}" target="_blank" rel="noopener"><small>Map pin</small></a>
+                    <details class="admin-order-map"><summary><small><i class="fas fa-map-pin"></i> Show pin</small></summary>
+                        <div class="map-view" data-map-lat="{{ order.latitude }}" data-map-lng="{{ order.longitude }}" data-map-label="Delivery pin"></div>
+                    </details>
                     {% endif %}
                     {% if eta and eta.distance_km %}<br><small class="admin-muted">≈ {{ eta.distance_km }} km{% if eta.basis != 'pin' %} (by {{ eta.basis }}){% endif %}</small>{% endif %}
                 </td>
@@ -122,7 +139,7 @@
                                 {% for r in on_duty %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
                             </select>
                             <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary"
-                                {% if order.payment_method == 'gcash' and order.payment_status != 'confirmed' %}disabled title="Confirm the GCash payment first"{% endif %}>
+                                {% if order.payment_method in ('gcash', 'paymongo') and order.payment_status != 'confirmed' %}disabled title="Not paid yet"{% endif %}>
                                 <i class="fas fa-motorcycle"></i> Send out
                             </button>
                             {% else %}

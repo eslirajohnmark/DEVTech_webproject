@@ -2,6 +2,15 @@
 
 {% block title %}Service Requests{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/map-view.css') }}">
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/map-view.js') }}"></script>
+{% endblock %}
+
 {% block content %}
 <!-- Top Bar -->
 <div class="admin-top-bar">
@@ -20,7 +29,7 @@
 <!-- Stats Cards -->
 <div class="admin-stats-grid">
     <div class="admin-stat-card">
-        <div class="admin-stat-icon" style="background:rgba(0,255,136,0.08); color:var(--primary);">
+        <div class="admin-stat-icon" style="background:rgba(91, 140, 255,0.08); color:var(--primary);">
             <i class="fas fa-clipboard-list"></i>
         </div>
         <div class="admin-stat-info">
@@ -404,6 +413,7 @@
                         <div class="admin-detail-item" style="grid-column: 1 / -1;">
                             <label>Address</label>
                             <p>${h(b.address)}</p>
+                            ${b.latitude != null && b.longitude != null ? `<div class="map-view" data-map-lat="${Number(b.latitude)}" data-map-lng="${Number(b.longitude)}" data-map-label="Customer's pin"></div>` : ''}
                         </div>` : ''}
                     </div>
 
@@ -481,6 +491,7 @@
                 }
 
                 footer.innerHTML = footerHtml;
+                if (window.DevtechMapView) DevtechMapView.render(body);     // the customer's pin, if any
             })
             .catch(() => {
                 body.innerHTML = `<p style="color:var(--danger); text-align:center; padding:2rem;">Could not load request details. Please try again.</p>`;

@@ -1,0 +1,7 @@
+/* Read-only location map (static/js/map-view.js) and the shared map pin */
+.map-view { margin-top: 0.6rem; }
+.map-view-canvas { height: 220px; border-radius: 14px; overflow: hidden; border: 1px solid rgba(15, 30, 61, 0.12); }
+.map-view-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin: 0.5rem 0 0; font-size: 0.85rem; }
+.map-view-links a { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; }
+.map-view-links span { color: #6A7792; margin-left: auto; font-variant-numeric: tabular-nums; }
+.devtech-pin { background: none; border: 0; filter: drop-shadow(0 4px 6px rgba(15, 30, 61, 0.35)); }

@@ -30,12 +30,10 @@ def test_home_shows_real_stats_once_there_is_data(client, assigned_booking):
 def test_contact_details_come_from_settings(client, customer):
     _set('contact_phone', '0999 111 2222')
     _set('business_hours', 'Mon-Fri, 9 AM - 5 PM')
-    _set('gcash_account', '0999 333 4444')
     html = client.get('/').get_data(as_text=True)
     assert '0999 111 2222' in html and 'Mon-Fri, 9 AM - 5 PM' in html
     login_as(client, customer)
     assert '0999 111 2222' in client.get('/support').get_data(as_text=True)
-    assert '0999 333 4444' in client.get('/user/transactions').get_data(as_text=True)
 
 
 def test_blank_contact_phone_is_hidden(client):
