@@ -26,18 +26,35 @@
     </div>
 </div>
 
-<section class="user-catalog-hero">
-    <div class="user-catalog-hero-text">
-        <h2>Expert Computer Repair<br>&amp; Tech Support</h2>
-        <p>From hardware fixes to software solutions — we've got you covered.</p>
-        <div class="user-catalog-hero-badges">
-            <span><i class="fas fa-bolt"></i> Quick Service</span>
-            <span><i class="fas fa-user-gear"></i> Skilled Technicians</span>
-            <span><i class="fas fa-shield-halved"></i> Trusted &amp; Secure</span>
+{% set ns = namespace(n=0) %}
+{% for c, svcs in catalog %}{% set ns.n = ns.n + svcs|length %}{% endfor %}
+<section class="cat-hero" aria-labelledby="catHeroTitle">
+    <div class="cat-hero-text">
+        <h2 id="catHeroTitle">Repairs for every device you bring in</h2>
+        <p>Laptops, desktop PCs, tablets, smartphones, monitors and drives. Every service shows its starting price before you book.</p>
+        <ul class="cat-hero-facts">
+            <li><strong>{{ ns.n }}</strong><span>services</span></li>
+            <li><strong>6</strong><span>device types</span></li>
+            {% if site().booking_fee %}<li><strong>₱{{ "{:,.0f}".format(site().booking_fee) }}</strong><span>booking fee, deducted from your final bill</span></li>{% endif %}
+        </ul>
+        <div class="cat-hero-actions">
+            <a class="cat-hero-btn" href="{{ url_for('book_appointment') }}"><i class="fas fa-calendar-plus" aria-hidden="true"></i> Book a repair</a>
+            <a class="cat-hero-link" href="{{ url_for('user_troubleshooting') }}">Not sure what's wrong? Troubleshoot first</a>
         </div>
     </div>
-    <div class="user-catalog-hero-art">
-        <i class="fas fa-laptop-medical"></i>
+    <div class="cat-hero-bench" aria-hidden="true">
+        <svg class="cat-hero-traces" viewBox="0 0 320 240" preserveAspectRatio="xMidYMid meet">
+            <path d="M0 60h70l24 24h36"/><path d="M0 180h56l30-30h44"/><path d="M320 40h-60l-26 26h-44"/>
+            <path d="M320 200h-70l-20-20h-40"/><path d="M160 0v40"/><path d="M160 240v-36"/>
+            <circle cx="70" cy="60" r="3.5"/><circle cx="56" cy="180" r="3.5"/><circle cx="260" cy="40" r="3.5"/><circle cx="250" cy="200" r="3.5"/>
+        </svg>
+        <div class="cat-hero-device">
+            <i class="fas fa-laptop" style="--i:0"></i><i class="fas fa-desktop" style="--i:1"></i>
+            <i class="fas fa-tablet-screen-button" style="--i:2"></i><i class="fas fa-mobile-screen" style="--i:3"></i>
+            <i class="fas fa-tv" style="--i:4"></i><i class="fas fa-hard-drive" style="--i:5"></i>
+            <span class="cat-hero-scan"></span>
+        </div>
+        <span class="cat-hero-led"><span class="cat-hero-dot"></span><span class="cat-hero-st cat-hero-st--a">Diagnosing</span><span class="cat-hero-st cat-hero-st--b">Ready for pickup</span></span>
     </div>
 </section>
 

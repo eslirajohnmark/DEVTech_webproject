@@ -547,9 +547,16 @@ function loadTaclobanBoundary() {
             // GeoJSON coordinates are [lon, lat]; every other lat/lng pair
             // in this app (Leaflet, TACLOBAN_CENTER, etc.) is [lat, lng] -
             // converting once here means nothing downstream has to care.
-            TACLOBAN_POLYGONS = geojson.features.map(function(feature) {
-                return feature.geometry.coordinates.map(function(ring) {
-                    return ring.map(function(pt) { return [pt[1], pt[0]]; });
+            // A city can be several pieces (the mainland and islets): a
+            // MultiPolygon is a list of polygons, a Polygon is one.
+            TACLOBAN_POLYGONS = [];
+            geojson.features.forEach(function(feature) {
+                const g = feature.geometry;
+                const polys = g.type === 'MultiPolygon' ? g.coordinates : [g.coordinates];
+                polys.forEach(function(rings) {
+                    TACLOBAN_POLYGONS.push(rings.map(function(ring) {
+                        return ring.map(function(pt) { return [pt[1], pt[0]]; });
+                    }));
                 });
             });
             return TACLOBAN_POLYGONS;
@@ -606,6 +613,33 @@ function isInsideTacloban(lat, lng) {
     });
 }
 
+
+// Tacloban City's outline as Google Maps draws a city: a white line under red
+// dashes, with everything outside the city dimmed. Returns the layer group.
+const TACLOBAN_MAX_BOUNDS = [[11.15, 124.85], [11.39, 125.09]];
+
+function drawTaclobanBoundary(map) {
+    const group = L.layerGroup().addTo(map);
+    loadTaclobanBoundary().then(function() {
+        if (!TACLOBAN_BOUNDARY_GEOJSON || !map) return;
+        const rings = [];
+        TACLOBAN_POLYGONS.forEach(function(poly) { rings.push(poly[0]); });
+        // the world with the city cut out of it
+        L.polygon([[[-89, -179], [-89, 179], [89, 179], [89, -179]]].concat(rings), {
+            stroke: false, fillColor: '#0F1E3D', fillOpacity: 0.28, interactive: false
+        }).addTo(group);
+        L.geoJSON(TACLOBAN_BOUNDARY_GEOJSON, {
+            style: {color: '#ffffff', weight: 5, opacity: 0.95, fill: false}, interactive: false
+        }).addTo(group);
+        L.geoJSON(TACLOBAN_BOUNDARY_GEOJSON, {
+            style: {color: '#E5484D', weight: 3, opacity: 1, dashArray: '7 6', lineCap: 'butt', fill: false},
+            interactive: false
+        }).addTo(group);
+    });
+    return group;
+}
+window.drawTaclobanBoundary = drawTaclobanBoundary;
+
 let mapInstance = null;
 let mapMarker = null;
 let isMapInitialized = false;
@@ -627,10 +661,7 @@ function initLocationMap() {
         center: TACLOBAN_CENTER,
         zoom: 14,
         zoomControl: true,
-        maxBounds: [
-            [11.1000, 124.9000],
-            [11.3600, 125.1200]
-        ],
+        maxBounds: TACLOBAN_MAX_BOUNDS,
         maxBoundsViscosity: 0.8
     });
 
@@ -639,23 +670,7 @@ function initLocationMap() {
         maxZoom: 19
     }).addTo(mapInstance);
 
-    // Draw the real barangay boundaries (transparent fill so users can see
-    // through to the map tiles underneath). Falls back gracefully if the
-    // fetch is still in flight - draws in as soon as it resolves.
-    loadTaclobanBoundary().then(function() {
-        if (TACLOBAN_BOUNDARY_GEOJSON && mapInstance) {
-            L.geoJSON(TACLOBAN_BOUNDARY_GEOJSON, {
-                style: {
-                    color: '#2563eb',
-                    weight: 1.5,
-                    opacity: 0.7,
-                    fillColor: '#2563eb',
-                    fillOpacity: 0.04,
-                    smoothFactor: 1
-                }
-            }).addTo(mapInstance);
-        }
-    });
+    drawTaclobanBoundary(mapInstance);
 
     L.marker(TACLOBAN_CENTER, {
         icon: L.divIcon({
@@ -935,7 +950,7 @@ function searchLocation() {
         btn.disabled = true;
     }
 
-    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&countrycodes=PH&bounded=1&viewbox=124.90,11.10,125.12,11.36`)
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&countrycodes=PH&bounded=1&viewbox=124.88,11.18,125.05,11.36`)
         .then(response => response.json())
         .then(data => {
             if (btn) {
@@ -988,7 +1003,7 @@ function initBookingMap() {
     
     if (typeof L === 'undefined') {
         const script = document.createElement('script');
-        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        script.src = '/static/vendor/leaflet/leaflet.js';
         script.onload = function() {
             initLocationMap();
         };
@@ -1047,24 +1062,9 @@ function initAddressMap(lat, lng) {
         maxZoom: 19
     }).addTo(addressMapInstance);
 
-    // Visual reference only, same as the booking map - the shop's delivery
-    // address picker doesn't reject pins outside the city (customers may
-    // legitimately want delivery elsewhere), so this shows the boundary
-    // without blocking anything.
-    loadTaclobanBoundary().then(function() {
-        if (TACLOBAN_BOUNDARY_GEOJSON && addressMapInstance) {
-            L.geoJSON(TACLOBAN_BOUNDARY_GEOJSON, {
-                style: {
-                    color: '#2563eb',
-                    weight: 1.5,
-                    opacity: 0.6,
-                    fillColor: '#2563eb',
-                    fillOpacity: 0.03,
-                    smoothFactor: 1
-                }
-            }).addTo(addressMapInstance);
-        }
-    });
+    // Deliveries are inside the city: the line shows where, and a pin outside it
+    // is flagged here (the server refuses it too).
+    drawTaclobanBoundary(addressMapInstance);
 
     if (hasPin) placeAddressMarker(center[0], center[1], true);
     else clearAddressMarker();
@@ -1090,9 +1090,13 @@ function placeAddressMarker(lat, lng, saved) {
     pickedLng = lng;
 
     const coordsEl = document.getElementById('addressCoords');
+    const outside = !isInsideTacloban(lat, lng);
     if (coordsEl) {
-        coordsEl.innerHTML = '<i class="fas fa-map-pin"></i> <span>' + (saved ? 'Your saved pin' : 'Pinned') + ' (' +
-            lat.toFixed(5) + ', ' + lng.toFixed(5) + ')</span>';
+        coordsEl.classList.toggle('is-outside', outside);
+        coordsEl.innerHTML = outside
+            ? '<i class="fas fa-triangle-exclamation"></i> <span>That pin is outside Tacloban City. We deliver inside the red line only.</span>'
+            : '<i class="fas fa-map-pin"></i> <span>' + (saved ? 'Your saved pin' : 'Pinned') + ' (' +
+              lat.toFixed(5) + ', ' + lng.toFixed(5) + ')</span>';
     }
 
     if (addressMapMarker) {

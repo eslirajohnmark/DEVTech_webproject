@@ -8,7 +8,7 @@ from decimal import Decimal
 import pytest
 
 from app import (db, Booking, Customer, Technician, Notification, Order, Product, Service,
-                 ServiceCategory, Transaction)
+                 ServiceCategory, SystemSetting, Transaction)
 from models.technician_models import ApprovalRequest, IncidentReport, IntakeRecord, JobLog, ServiceReport
 from tests.conftest import login_as
 
@@ -27,6 +27,8 @@ def service(app):
 
 
 def _book(client, service, **overrides):
+    from app import app as flask_app
+    flask_app.config['PAYMONGO_ENABLED'] = True        # QR Ph needs online payments (reset per test)
     data = {'service_id': str(service.id), 'device_type': 'Laptop', 'problem_description': 'The laptop screen is cracked after it fell off the table',
             'booking_date': TOMORROW, 'booking_time': '10:00', 'in_shop': 'on',
             'payment_method': 'QR Ph', 'accept_terms': 'on'}
@@ -45,7 +47,28 @@ def test_valid_booking_records_terms_and_server_price(customer_logged_in, servic
     _book(customer_logged_in, service)
     b = Booking.query.one()
     assert b.terms_accepted_at is not None and b.status == 'pending'
-    assert Transaction.query.filter_by(booking_id=b.id).one().amount == Decimal('1500.00')
+    # the ₱100 booking fee is paid now and deducted: the booking's charge is the balance
+    assert Transaction.query.filter_by(booking_id=b.id).one().amount == Decimal('1400.00')
+    fee = Transaction.query.filter(Transaction.transaction_number.like(f'FEE-{b.booking_number}-%')).one()
+    assert fee.amount == Decimal('100.00') and fee.payment_method == 'paymongo' and b.booking_fee == Decimal('100.00')
+
+
+def test_booking_fee_follows_the_setting_and_never_exceeds_the_price(customer_logged_in, service):
+    db.session.add(SystemSetting(setting_key='booking_fee', value='0'))
+    db.session.commit()
+    _book(customer_logged_in, service)
+    b = Booking.query.one()
+    assert b.booking_fee is None and Transaction.query.count() == 1
+    assert Transaction.query.one().amount == Decimal('1500.00')       # no fee: the full price as before
+
+
+def test_cancelling_a_booking_cancels_its_unpaid_booking_fee(customer_logged_in, service):
+    from app import settle_cancelled_booking
+    _book(customer_logged_in, service)
+    b = Booking.query.one()
+    settle_cancelled_booking(b)
+    db.session.commit()
+    assert {t.payment_status for t in Transaction.query.all()} == {'cancelled'}
 
 
 @pytest.mark.parametrize('overrides, why', [

@@ -94,7 +94,7 @@
             "amount": "%.2f"|format(transaction.amount),
             "method": payment_method_label(transaction.payment_method),
             "reference": transaction.gcash_reference or transaction.reference_number or "N/A",
-            "booking": transaction.booking.booking_number if transaction.booking else (("Order " ~ transaction.order.order_number) if transaction.order else (("Extra work " ~ extra_work_booking(transaction)) if extra_work_booking(transaction) else "N/A")),
+            "booking": transaction.booking.booking_number if transaction.booking else (("Order " ~ transaction.order.order_number) if transaction.order else (("Extra work " ~ extra_work_booking(transaction)) if extra_work_booking(transaction) else (("Booking fee " ~ booking_fee_booking(transaction)) if booking_fee_booking(transaction) else "N/A"))),
             "date": transaction.transaction_date.strftime("%b %d, %Y %I:%M %p"),
             "status": transaction.payment_status,
             "rejectionReason": transaction.rejection_reason or "",
@@ -123,7 +123,7 @@
                 <span class="admin-payment-card-ref">Ref: {{ transaction.gcash_reference or transaction.reference_number or 'N/A' }}</span>
             </div>
             <div class="admin-payment-card-meta">
-                <span>{% if transaction.booking %}Booking: {{ transaction.booking.booking_number }}{% elif transaction.order %}Order: {{ transaction.order.order_number }}{% elif extra_work_booking(transaction) %}Extra work: {{ extra_work_booking(transaction) }}{% else %}Booking: N/A{% endif %}</span>
+                <span>{% if transaction.booking %}Booking: {{ transaction.booking.booking_number }}{% elif transaction.order %}Order: {{ transaction.order.order_number }}{% elif extra_work_booking(transaction) %}Extra work: {{ extra_work_booking(transaction) }}{% elif booking_fee_booking(transaction) %}Booking fee: {{ booking_fee_booking(transaction) }}{% else %}Booking: N/A{% endif %}</span>
                 <span>{{ transaction.transaction_date.strftime('%b %d, %Y %H:%M') }}</span>
             </div>
             {% for r in transaction.refunds %}

@@ -1,11 +1,15 @@
-"""Outgoing email through Resend (https://resend.com).
+"""Outgoing email through Brevo (https://brevo.com) or Resend (https://resend.com).
 
-Configured from .env:
-    RESEND_API_KEY   API key (re_...). Blank = email is switched off.
+Configured from .env (set one key; Brevo wins when both are set):
+    BREVO_API_KEY    Brevo API key (xkeysib-...). Free plan: 300 emails a day.
+    RESEND_API_KEY   Resend API key (re_...).
     MAIL_FROM        Sender, e.g. "DEVTech <no-reply@yourdomain.com>".
-                     Until a domain is verified in Resend, only
+                     Brevo: the address must be a verified sender in Brevo.
+                     Resend: until a domain is verified, only
                      onboarding@resend.dev works, and it can only deliver to
                      the address that owns the Resend account.
+No key = email is switched off. Both are HTTPS APIs, so hosts that block the
+email (SMTP) ports can still send.
 
 Emails go out from one background thread so a page never waits on the
 network and an email failure can never break the request that triggered it.
@@ -21,6 +25,7 @@ import time
 import requests
 
 RESEND_URL = 'https://api.resend.com/emails'
+BREVO_URL = 'https://api.brevo.com/v3/smtp/email'
 SEND_INTERVAL_SECONDS = 0.6   # stays under Resend's default rate limit
 log = logging.getLogger('devtech.email')
 
@@ -35,7 +40,7 @@ _UNDELIVERABLE_SUFFIXES = ('.invalid', '.local', '.test', '.example')
 def is_enabled(app=None):
     if app is not None and app.config.get('TESTING') and not app.config.get('EMAIL_IN_TESTS'):
         return False
-    return bool(os.environ.get('RESEND_API_KEY'))
+    return bool(os.environ.get('BREVO_API_KEY') or os.environ.get('RESEND_API_KEY'))
 
 
 def deliverable(address):
@@ -66,10 +71,35 @@ def render(title, message, action_url=None, action_label=None, site_name='DEVTec
     return body, text
 
 
+def _send_brevo(key, to, subject, html_body, text_body):
+    from email.utils import parseaddr
+    name, address = parseaddr(os.environ.get('MAIL_FROM') or '')
+    if not address:
+        log.warning('MAIL_FROM is not set: Brevo needs a verified sender address.')
+        return False
+    try:
+        r = requests.post(BREVO_URL, timeout=15,
+                          headers={'api-key': key, 'accept': 'application/json'},
+                          json={'sender': {'name': name or 'DEVTech', 'email': address},
+                                'to': [{'email': to}], 'subject': subject,
+                                'htmlContent': html_body, 'textContent': text_body})
+        if r.ok:
+            return True
+        log.warning('Brevo rejected email to %s: %s %s', to, r.status_code, r.text[:300])
+    except requests.RequestException as e:
+        log.warning('Could not reach Brevo for %s: %s', to, e)
+    return False
+
+
 def send_now(to, subject, html_body, text_body):
     """Send one email synchronously. Returns True on success. Never raises."""
+    if not deliverable(to):
+        return False
+    brevo = os.environ.get('BREVO_API_KEY')
+    if brevo:
+        return _send_brevo(brevo, to, subject, html_body, text_body)
     key = os.environ.get('RESEND_API_KEY')
-    if not key or not deliverable(to):
+    if not key:
         return False
     sender = os.environ.get('MAIL_FROM') or 'DEVTech <onboarding@resend.dev>'
     try:

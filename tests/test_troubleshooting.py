@@ -24,8 +24,8 @@ def test_specific_symptoms_give_high_confidence_and_a_priced_service(customer_lo
     r = _post(customer_logged_in, 'laptop', 'startup',
               "My laptop won't turn on, no lights when I press the power button").get_json()
     assert r['confidence'] == 'high' and r['title'] == 'No power at all' and r['steps']
-    assert "won't turn on" in r['evidence'] and r['service']['name'] == 'Laptop No-Power Troubleshooting'
-    assert r['service']['price'] == 700 and 'device=Laptop' in r['service']['book_url']
+    assert "won't turn on" in r['evidence'] and r['service']['name'] == 'Laptop No Power Repair'
+    assert r['service']['price'] == 800 and 'device=Laptop' in r['service']['book_url']
 
 
 def test_not_knowing_the_cause_gives_low_confidence_and_no_diy_steps(customer_logged_in):
@@ -33,7 +33,7 @@ def test_not_knowing_the_cause_gives_low_confidence_and_no_diy_steps(customer_lo
     r = _post(customer_logged_in, 'laptop', 'other',
               "I don't know what happened, it just stopped working yesterday").get_json()
     assert r['confidence'] == 'low' and r['steps'] == [] and 'technician' in r['advice']
-    assert r['service']['name'] == 'RAM Detection and Hardware Fault Diagnosis'
+    assert r['service']['name'] == 'Laptop Motherboard Inspection'
 
 
 def test_urgent_problems_stop_the_customer(customer_logged_in):
@@ -55,7 +55,7 @@ def _book(client, service, device='Laptop', text='The laptop screen is cracked a
 
 def test_booking_needs_a_specific_description_and_a_matching_device(customer_logged_in):
     sync_service_catalog(db, ServiceCategory, Service)
-    phone_screen = Service.query.filter_by(name='Smartphone Screen Replacement').one()
+    phone_screen = Service.query.filter_by(name='Smartphone LCD / OLED Screen Replacement').one()
     _book(customer_logged_in, phone_screen, device='Smartphone', text='hjsdhfdfsdf')
     assert Booking.query.count() == 0
     _book(customer_logged_in, phone_screen, device='Laptop', text='The phone screen is cracked and touch does not work')
@@ -70,7 +70,17 @@ def test_troubleshooting_page_prefills_the_booking_form(customer_logged_in):
     sync_service_catalog(db, ServiceCategory, Service)
     html = customer_logged_in.get('/user/troubleshooting').get_data(as_text=True)
     assert 'data-device="smartphone"' in html and 'Check my device' in html
-    svc = Service.query.filter_by(name='Laptop No-Power Troubleshooting').one()
+    svc = Service.query.filter_by(name='Laptop No Power Repair').one()
     page = customer_logged_in.get(f'/user/book/{svc.category.slug}?service={svc.id}&device=Tablet&issue=It+will+not+turn+on+at+all')
     body = page.get_data(as_text=True)
     assert 'value="Tablet" checked' in body and 'It will not turn on at all</textarea>' in body
+
+
+def test_every_problem_points_at_a_listed_service_that_fits_the_device():
+    from services.service_catalog import CATALOG
+    fits = {svc['name']: set(svc['devices']) for cat in CATALOG for svc in cat['services']}
+    for problem in troubleshooter.PROBLEMS:
+        for device, name in problem['service'].items():
+            assert device in fits.get(name, ()), (problem['id'], device, name)
+    for device, name in troubleshooter.DIAGNOSIS_SERVICE.items():
+        assert device in fits.get(name, ()), (device, name)

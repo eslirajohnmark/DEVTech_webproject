@@ -37,7 +37,7 @@
                 <button type="button" class="g-btn g-btn--quiet sup-new" id="supNew" hidden><i class="fas fa-plus"></i> New conversation</button>
             </header>
 
-            <!-- start a conversation -->
+            <!-- start a conversation with a person -->
             <div class="sup-start" id="supStart">
                 <h3>What do you need help with?</h3>
                 <div class="sup-topics" role="radiogroup" aria-label="Topic">
@@ -67,23 +67,34 @@
 
         <!-- help beside the chat -->
         <aside class="sup-side">
+
+            <!-- FAQ chatbot: always here, answers common questions straight away -->
+            <section class="g-panel sup-box sup-faqbot" id="faqBot" aria-labelledby="faqBotTitle">
+                <header class="sup-faqbot-head">
+                    <span class="sup-faqbot-icon" aria-hidden="true"><i class="fas fa-comment-dots"></i></span>
+                    <div>
+                        <h3 id="faqBotTitle">FAQ chatbot</h3>
+                        <p>Instant answers to common questions.</p>
+                    </div>
+                </header>
+                <ol class="sup-faqbot-log" id="botLog" aria-live="polite">
+                    <li class="sup-msg sup-msg--them sup-msg--bot">
+                        <p>Hi{% if current_user_name %} {{ current_user_name }}{% endif %}! Tap a question below or type your own.</p>
+                    </li>
+                </ol>
+                <div class="sup-chips" id="botChips" aria-label="Common questions">
+                    {% for q in bot_suggestions %}<button type="button" class="sup-chip" data-ask="{{ q }}">{{ q }}</button>{% endfor %}
+                </div>
+                <form class="sup-faqbot-form" id="botForm" autocomplete="off">
+                    <label for="botInput" class="visually-hidden">Ask a question</label>
+                    <input type="text" id="botInput" maxlength="300" placeholder="e.g. How can I pay?">
+                    <button type="submit" class="g-btn g-btn--primary" aria-label="Ask"><i class="fas fa-paper-plane"></i></button>
+                </form>
+            </section>
+
             <section class="g-panel sup-box" id="supHistory" {% if not conversations %}hidden{% endif %}>
                 <h3>Your conversations</h3>
                 <ul class="sup-convos" id="supConvos"></ul>
-            </section>
-
-            <section class="g-panel sup-box">
-                <h3>Quick answers</h3>
-                <details class="sup-faq"><summary>How do I book a repair?</summary>
-                    <p>Open Service Request, pick the service for your device, describe the problem, choose a date and time, and confirm. You can also start from the Troubleshooting assistant.</p></details>
-                <details class="sup-faq"><summary>How can I pay?</summary>
-                    <p>Pay by QR Ph (scan with GCash, Maya or your bank app; confirmed automatically) or by card. For repairs you can also choose C.A.R, Cash After Repair. Shop orders can be paid cash on delivery.</p></details>
-                <details class="sup-faq"><summary>Can I cancel a booking or order?</summary>
-                    <p>Yes, from My Bookings or My Orders while it hasn't started. Online payments are refunded in full to the card or e-wallet you used.</p></details>
-                <details class="sup-faq"><summary>How do I track my repair?</summary>
-                    <p>Monitor Device shows each stage live, from diagnosis to ready for pickup, with notes from your technician.</p></details>
-                <details class="sup-faq"><summary>What is C.A.R?</summary>
-                    <p>Cash After Repair: you pay at the shop once the repair is done and you've checked your device.</p></details>
             </section>
 
             <section class="g-panel sup-box sup-contact">
@@ -98,4 +109,5 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/support-chat.js') }}"></script>
+<script src="{{ url_for('static', filename='js/faq-bot.js') }}"></script>
 {% endblock %}

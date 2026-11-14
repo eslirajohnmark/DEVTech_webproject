@@ -51,3 +51,31 @@ h1, h2, h3, h4, .tech-brand-name, .tech-stat-num {
 .tech-auth-hero-title span { background: none; color: inherit; }
 .tech-auth-divider { text-transform: none; letter-spacing: 0; font-size: 0.82rem; }
 .tech-brand-mark { background: var(--t-yellow); color: #0B1328; box-shadow: none; }
+
+/* ---------- service report: photos and screenshots ---------- */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.tech-autofill { color: var(--t-yellow); }
+.rp-drop { position: relative; display: grid; justify-items: center; gap: 0.35rem; padding: 1.2rem 1rem; text-align: center;
+    border: 1.5px dashed var(--t-glass-edge); border-radius: var(--t-r-md); background: var(--t-glass-2);
+    transition: border-color var(--t-ease), background var(--t-ease); }
+.rp-drop.is-over, .rp-drop:focus-within { border-color: var(--t-yellow-line); background: var(--t-yellow-soft); }
+.rp-drop > i { font-size: 1.4rem; color: var(--t-yellow); }
+.rp-drop p { margin: 0; font-size: 0.84rem; color: var(--t-text-soft); }
+.rp-pick { color: var(--t-yellow); font-weight: 600; text-decoration: underline; cursor: pointer; }
+.rp-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.rp-status { min-height: 1.2em; margin: 0.4rem 0 0; font-size: 0.8rem; color: var(--t-text-soft); }
+.rp-status.is-error { color: var(--t-red); }
+.rp-files { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.55rem; }
+.rp-file { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 0.7rem;
+    padding: 0.5rem; border-radius: var(--t-r-md); background: var(--t-glass-2); border: 1px solid var(--t-border); }
+.rp-thumb { width: 64px; height: 64px; border-radius: 10px; overflow: hidden; display: grid; place-items: center;
+    background: rgba(0, 0, 0, 0.25); color: var(--t-text-soft); }
+.rp-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.rp-file-body { display: grid; gap: 0.2rem; min-width: 0; }
+.rp-file-body small { font-size: 0.72rem; color: var(--t-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-remove { min-height: 40px; min-width: 40px; padding: 0 0.7rem; }
+@media (max-width: 480px) {
+    .rp-file { grid-template-columns: 52px minmax(0, 1fr) auto; }
+    .rp-thumb { width: 52px; height: 52px; }
+}

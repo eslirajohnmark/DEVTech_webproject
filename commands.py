@@ -146,14 +146,27 @@ def register_commands(app):
     # UPGRADE-DB
     # ----------------------------------------------------------------
     @app.cli.command('sync-service-catalog')
-    def sync_service_catalog_command():
+    @click.option('--replace', is_flag=True,
+                  help='Make the catalog exactly the list in service_catalog.py: set every listed '
+                       'starting price and hide every service and category not on it.')
+    def sync_service_catalog_command(replace):
         """Rename / update / add services to match services/service_catalog.py.
         Keeps prices, ids and booking history; never duplicates; safe to repeat.
         Not part of upgrade-db, so it doesn't undo edits made in Admin > Services."""
         import app as app_module
         from services.service_catalog import sync_service_catalog
-        changes = sync_service_catalog(db, app_module.ServiceCategory, app_module.Service)
+        changes = sync_service_catalog(db, app_module.ServiceCategory, app_module.Service, replace=replace)
         click.echo('\n'.join(changes) if changes else 'Service catalog already up to date.')
+
+    @app.cli.command('init-db')
+    def init_db_command():
+        """Set up a database: create the tables, add the service catalog and the
+        default settings. Never creates demo accounts. Safe to repeat (it is what
+        `python app.py` runs on every start), so hosts without a shell can run it
+        as part of every build."""
+        import app as app_module
+        app_module.init_db()
+        click.echo('Database ready.')
 
     @app.cli.command('upgrade-db')
     def upgrade_db():

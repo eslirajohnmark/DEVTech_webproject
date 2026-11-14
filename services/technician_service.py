@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from app import (db, Technician, TechnicianVerificationEvent, TECH_VERIFICATION_STATUSES,
                  email_in_use, notify_admins, create_notification, _external_url)
 from services.upload_service import check_file, strip_jpeg_metadata
+from services import file_store
 
 
 TECH_ID_RE = re.compile(r'^TECH-\d{4}$')
@@ -76,6 +77,7 @@ def _write_document(data, ext):
     name = secrets.token_hex(16) + ext
     with open(os.path.join(folder, name), 'wb') as fh:
         fh.write(data)
+    file_store.saved(os.path.join(folder, name))
     return name
 
 
@@ -85,7 +87,7 @@ def id_document_path(tech):
     if not DOC_NAME_RE.match(name):
         return None
     path = os.path.join(current_app.config['ID_UPLOAD_FOLDER'], name)
-    return path if os.path.isfile(path) else None
+    return path if file_store.exists(path) else None
 
 
 def send_id_document(tech):
@@ -103,10 +105,7 @@ def send_id_document(tech):
 
 def delete_id_document(name):
     if name and DOC_NAME_RE.match(name):
-        try:
-            os.remove(os.path.join(current_app.config['ID_UPLOAD_FOLDER'], name))
-        except FileNotFoundError:
-            pass
+        file_store.removed(os.path.join(current_app.config['ID_UPLOAD_FOLDER'], name))
 
 
 # ---------------------------------------------------------------------------
@@ -125,15 +124,12 @@ def credential_path(cred):
     if not DOC_NAME_RE.match(name):
         return None
     path = os.path.join(_credential_folder(), name)
-    return path if os.path.isfile(path) else None
+    return path if file_store.exists(path) else None
 
 
 def delete_credential_file(name):
     if name and DOC_NAME_RE.match(name):
-        try:
-            os.remove(os.path.join(_credential_folder(), name))
-        except FileNotFoundError:
-            pass
+        file_store.removed(os.path.join(_credential_folder(), name))
 
 
 def add_credential(tech, form, upload):
@@ -163,6 +159,7 @@ def add_credential(tech, form, upload):
     name = secrets.token_hex(16) + ext
     with open(os.path.join(_credential_folder(), name), 'wb') as fh:
         fh.write(data)
+    file_store.saved(os.path.join(_credential_folder(), name))
     cred = TechnicianCredential(technician_id=tech.id, title=title, issuer=issuer or None,
                                 issued_on=issued_on, file=name, mime=mime)
     db.session.add(cred)

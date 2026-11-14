@@ -326,8 +326,18 @@ def report_form(job_id):
         abort(403)
     report = ServiceReport.query.filter_by(booking_id=job_id)\
         .order_by(ServiceReport.id.desc()).first()
+    from services.report_autofill import suggest
+    from blueprints.technician_api import report_files, report_pdf_row, REPORT_MAX_FILES
+    submitted = bool(report and report.status == 'submitted')
+    autofill = {} if submitted else suggest(
+        booking, report,
+        intake=IntakeRecord.query.filter_by(booking_id=job_id).first(),
+        approvals=ApprovalRequest.query.filter_by(booking_id=job_id).order_by(ApprovalRequest.id).all(),
+        logs=JobLog.query.filter_by(booking_id=job_id).order_by(JobLog.id).all())
     return render_template('technician/service_report.html',
-                           current=job_id, job=booking, report=report)
+                           current=job_id, job=booking, report=report, autofill=autofill,
+                           files=report_files(job_id, report), max_files=REPORT_MAX_FILES,
+                           pdf=report_pdf_row(report) if submitted else None)
 
 
 @technician_bp.route('/incidents')

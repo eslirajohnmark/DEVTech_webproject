@@ -100,6 +100,22 @@
         if (!quiet) $('supFirst').focus();
     }
 
+    // The FAQ chatbot (faq-bot.js) hands a question it can't answer to the team.
+    window.DevtechSupport = {
+        askTeam(text) {
+            if (current) {                                   // a conversation is open: write in it
+                const box = $('supInput');
+                if (text && !box.value.trim()) box.value = text;
+                box.focus();
+            } else {
+                startScreen(true);
+                if (text && !$('supFirst').value.trim()) $('supFirst').value = text;
+                $('supFirst').focus();
+            }
+            root.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }
+    };
+
     // ---- start
     $('supStartBtn').addEventListener('click', () => {
         const body = $('supFirst').value.trim();

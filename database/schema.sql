@@ -349,6 +349,7 @@ CREATE TABLE IF NOT EXISTS bookings (
 	technician_id INTEGER, 
 	assigned_at DATETIME, 
 	terms_accepted_at DATETIME, 
+	booking_fee NUMERIC(10, 2), 
 	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id), 

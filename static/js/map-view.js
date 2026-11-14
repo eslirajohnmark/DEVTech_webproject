@@ -16,6 +16,20 @@
         });
     }
 
+    // Tacloban City's outline (same file the server checks pins against), drawn
+    // like Google Maps: a white line under red dashes.
+    let boundary = null;
+    function cityLine(map) {
+        boundary = boundary || fetch('/static/data/tacloban_boundary.geojson')
+            .then(r => r.ok ? r.json() : null).catch(() => null);
+        boundary.then(data => {
+            if (!data) return;
+            L.geoJSON(data, {style: {color: '#ffffff', weight: 5, opacity: 0.95, fill: false}, interactive: false}).addTo(map);
+            L.geoJSON(data, {style: {color: '#E5484D', weight: 3, dashArray: '7 6', lineCap: 'butt', fill: false},
+                             interactive: false}).addTo(map);
+        });
+    }
+
     function render(root) {
         if (typeof L === 'undefined') return;
         (root || document).querySelectorAll('[data-map-lat][data-map-lng]:not([data-map-ready])').forEach(el => {
@@ -30,6 +44,7 @@
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap contributors', maxZoom: 19
             }).addTo(map);
+            cityLine(map);
             L.marker([lat, lng], {icon: pinIcon(), title: el.dataset.mapLabel || 'Pinned location'}).addTo(map);
             const links = document.createElement('p');
             links.className = 'map-view-links';

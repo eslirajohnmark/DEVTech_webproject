@@ -298,5 +298,6 @@ def test_init_db_seeds_settings_even_after_migration_flag(app):
     release_reserved_cart_stock()          # writes its flag row first, like upgrade-db
     init_db()
     keys = {s.setting_key for s in SystemSetting.query.all()}
-    assert {'gcash_account', 'enable_gcash', 'system_name'} <= keys
+    assert {'system_name', 'booking_fee', 'contact_address', 'shop_latitude'} <= keys
+    assert 'gcash_account' not in keys          # GCash was replaced by PayMongo QR
     assert Admin.query.count() == 0   # never a default admin

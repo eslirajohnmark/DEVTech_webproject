@@ -106,9 +106,23 @@
       <dt>Work performed</dt><dd>{{ r.work_performed or '—' }}</dd>
       <dt>Outcome notes</dt><dd>{{ r.outcome_notes or '—' }}</dd>
       <dt>Recommendations</dt><dd>{{ r.recommendations or '—' }}</dd>
-      <dt>Photos</dt><dd>{{ r.photos_note or '—' }}</dd>
+      <dt>Notes on the photos</dt><dd>{{ r.photos_note or '—' }}</dd>
       <dt>Private note to admin</dt><dd>{{ r.admin_note or '—' }}</dd>
     </dl>
+    {% set photos = report_photos.get(r.id, []) %}
+    {% if photos %}
+    <ul class="ta-report-photos">
+      {% for f in photos %}
+      <li><a href="{{ url_for('admin_upload_file', upload_id=f.id) }}" target="_blank" rel="noopener">
+        {% if f.mime_type.startswith('image/') %}<img src="{{ url_for('admin_upload_file', upload_id=f.id) }}" alt="{{ f.caption or f.original_name }}" loading="lazy">{% endif %}
+        <span>{{ f.caption or f.original_name }}</span></a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if r.status == 'submitted' %}
+    <a class="admin-btn admin-btn-primary admin-btn-sm ta-report-pdf" href="{{ url_for('admin_report_pdf', report_id=r.id) }}" target="_blank" rel="noopener">
+      <i class="fas fa-file-pdf"></i> Open the PDF report</a>
+    {% endif %}
   </details>
 {% else %}
   <div class="admin-empty-state"><i class="fas fa-file-lines"></i><p>No service reports yet.</p></div>

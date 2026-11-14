@@ -2,6 +2,10 @@
 
 How to take DEVTech from `localhost:5000` to a real URL.
 
+> **Deploying for free?** Follow [DEPLOY_FREE.md](DEPLOY_FREE.md) instead. Since January 2026 new free
+> PythonAnywhere accounts have no MySQL, so the free setup there uses SQLite; that guide also covers
+> Render + Supabase + Brevo.
+
 Two paths, pick the one that matches your situation.
 
 | Path | Best for | Difficulty | Time |

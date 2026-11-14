@@ -3,7 +3,7 @@
 {% block title %}Book a Repair{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="{{ url_for('static', filename='css/map-view.css') }}" />
 {% endblock %}
 
 {% block content %}
@@ -180,9 +180,24 @@
                         <label class="user-checkbox-label">
                             <input type="checkbox" id="inShopCheck" name="in_shop"
                                    onchange="toggleAddress()" checked>
-                            <span><i class="fas fa-store"></i> In-shop repair at DEVTech center</span>
+                            <span><i class="fas fa-store"></i> In-shop repair at our downtown shop</span>
                         </label>
                     </div>
+                </div>
+
+                {# where to bring the device for an in-shop repair #}
+                <div class="bk-shop" id="shopCard">
+                    <div class="bk-shop-info">
+                        <strong><i class="fas fa-store" aria-hidden="true"></i> Bring your device to our downtown shop</strong>
+                        <p class="bk-shop-address">{{ site().address }}</p>
+                        <p><i class="fas fa-clock" aria-hidden="true"></i> {{ site().hours }}</p>
+                        <p class="bk-shop-note">Come at the time you book; we check your device in with you at the counter.</p>
+                        <a class="bk-shop-dir" target="_blank" rel="noopener"
+                           href="https://www.google.com/maps/dir/?api=1&amp;destination={{ site().shop_lat }},{{ site().shop_lng }}">
+                            <i class="fas fa-route" aria-hidden="true"></i> Get directions</a>
+                    </div>
+                    <div class="map-view bk-shop-map" data-map-lat="{{ site().shop_lat }}" data-map-lng="{{ site().shop_lng }}"
+                         data-map-label="DEVTech shop"></div>
                 </div>
 
                 <div class="user-input-group map-section" id="mapSection"
@@ -275,6 +290,7 @@
                     <h4 class="user-step-title">Payment Method <span class="user-required-star">*</span></h4>
                 </div>
                 <div class="user-payment-options">
+                    {% if site().online_payments %}
                     <label class="user-payment-option" for="payment-qr">
                         <input type="radio" name="payment_method" id="payment-qr" value="QR Ph" checked>
                         <div class="user-payment-option-content">
@@ -282,8 +298,9 @@
                             <span>QR Ph (GCash, Maya, bank apps)</span>
                         </div>
                     </label>
+                    {% endif %}
                     <label class="user-payment-option" for="payment-car">
-                        <input type="radio" name="payment_method" id="payment-car" value="C.A.R">
+                        <input type="radio" name="payment_method" id="payment-car" value="C.A.R" {% if not site().online_payments %}checked{% endif %}>
                         <div class="user-payment-option-content">
                             <i class="fas fa-money-bill-wave" style="color:#22c55e;"></i>
                             <span>C.A.R (Cash After Repair)</span>
@@ -293,7 +310,7 @@
                 <div id="paymentInfo" style="margin-top:0.8rem;padding:0.8rem 1rem;background:var(--user-bg);border-radius:var(--user-radius-sm);border:1px solid var(--user-border);">
                     <p id="paymentDetails" style="font-size:0.85rem;color:var(--user-text-secondary);">
                         <i class="fas fa-info-circle"></i>
-                        <span id="paymentInfoText">After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.</span>
+                        <span id="paymentInfoText">{% if site().online_payments %}After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.{% else %}C.A.R (Cash After Repair) - You pay after the repair is completed and you are satisfied with the service.{% endif %}</span>
                     </p>
                 </div>
             </div>
@@ -343,11 +360,18 @@
             <div class="user-summary-item"><label>Issue</label><p id="summaryIssue" class="user-summary-placeholder">Not described yet</p></div>
             <div class="user-summary-item"><label>Location</label><p id="summaryAddress">In-shop repair</p></div>
             <div class="user-summary-item"><label>Schedule</label><p id="summarySchedule" class="user-summary-placeholder">Not set</p></div>
-            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">QR Ph</p></div>
+            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">{{ 'QR Ph' if site().online_payments else 'C.A.R' }}</p></div>
         </div>
         <div class="user-summary-divider"></div>
         <div class="user-summary-total"><span>Estimated Duration</span><span class="user-total-value" id="summaryHours">1-2 hours</span></div>
-        <div class="user-summary-total"><span>Service Fee</span><span class="user-total-value" id="summaryPrice">₱0.00</span></div>
+        <div class="user-summary-total"><span>Starting price</span><span class="user-total-value" id="summaryPrice">₱0.00</span></div>
+        {% if site().booking_fee %}
+        <div class="user-summary-total bk-fee" data-fee="{{ site().booking_fee }}">
+            <span>Booking fee <small>pay now by QR</small></span><span class="user-total-value">₱{{ "{:,.2f}".format(site().booking_fee) }}</span></div>
+        <div class="user-summary-total"><span>Balance after repair <small>from</small></span><span class="user-total-value" id="summaryBalance">₱0.00</span></div>
+        <p class="bk-fee-note"><i class="fas fa-circle-info" aria-hidden="true"></i>
+            The booking fee confirms your slot and is deducted from your final bill.</p>
+        {% endif %}
         <div class="user-summary-actions">
             <button class="user-btn-primary full" onclick="submitBooking()" id="summarySubmitBtn" disabled>
                 <i class="fas fa-calendar-plus"></i> Book Now
@@ -356,6 +380,7 @@
     </aside>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script src="{{ url_for('static', filename='js/map-view.js') }}"></script>
 {% include 'user/_booking_form_script.html' %}
 {% endblock %}

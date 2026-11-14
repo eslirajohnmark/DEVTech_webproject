@@ -363,6 +363,8 @@
                         placed order <strong>{{ txn.order.order_number }}</strong>
                     {% elif extra_work_booking(txn) %}
                         approved extra work on <strong>{{ extra_work_booking(txn) }}</strong>
+                    {% elif booking_fee_booking(txn) %}
+                        paid the booking fee for <strong>{{ booking_fee_booking(txn) }}</strong>
                     {% else %}
                         made a payment
                     {% endif %}

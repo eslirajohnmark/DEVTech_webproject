@@ -1,5 +1,4 @@
-<!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet is loaded by the page (static/vendor/leaflet) before this script -->
 <script>
 (function () {
     // Own scope: user.js defines generic functions/variables with the same names.
@@ -329,7 +328,7 @@
         const paymentInfoText = document.getElementById('paymentInfoText');
         const paymentSummary = document.getElementById('summaryPayment');
         
-        if (qrRadio.checked) {
+        if (qrRadio && qrRadio.checked) {             // no QR option while online payments are off
             paymentInfoText.textContent = "After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.";
             paymentSummary.textContent = 'QR Ph';
         } else {
@@ -348,31 +347,15 @@
         const defaultLat = 11.2444;
         const defaultLng = 125.0039;
         
-        map = L.map('locationMap').setView([defaultLat, defaultLng], 13);
+        map = L.map('locationMap', {maxBounds: TACLOBAN_MAX_BOUNDS, maxBoundsViscosity: 0.8, minZoom: 11})
+            .setView([defaultLat, defaultLng], 13);
         
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
         
-        // Draw the real Tacloban City boundary (138 barangays), loaded
-        // from user.js's shared boundary data - replaces the old 9-point
-        // hand-drawn approximation.
-        loadTaclobanBoundary().then(function() {
-            if (TACLOBAN_BOUNDARY_GEOJSON && map) {
-                L.geoJSON(TACLOBAN_BOUNDARY_GEOJSON, {
-                    style: {
-                        color: '#2563eb',
-                        weight: 1.5,
-                        opacity: 0.7,
-                        fillColor: '#2563eb',
-                        fillOpacity: 0.06,
-                        smoothFactor: 1
-                    }
-                }).bindTooltip('📍 Tacloban City Boundary', {
-                    sticky: true
-                }).addTo(map);
-            }
-        });
+        // Tacloban City's real outline (PSA barangays merged), drawn like Google Maps.
+        drawTaclobanBoundary(map);
         
         map.on('click', function(e) {
             const lat = e.latlng.lat;
@@ -480,7 +463,7 @@
         const searchQuery = `${address}, Tacloban City, Philippines`;
         
         // Limited to the Tacloban service area (same box the server checks).
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1&countrycodes=ph&bounded=1&viewbox=124.90,11.10,125.12,11.36`)
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1&countrycodes=ph&bounded=1&viewbox=124.88,11.18,125.05,11.36`)
             .then(response => response.json())
             .then(data => {
                 if (data && data.length > 0) {
@@ -525,10 +508,15 @@
         const addressInput = document.getElementById('serviceAddress');
         const mapSection = document.getElementById('mapSection');
         
+        const shopCard = document.getElementById('shopCard');
+        if (shopCard) {
+            shopCard.hidden = !inShop;
+            if (inShop && window.DevtechMapView) setTimeout(() => DevtechMapView.render(shopCard), 50);
+        }
         if (inShop) {
             mapSection.style.display = 'none';
             addressInput.removeAttribute('required');
-            addressInput.value = 'In-shop repair at DEVTech center';
+            addressInput.value = 'In-shop repair at our downtown shop';
             // Enable submit buttons for in-shop repair
             document.getElementById('isValidLocation').value = '1';
             isLocationValid = true;
@@ -555,7 +543,16 @@
     // SUMMARY UPDATE
     // ============================================
 
-    function updateSummary() {
+    // Starting price minus the booking fee paid now (the fee is deducted from the final bill).
+function setBalance(price) {
+    const box = document.querySelector('.bk-fee');
+    const out = document.getElementById('summaryBalance');
+    if (!box || !out) return;
+    const balance = Math.max(price - (parseFloat(box.dataset.fee) || 0), 0);
+    out.textContent = `₱${balance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+}
+
+function updateSummary() {
         // Device
         const deviceRadios = document.querySelectorAll('input[name="device_type"]');
         let device = 'Laptop';
@@ -583,9 +580,11 @@
             document.getElementById('summaryPrice').textContent = parseFloat(price) > 0
                 ? `₱${parseFloat(price).toLocaleString(undefined, {minimumFractionDigits: 2})}`
                 : 'Price upon diagnosis';
+            setBalance(parseFloat(price) || 0);
         } else {
             document.getElementById('summaryService').textContent = 'Not selected';
             document.getElementById('summaryPrice').textContent = '₱0.00';
+            setBalance(0);
         }
 
         // Issue
@@ -596,7 +595,7 @@
         // Location
         const inShop = document.getElementById('inShopCheck').checked;
         const address = document.getElementById('serviceAddress').value;
-        document.getElementById('summaryAddress').textContent = inShop ? '🏪 In-shop repair' : (address || 'Not set');
+        document.getElementById('summaryAddress').textContent = inShop ? 'In-shop repair, downtown shop' : (address || 'Not set');
 
         // Schedule
         const date = document.getElementById('bookingDate').value;

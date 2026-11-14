@@ -14,6 +14,7 @@ import hmac
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 import re
 import secrets
@@ -38,7 +39,7 @@ from flask_talisman import Talisman
 from commands import register_commands
 from flask import send_file
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from services import email_service, profile_presets, delivery_eta, paymongo_service, troubleshooter
+from services import email_service, profile_presets, delivery_eta, paymongo_service, troubleshooter, geo, file_store
 from services.job_status import (STAGES, STATUS_LABELS, ACTIVE_STATUSES,
                                  FINISHED_STATUSES, SLOT_STATUSES)
  
@@ -48,6 +49,13 @@ load_dotenv()
 IS_PRODUCTION = os.environ.get('FLASK_ENV', 'development') == 'production'
  
 app = Flask(__name__)
+# Behind a hosting proxy (Render, PythonAnywhere, Nginx) set BEHIND_PROXY=1: the app
+# then trusts the proxy's X-Forwarded-* headers, so links it builds (Google/Facebook
+# sign-in callbacks, emails) are https and rate limits see each visitor's own IP
+# instead of the proxy's. Leave it unset when nothing sits in front of the app.
+if os.environ.get('BEHIND_PROXY') == '1':
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # No secrets in source. SECRET_KEY and DATABASE_URL come from the environment / .env.
 _secret_key = os.environ.get('SECRET_KEY', '')
 if not _secret_key:
@@ -60,13 +68,29 @@ app.config['SECRET_KEY'] = _secret_key
 
 if not os.environ.get('DATABASE_URL'):
     raise RuntimeError('DATABASE_URL is not set. Copy .env.example to .env and fill it in.')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
+def database_url(url):
+    """DATABASE_URL as SQLAlchemy needs it. Supabase and Render hand out
+    postgres:// / postgresql:// links; the app talks to PostgreSQL through psycopg 3."""
+    for prefix in ('postgres://', 'postgresql://'):
+        if url.startswith(prefix):
+            return 'postgresql+psycopg://' + url[len(prefix):]
+    return url
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url(os.environ['DATABASE_URL'])
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Recycle before MySQL drops idle connections. Not for SQLite: an in-memory
 # database lives in its one connection, so recycling it (every 280 s) swapped in
 # an empty database mid-run - the random "no such table" test failures.
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = ({} if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite')
-                                           else {'pool_recycle': 280, 'pool_pre_ping': True})
+# PostgreSQL (Supabase): a small pool, because the free session pooler allows only
+# a few connections, and no server-side prepared statements, which a
+# transaction-mode pooler cannot keep between statements.
+if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite'):
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {}
+elif app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280, 'pool_pre_ping': True, 'pool_size': 5,
+                                               'max_overflow': 2, 'connect_args': {'prepare_threshold': None}}
+else:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280, 'pool_pre_ping': True}
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 # Payment receipts are private: kept outside static/ and served by receipt_file().
 app.config['RECEIPT_UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads', 'receipts')
@@ -96,8 +120,10 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
  
 # ==================== LOGGING ====================
 if not app.debug:
-    os.makedirs('logs', exist_ok=True)
-    file_handler = RotatingFileHandler('logs/devtech.log', maxBytes=5 * 1024 * 1024, backupCount=5)
+    # Next to app.py, not wherever the server happened to start (hosts differ).
+    _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    os.makedirs(_log_dir, exist_ok=True)
+    file_handler = RotatingFileHandler(os.path.join(_log_dir, 'devtech.log'), maxBytes=5 * 1024 * 1024, backupCount=5)
     file_handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
@@ -218,14 +244,20 @@ def _inject_site_details():
             except Exception:
                 db.session.rollback()
                 values = {}
+            shop = shop_location()
             g.site_details = {
                 'name': values.get('system_name') or 'DEVTech Computer Services',
                 'phone': values.get('contact_phone', ''),
                 'email': values.get('contact_email') or values.get('system_email', ''),
-                'address': values.get('contact_address', ''),
-                'hours': values.get('business_hours', ''),
+                # The downtown shop until an admin sets the real details in Settings.
+                'address': values.get('contact_address') or geo.DEFAULT_SHOP['address'],
+                'hours': values.get('business_hours') or geo.DEFAULT_SHOP['hours'],
+                'shop_lat': shop['lat'], 'shop_lng': shop['lng'],
                 'cod_enabled': values.get('enable_cod', 'true') == 'true',
                 'online_payments': paymongo_service.is_enabled(app),
+                # shown only when it can be paid (it is paid by QR)
+                'booking_fee': ((int(values['booking_fee']) if values.get('booking_fee', '').isdigit() else DEFAULT_BOOKING_FEE)
+                                if paymongo_service.is_enabled(app) else 0),
             }
         return g.site_details
     return {'site': site, 'current_year': datetime.utcnow().year}
@@ -248,9 +280,9 @@ def _technician_csp(resp):
 csp = {
     'default-src': "'self'",
     'style-src': ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com',
-                  'https://fonts.googleapis.com', 'https://unpkg.com'],
+                  'https://fonts.googleapis.com'],
     'font-src': ["'self'", 'https://cdnjs.cloudflare.com', 'https://fonts.gstatic.com'],
-    'script-src': ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdn.jsdelivr.net'],
+    'script-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],   # Leaflet is bundled in static/vendor
     'img-src': ["'self'", 'data:', 'https:'],
     'connect-src': ["'self'", 'https://nominatim.openstreetmap.org'],
 }
@@ -749,6 +781,9 @@ class Booking(db.Model):
     technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id'), nullable=True, index=True)
     assigned_at = db.Column(db.DateTime, nullable=True)
     terms_accepted_at = db.Column(db.DateTime, nullable=True)   # customer ticked the Terms box
+    # Paid by QR when booking and deducted from the final bill: the booking's own
+    # transaction is the balance (service price + approved extras - this fee).
+    booking_fee = db.Column(db.Numeric(10, 2), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -1194,6 +1229,36 @@ def extra_work_booking(transaction):
         return None
     return number[len(EXTRA_TXN_PREFIX):].rsplit('-', 1)[0]
 
+FEE_TXN_PREFIX = 'FEE-'       # FEE-<booking number>-<id>: the booking fee, paid when booking
+DEFAULT_BOOKING_FEE = 100
+
+def booking_fee_booking(transaction):
+    """Booking number a booking-fee charge belongs to, or None."""
+    number = transaction.transaction_number or ''
+    if not number.startswith(FEE_TXN_PREFIX):
+        return None
+    return number[len(FEE_TXN_PREFIX):].rsplit('-', 1)[0]
+
+def current_booking_fee():
+    """The booking fee set in Admin > Settings (whole pesos), or the default."""
+    row = SystemSetting.query.filter_by(setting_key='booking_fee').first()
+    try:
+        return Decimal(str(int((row.value or '').strip()))) if row else Decimal(DEFAULT_BOOKING_FEE)
+    except ValueError:
+        return Decimal(DEFAULT_BOOKING_FEE)
+
+def payment_label(transaction):
+    """What a payment is for, in words (PayMongo description, receipts)."""
+    if transaction.order:
+        return f'Shop order {transaction.order.order_number}'
+    if booking_fee_booking(transaction):
+        return f'Booking fee for {booking_fee_booking(transaction)}'
+    if extra_work_booking(transaction):
+        return f'Extra work on {extra_work_booking(transaction)}'
+    if transaction.booking and transaction.booking.service:
+        return transaction.booking.service.name
+    return 'DEVTech payment'
+
 def assign_transaction_number(transaction):
     transaction.transaction_number = f"TRX{datetime.utcnow():%y%m%d}{transaction.id:04d}"
 
@@ -1367,6 +1432,7 @@ def add_booking_device_columns():
         _try_sql("ALTER TABLE bookings ADD COLUMN device_model VARCHAR(80) NULL")
         _try_sql("ALTER TABLE bookings ADD COLUMN latitude DECIMAL(10,7) NULL")
         _try_sql("ALTER TABLE bookings ADD COLUMN longitude DECIMAL(10,7) NULL")
+        _try_sql("ALTER TABLE bookings ADD COLUMN booking_fee DECIMAL(10,2) NULL")
 
 def add_shop_delivery_columns():
     """Sale prices, delivery tracking on orders and the refund payout account.
@@ -1887,9 +1953,9 @@ def live_state(account):
 # processes are caught by re-checking every LIVE_RECHECK_SECONDS. At most
 # LIVE_MAX_WAITERS requests wait per process - beyond that the request answers
 # straight away and the page simply polls again a few seconds later.
-app.config.setdefault('LIVE_WAIT_SECONDS', float(os.environ.get('LIVE_WAIT_SECONDS', 25)))
-app.config.setdefault('LIVE_RECHECK_SECONDS', float(os.environ.get('LIVE_RECHECK_SECONDS', 1.5)))
-app.config.setdefault('LIVE_MAX_WAITERS', int(os.environ.get('LIVE_MAX_WAITERS', 32)))
+app.config.setdefault('LIVE_WAIT_SECONDS', float(os.environ.get('LIVE_WAIT_SECONDS') or 25))
+app.config.setdefault('LIVE_RECHECK_SECONDS', float(os.environ.get('LIVE_RECHECK_SECONDS') or 1.5))
+app.config.setdefault('LIVE_MAX_WAITERS', int(os.environ.get('LIVE_MAX_WAITERS') or 32))
 _live_changed = threading.Condition()
 _live_generation = [0]
 _live_waiters = [0]
@@ -2064,7 +2130,8 @@ def _booking_transactions(booking):
     (those carry the booking number in their transaction number)."""
     return Transaction.query.filter(or_(
         Transaction.booking_id == booking.id,
-        Transaction.transaction_number.like(f'{EXTRA_TXN_PREFIX}{booking.booking_number}-%'))).all()
+        Transaction.transaction_number.like(f'{EXTRA_TXN_PREFIX}{booking.booking_number}-%'),
+        Transaction.transaction_number.like(f'{FEE_TXN_PREFIX}{booking.booking_number}-%'))).all()
 
 def settle_cancelled_booking(booking):
     """Bring a cancelled booking's payments and approval requests in line with it.
@@ -2292,6 +2359,7 @@ def store_message_attachment(message_id, checked):
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, stored), 'wb') as fh:
         fh.write(data)
+    file_store.saved(os.path.join(folder, stored))
     attachment = MessageAttachment(message_id=message_id, filename=stored, original_name=safe_name[:255],
                                    mime_type=mime, size_bytes=len(data))
     db.session.add(attachment)
@@ -2343,7 +2411,7 @@ def message_attachment(attachment_id):
     if not m or not _is_party(m, current_account()):
         abort(404)
     path = os.path.join(app.config['MESSAGE_UPLOAD_FOLDER'], a.filename)
-    if not os.path.isfile(path):
+    if not file_store.exists(path):
         abort(404)
     # Images display inline; anything else (PDF) downloads.
     return send_file(path, mimetype=a.mime_type, download_name=a.original_name,
@@ -2641,6 +2709,9 @@ def request_service():
         if payment_method not in BOOKING_PAYMENT_METHODS:
             flash('Please choose a payment method.', 'danger')
             return redirect(url_for('request_service'))
+        if payment_method == 'QR Ph' and not paymongo_service.is_enabled(app):
+            flash('Paying by QR is not available right now. Choose C.A.R (Cash After Repair).', 'danger')
+            return redirect(url_for('request_service'))
  
         chosen = None
         if service_id == 'other':
@@ -2721,7 +2792,7 @@ def request_service():
             try:
                 lat = float(request.form.get('pinned_lat', ''))
                 lng = float(request.form.get('pinned_lng', ''))
-                if not (11.10 <= lat <= 11.36 and 124.90 <= lng <= 125.12):
+                if not geo.inside_tacloban(lat, lng):          # the real city outline, not a box
                     raise ValueError
             except ValueError:
                 flash('Please pin your location on the map, inside Tacloban City.', 'danger')
@@ -2766,14 +2837,36 @@ def request_service():
         db.session.flush()
         assign_booking_number(booking)
         booking_number = booking.booking_number
+        # The booking fee is paid now and deducted from the final bill, so the
+        # booking's own charge is the balance.
+        price = Decimal(service_obj.price or 0)
+        # The fee can only be paid by QR, so there is none while online payments are off.
+        fee = min(current_booking_fee(), price) if paymongo_service.is_enabled(app) else Decimal(0)
+        booking.booking_fee = fee or None
         transaction = Transaction(transaction_number=placeholder_number(), booking_id=booking.id,
-                                  user_id=user_id, amount=service_obj.price,
+                                  user_id=user_id, amount=price - fee,
                                   payment_method='paymongo' if payment_method == 'QR Ph' else payment_method,
                                   payment_status='pending')
         db.session.add(transaction)
         db.session.flush()
         assign_transaction_number(transaction)
+        fee_txn = None
+        if fee > 0:
+            fee_txn = Transaction(transaction_number=placeholder_number(), user_id=user_id, amount=fee,
+                                  payment_method='paymongo', payment_status='pending')
+            db.session.add(fee_txn)
+            db.session.flush()
+            fee_txn.transaction_number = f'{FEE_TXN_PREFIX}{booking_number}-{fee_txn.id}'
         db.session.commit()
+        if fee_txn:
+            create_notification(user_id, 'Booking Created',
+                                f'Your booking #{booking_number} has been created. Pay the ₱{fee:,.2f} booking fee '
+                                f'to confirm it; it is deducted from your final bill.', 'info', role='customer')
+            flash(f'Booking #{booking_number} created. Pay the ₱{fee:,.2f} booking fee by QR to confirm it; '
+                  f'it is deducted from your final bill.', 'success')
+            if paymongo_service.is_enabled(app):
+                return redirect(url_for('user_transactions', pay=fee_txn.id))
+            return redirect(url_for('user_transactions'))
         create_notification(user_id, 'Booking Created',
                             f'Your booking #{booking_number} has been created. Please complete the payment.', 'info',
                             role='customer')
@@ -2888,7 +2981,9 @@ def api_booking_monitor(booking_id):
                     'service': b.service.name, 'description': b.description,
                     'deviceType': b.device_type, 'isInShop': b.is_in_shop,
                     'deviceBrandModel': ' '.join(x for x in (b.device_brand, b.device_model) if x),
-                    'address': b.address,
+                    # in-shop: where to bring it
+                    'address': (f"In-shop at {_setting_values('contact_address').get('contact_address') or geo.DEFAULT_SHOP['address']}"
+                                if b.is_in_shop else b.address),
                     'scheduledDate': fmt(b.booking_date, '%b %d, %Y'),
                     'scheduledTime': fmt(b.booking_time, '%I:%M %p'),
                     'createdAt': fmt(b.created_at, '%b %d, %Y %I:%M %p'),
@@ -3073,6 +3168,7 @@ def user_payment(transaction_id):
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         filename = secure_filename(f"receipt_{transaction.transaction_number}_{timestamp}_{secrets.token_hex(4)}.{extension}")
         receipt_file.save(os.path.join(receipts_dir, filename))
+        file_store.saved(os.path.join(receipts_dir, filename))
         transaction.receipt_image = filename
         flash('Receipt uploaded successfully.', 'success')
  
@@ -3132,9 +3228,7 @@ def start_paymongo_checkout(transaction):
                 return attrs['checkout_url']
         except paymongo_service.PaymongoError:
             pass                                    # stale session: open a new one
-    what = (f'Shop order {transaction.order.order_number}' if transaction.order
-            else transaction.booking.service.name if transaction.booking and transaction.booking.service
-            else 'DEVTech payment')
+    what = payment_label(transaction)
     session_id, url = paymongo_service.create_checkout_session(
         app, amount=transaction.amount, description=f'{what} ({transaction.transaction_number})',
         reference_number=transaction.transaction_number,
@@ -3237,9 +3331,7 @@ def start_qr_payment(transaction):
                 return details
         except paymongo_service.PaymongoError:
             pass                                       # stale: make a new code
-    what = (f'Shop order {transaction.order.order_number}' if transaction.order
-            else transaction.booking.service.name if transaction.booking and transaction.booking.service
-            else 'DEVTech payment')
+    what = payment_label(transaction)
     customer = transaction.customer
     intent_id, details = paymongo_service.create_qr_payment(
         app, amount=transaction.amount, description=f'{what} ({transaction.transaction_number})',
@@ -3447,6 +3539,7 @@ def receipt_url(transaction):
 
 app.jinja_env.globals['receipt_url'] = receipt_url
 app.jinja_env.globals['extra_work_booking'] = extra_work_booking
+app.jinja_env.globals['booking_fee_booking'] = booking_fee_booking
 
 @app.route('/receipts/<int:transaction_id>/<name>')
 @account_required
@@ -3463,7 +3556,7 @@ def receipt_file(transaction_id, name):
     # Receipts uploaded before this route existed may still sit in the old folder.
     for folder in (app.config['RECEIPT_UPLOAD_FOLDER'], LEGACY_RECEIPT_FOLDER):
         path = os.path.abspath(os.path.join(folder, stored))
-        if os.path.isfile(path):
+        if file_store.exists(path):
             return send_file(path)
     abort(404)
 
@@ -3537,8 +3630,12 @@ def support():
         return redirect(url_for('support'))
     tickets = SupportTicket.query.filter_by(customer_id=user_id)\
         .order_by(db.func.coalesce(SupportTicket.last_message_at, SupportTicket.created_at).desc()).all()
+    from services.support_bot import SUGGESTIONS
+    me = db.session.get(Customer, user_id)
     return render_template('user/support.html', tickets=tickets, topics=SUPPORT_TOPICS,
                            conversations=[_support_ticket_json(t) for t in tickets],
+                           bot_suggestions=SUGGESTIONS + ['Do you offer home service?', 'Can I cancel a booking or order?'],
+                           current_user_name=(me.full_name.split()[0] if me and me.full_name else ''),
                            notifications=_unread_notifs(user_id))
 
 def _start_support_conversation(customer_id, category, body, subject=None):
@@ -3559,6 +3656,21 @@ def _own_ticket(ticket_id):
     if t.customer_id != session.get('user_id'):
         abort(404)
     return t
+
+@app.route('/api/support/bot', methods=['POST'])
+@login_required
+@limiter.limit('40 per minute')
+def api_support_bot():
+    """The support assistant's answer to a common question (services/support_bot.py)."""
+    from services import support_bot
+    if session.get('role') != 'customer':
+        return jsonify({'success': False, 'message': 'Not available.'}), 403
+    data = request.get_json(silent=True) or {}
+    question = str(data.get('message') or '')[:500]
+    details = _inject_site_details()['site']()
+    result = support_bot.answer(question, support_bot.shop_details(details, details.get('booking_fee')))
+    result['links'] = [{'label': label, 'url': url_for(endpoint)} for label, endpoint in result['links']]
+    return jsonify({'success': True, **result})
 
 @app.route('/api/support/conversations', methods=['POST'])
 @login_required
@@ -3629,10 +3741,7 @@ def _avatar_path(filename):
 
 def _remove_avatar_file(account):
     if account.avatar_file and AVATAR_NAME_RE.match(account.avatar_file):
-        try:
-            os.remove(_avatar_path(account.avatar_file))
-        except OSError:
-            pass
+        file_store.removed(_avatar_path(account.avatar_file))
     account.avatar_file = None
 
 def _save_avatar(account, file_storage):
@@ -3648,6 +3757,7 @@ def _save_avatar(account, file_storage):
     os.makedirs(app.config['AVATAR_UPLOAD_FOLDER'], exist_ok=True)
     with open(_avatar_path(filename), 'wb') as fh:
         fh.write(data)
+    file_store.saved(_avatar_path(filename))
     _remove_avatar_file(account)
     account.avatar_file = filename
     return None
@@ -3673,7 +3783,7 @@ def credential_file(cred_id):
 def account_avatar(filename):
     """Profile photos: visible to any signed-in account (they show up in messages
     and on job pages), never to anonymous visitors."""
-    if not AVATAR_NAME_RE.match(filename) or not os.path.isfile(_avatar_path(filename)):
+    if not AVATAR_NAME_RE.match(filename) or not file_store.exists(_avatar_path(filename)):
         abort(404)
     resp = send_file(_avatar_path(filename), max_age=3600)
     resp.headers['X-Content-Type-Options'] = 'nosniff'
@@ -4024,15 +4134,20 @@ def _setting_values(*keys):
     return {r.setting_key: (r.value or '').strip() for r in rows}
 
 def shop_location():
-    """The shop's pin and city / province from Settings (blank values -> None / '')."""
+    """The shop's pin and city / province from Settings; the downtown shop
+    (services/geo.py DEFAULT_SHOP) until an admin sets them."""
     v = _setting_values('shop_latitude', 'shop_longitude', 'shop_city', 'shop_province')
     def num(key):
         try:
             return float(v[key]) if v.get(key) else None
         except ValueError:
             return None
-    return {'lat': num('shop_latitude'), 'lng': num('shop_longitude'),
-            'city': v.get('shop_city', ''), 'province': v.get('shop_province', '')}
+    lat, lng = num('shop_latitude'), num('shop_longitude')
+    if lat is None or lng is None:
+        lat, lng = geo.DEFAULT_SHOP['lat'], geo.DEFAULT_SHOP['lng']
+    return {'lat': lat, 'lng': lng,
+            'city': v.get('shop_city') or geo.DEFAULT_SHOP['city'],
+            'province': v.get('shop_province') or geo.DEFAULT_SHOP['province']}
 
 def _address_point(obj):
     """Pin + city/province of a customer or an order's delivery snapshot."""
@@ -4207,6 +4322,9 @@ def api_update_user_address():
     ] if not value]
     if missing:
         return jsonify({'success': False, 'message': f"Please fill in: {', '.join(missing)}."}), 400
+    if latitude is not None and longitude is not None and not geo.inside_tacloban(latitude, longitude):
+        return jsonify({'success': False, 'message': 'We deliver inside Tacloban City only. '
+                                                     'Please move the pin inside the city line.'}), 400
 
     user.full_name = full_name
     user.phone = phone
@@ -6776,6 +6894,7 @@ def admin_technician_activity():
     one technician: their jobs by stage, reports, incidents, requests, ratings."""
     from models.technician_models import IncidentReport, ServiceReport, ServiceRating, ApprovalRequest
     from blueprints.technician import incident_files
+    from blueprints.technician_api import report_files
 
     selected = Technician.query.get_or_404(request.args.get('tech', type=int)) \
         if request.args.get('tech') else None
@@ -6837,7 +6956,8 @@ def admin_technician_activity():
         selected_row=next((r for r in roster if selected and r['tech'].id == selected.id), None),
         incidents=incidents, reports=reports, ratings=ratings, approvals=approvals,
         technicians=technicians, customers=customers, bookings=bookings,
-        incident_files=incident_files([i.id for i in incidents])
+        incident_files=incident_files([i.id for i in incidents]),
+        report_photos={r.id: report_files(r.booking_id, r) for r in reports},
     )
 
 @app.route('/admin/uploads/<int:upload_id>')
@@ -6849,10 +6969,30 @@ def admin_upload_file(upload_id):
     from services.upload_service import path_for
     f = UploadedFile.query.get_or_404(upload_id)
     path = path_for(f)
-    if not os.path.isfile(path):
+    if not file_store.exists(path):
         abort(404)
     resp = send_file(path, mimetype=f.mime_type, download_name=f.original_name,
                      as_attachment=not f.mime_type.startswith('image/'))
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
+@app.route('/admin/service-reports/<int:report_id>/pdf')
+@admin_required
+def admin_report_pdf(report_id):
+    """A technician's service report as the PDF they submitted (rebuilt if the
+    stored copy is missing)."""
+    import io
+    from models.technician_models import ServiceReport
+    from blueprints.technician_api import report_pdf_row, render_report_pdf
+    from services.upload_service import path_for
+    r = ServiceReport.query.get_or_404(report_id)
+    b = db.session.get(Booking, r.booking_id)
+    name = f'service-report-{b.booking_number if b else r.id}.pdf'
+    row = report_pdf_row(r)
+    if row and file_store.exists(path_for(row)):
+        resp = send_file(path_for(row), mimetype='application/pdf', download_name=name)
+    else:
+        resp = send_file(io.BytesIO(render_report_pdf(r)), mimetype='application/pdf', download_name=name)
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     return resp
 
@@ -6891,9 +7031,9 @@ EDITABLE_SETTINGS = {
     'system_email':     lambda v: len(v) <= 120 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', v),
     'default_currency': lambda v: v in ('PHP', 'USD', 'EUR'),
     'timezone':         lambda v: v in ('Asia/Manila', 'Asia/Singapore', 'America/New_York'),
-    'gcash_account':    lambda v: len(v) <= 30,
     'service_fee':      lambda v: re.fullmatch(r'\d{1,2}(\.\d{1,2})?|100', v),
-    'enable_gcash':     lambda v: v in ('true', 'false'),
+    # Paid by QR when booking, deducted from the final service bill (whole pesos, 0 = none).
+    'booking_fee':      lambda v: re.fullmatch(r'\d{1,4}', v) and int(v) <= 5000,
     'enable_cod':       lambda v: v in ('true', 'false'),
     # Public business details shown on the home, support and payment pages.
     # Blank means "don't show it" - no placeholder numbers are ever displayed.
@@ -6901,7 +7041,6 @@ EDITABLE_SETTINGS = {
     'contact_email':    lambda v: v == '' or (len(v) <= 120 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', v)),
     'contact_address':  lambda v: len(v) <= 200,
     'business_hours':   lambda v: len(v) <= 100,
-    'gcash_name':       lambda v: len(v) <= 100,
     # Where deliveries start from: used for distance and delivery estimates.
     'shop_latitude':    lambda v: v == '' or _float_between(v, -90, 90),
     'shop_longitude':   lambda v: v == '' or _float_between(v, -180, 180),
@@ -7039,10 +7178,15 @@ def init_db():
             ('default_currency', 'PHP', 'Default currency for transactions'),
             ('timezone', 'Asia/Manila', 'System timezone'),
             ('service_fee', '5', 'Service fee percentage'),
-            ('gcash_account', '0917 123 4567', 'GCash account number'),
-            ('enable_gcash', 'true', 'Enable GCash payments'),
+            ('booking_fee', str(DEFAULT_BOOKING_FEE), 'Booking fee in pesos, deducted from the final bill'),
             ('enable_cod', 'true', 'Enable Cash on Delivery'),
-            ('contact_address', 'Tacloban City, Leyte', 'Shop address shown to customers'),
+            # the downtown shop (services/geo.py); change it in Admin > Settings
+            ('contact_address', geo.DEFAULT_SHOP['address'], 'Shop address shown to customers'),
+            ('business_hours', geo.DEFAULT_SHOP['hours'], 'Opening hours shown to customers'),
+            ('shop_latitude', str(geo.DEFAULT_SHOP['lat']), 'Shop pin: in-shop directions and delivery distance'),
+            ('shop_longitude', str(geo.DEFAULT_SHOP['lng']), 'Shop pin: in-shop directions and delivery distance'),
+            ('shop_city', geo.DEFAULT_SHOP['city'], 'Shop city'),
+            ('shop_province', geo.DEFAULT_SHOP['province'], 'Shop province'),
         ]
         existing_keys = {s.setting_key for s in SystemSetting.query.all()}
         missing = [SystemSetting(setting_key=k, value=v, description=d)

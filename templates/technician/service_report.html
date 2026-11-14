@@ -124,12 +124,14 @@
         {% if is_submitted %}
         <p class="tech-hint" style="border-top:1px solid var(--t-border); padding-top:0.7rem;">
             <i class="fas fa-lock"></i>
-            This report was submitted {{ report.submitted_at }} and is now read-only.
+            This report was submitted {{ report.submitted_at }} and is now read-only. The admin received it as a PDF.
         </p>
+        <a class="tech-btn tech-btn--ghost" style="margin-top:0.6rem;" href="{{ url_for('technician_api.job_report_pdf', job_id=job.id) }}" target="_blank" rel="noopener">
+            <i class="fas fa-file-pdf"></i> Download the PDF</a>
         {% endif %}
     </section>
 
-    <form method="POST"
+    <form method="POST" id="reportForm"
           action="{{ url_for('technician_api.job_report', job_id=job.id) }}"
           novalidate>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -148,14 +150,16 @@
                     </label>
                     <textarea class="tech-textarea" id="diagnosis" name="diagnosis" rows="5"
                               {% if is_submitted %}disabled{% endif %}
-                              placeholder="State the actual fault. Note here if it differed from what the customer reported.">{{ report.diagnosis if report else '' }}</textarea>
+                              placeholder="State the actual fault. Note here if it differed from what the customer reported.">{{ report.diagnosis if report and report.diagnosis else autofill.get('diagnosis', '') }}</textarea>
+                    {% if 'diagnosis' in autofill %}<p class="tech-hint tech-autofill"><i class="fas fa-clipboard-list"></i> Filled in from the job record. Check it and edit before submitting.</p>{% endif %}
                 </div>
 
                 <div class="tech-field">
                     <label class="tech-label" for="tests">Tests performed</label>
                     <textarea class="tech-textarea" id="tests" name="tests" rows="4"
                               {% if is_submitted %}disabled{% endif %}
-                              placeholder="e.g. RAM swap test, PSU voltage reading, SMART check, memory diagnostic.">{{ report.tests if report else '' }}</textarea>
+                              placeholder="e.g. RAM swap test, PSU voltage reading, SMART check, memory diagnostic.">{{ report.tests if report and report.tests else autofill.get('tests', '') }}</textarea>
+                    {% if 'tests' in autofill %}<p class="tech-hint tech-autofill"><i class="fas fa-clipboard-list"></i> Filled in from the job record. Check it and edit before submitting.</p>{% endif %}
                 </div>
             </section>
 
@@ -170,15 +174,17 @@
                     </label>
                     <textarea class="tech-textarea" id="workPerformed" name="workPerformed" rows="5"
                               {% if is_submitted %}disabled{% endif %}
-                              placeholder="Every step: disassembly, cleaning, replacement, reassembly, verification.">{{ report.work_performed if report else '' }}</textarea>
+                              placeholder="Every step: disassembly, cleaning, replacement, reassembly, verification.">{{ report.work_performed if report and report.work_performed else autofill.get('workPerformed', '') }}</textarea>
+                    {% if 'workPerformed' in autofill %}<p class="tech-hint tech-autofill"><i class="fas fa-clipboard-list"></i> Filled in from the job record. Check it and edit before submitting.</p>{% endif %}
                 </div>
 
                 <div class="tech-field">
                     <label class="tech-label" for="hoursSpent">Time spent (hours)</label>
                     <input class="tech-input" id="hoursSpent" name="hoursSpent"
                            type="number" min="0" step="0.25"
-                           value="{{ report.hours_spent if report and report.hours_spent else '' }}"
+                           value="{{ report.hours_spent if report and report.hours_spent else autofill.get('hoursSpent', '') }}"
                            {% if is_submitted %}disabled{% endif %} />
+                    {% if 'hoursSpent' in autofill %}<p class="tech-hint tech-autofill"><i class="fas fa-clipboard-list"></i> Worked out from when the repair started.</p>{% endif %}
                 </div>
             </section>
         </div>
@@ -190,7 +196,7 @@
             </div>
 
             <div class="tech-check-grid" style="margin-bottom:0.9rem;">
-                {% set current_outcome = (report.outcome if report else 'fixed') %}
+                {% set current_outcome = (report.outcome if report and report.outcome else 'fixed') %}
                 {% for key, label, sub, icon in outcome_options %}
                 <label class="tech-check">
                     <input type="radio" name="outcome" value="{{ key }}"
@@ -208,7 +214,7 @@
                 <label class="tech-label" for="outcomeNotes">Outcome notes</label>
                 <textarea class="tech-textarea" id="outcomeNotes" name="outcomeNotes" rows="3"
                           {% if is_submitted %}disabled{% endif %}
-                          placeholder="Anything the admin should know about the result.">{{ report.outcome_notes if report else '' }}</textarea>
+                          placeholder="Anything the admin should know about the result.">{{ report.outcome_notes or '' if report else '' }}</textarea>
             </div>
         </section>
 
@@ -221,7 +227,8 @@
                 <label class="tech-label" for="recommendations">Advice to pass to the customer</label>
                 <textarea class="tech-textarea" id="recommendations" name="recommendations" rows="3"
                           {% if is_submitted %}disabled{% endif %}
-                          placeholder="e.g. Replace the battery within 3 months, keep the vent clear, back up weekly.">{{ report.recommendations if report else '' }}</textarea>
+                          placeholder="e.g. Replace the battery within 3 months, keep the vent clear, back up weekly.">{{ report.recommendations if report and report.recommendations else autofill.get('recommendations', '') }}</textarea>
+                {% if 'recommendations' in autofill %}<p class="tech-hint tech-autofill"><i class="fas fa-clipboard-list"></i> Filled in from the job record. Check it and edit before submitting.</p>{% endif %}
             </div>
         </section>
 
@@ -232,19 +239,55 @@
             </div>
 
             <div class="tech-field">
-                <label class="tech-label" for="photosNote">Photo / video evidence</label>
-                <input class="tech-input" id="photosNote" name="photosNote"
-                       value="{{ report.photos_note if report else '' }}"
-                       {% if is_submitted %}disabled{% endif %}
-                       placeholder="e.g. 4 photos: before, during, after, test result screen." />
-                <p class="tech-hint">File upload arrives with the Flask backend; for now, describe what was captured.</p>
+                <span class="tech-label">Photos and screenshots</span>
+                {% if not is_submitted %}
+                <div class="rp-drop" id="rpDrop" data-job="{{ job.id }}" data-max="{{ max_files }}"
+                     data-upload="{{ url_for('technician_api.upload') }}">
+                    <i class="fas fa-camera" aria-hidden="true"></i>
+                    <p><strong>Add photos or screenshots</strong><br>
+                       Drop them here, paste a screenshot (Ctrl+V), or
+                       <label for="rpFiles" class="rp-pick">choose files</label>.</p>
+                    <input type="file" id="rpFiles" accept="image/jpeg,image/png,image/webp,image/gif" multiple class="rp-input">
+                    <p class="tech-hint">JPG, PNG, WEBP or GIF, up to {{ max_files }} per report. Large photos are resized before upload.</p>
+                </div>
+                <p class="rp-status" id="rpStatus" role="status" aria-live="polite"></p>
+                {% endif %}
+                <ul class="rp-files" id="rpFiles-list">
+                    {% for f in files %}
+                    <li class="rp-file" data-id="{{ f.id }}">
+                        <a href="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" target="_blank" rel="noopener" class="rp-thumb">
+                            {% if f.mime_type.startswith('image/') %}<img src="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" alt="{{ f.caption or f.original_name }}" loading="lazy">
+                            {% else %}<i class="fas fa-file-pdf"></i>{% endif %}
+                        </a>
+                        <div class="rp-file-body">
+                            <label class="visually-hidden" for="cap{{ f.id }}">Note for {{ f.original_name }}</label>
+                            <input class="tech-input rp-caption" id="cap{{ f.id }}" name="caption_{{ f.id }}" form="reportForm"
+                                   maxlength="255" value="{{ f.caption or '' }}" placeholder="What does this show? e.g. Before: cracked panel"
+                                   {% if is_submitted %}disabled{% endif %}>
+                            <small>{{ f.original_name }}</small>
+                        </div>
+                        {% if not is_submitted %}
+                        <button type="button" class="tech-btn tech-btn--ghost rp-remove" data-remove="{{ f.id }}" aria-label="Remove {{ f.original_name }}">
+                            <i class="fas fa-trash-can"></i></button>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% if is_submitted and not files %}<p class="tech-hint">No photos were attached.</p>{% endif %}
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="photosNote">Notes on the photos</label>
+                <textarea class="tech-textarea" id="photosNote" name="photosNote" rows="2"
+                          {% if is_submitted %}disabled{% endif %}
+                          placeholder="e.g. Photos 1-2 before the repair, 3 the burnt port, 4 the test after.">{{ report.photos_note or '' if report else '' }}</textarea>
             </div>
 
             <div class="tech-field">
                 <label class="tech-label" for="adminNote">Private note to the admin</label>
                 <textarea class="tech-textarea" id="adminNote" name="adminNote" rows="3"
                           {% if is_submitted %}disabled{% endif %}
-                          placeholder="Only visible to admin. Use for anything that should not appear on the customer copy.">{{ report.admin_note if report else '' }}</textarea>
+                          placeholder="Only visible to admin. Use for anything that should not appear on the customer copy.">{{ report.admin_note or '' if report else '' }}</textarea>
             </div>
         </section>
 
@@ -261,12 +304,18 @@
                 </button>
                 <button class="tech-btn tech-btn--primary" type="submit"
                         name="action" value="submit">
-                    <i class="fas fa-paper-plane"></i> Submit to admin
+                    <i class="fas fa-paper-plane"></i> Submit to admin as PDF
                 </button>
             {% endif %}
         </div>
     </form>
 
 </section>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if current %}
+<script src="{{ url_for('static', filename='js/report-attachments.js') }}"></script>
 {% endif %}
 {% endblock %}

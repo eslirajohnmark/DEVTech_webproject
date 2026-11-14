@@ -197,8 +197,7 @@ fa-{% if category == 'memory' %}memory{% elif category == 'storage' %}hdd{% elif
 <script id="productDataJson" type="application/json">{{ ns.items|tojson }}</script>
 
 <!-- Leaflet (OpenStreetMap) — used for the delivery-address pin picker in checkout -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
 
 <!-- Cart Sidebar -->
 <div class="user-cart-sidebar" id="cartSidebar" aria-label="Your cart">

@@ -105,3 +105,10 @@ h1, h2, h3, h4, .admin-brand-name, .admin-stat-number, .admin-metric-value {
 @media (max-width: 768px) {
     .admin-stats-grid .admin-stat-card { padding: 0.9rem 1rem; }
 }
+
+/* service report photos and PDF in Technician Activity */
+.ta-report-photos { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.6rem; }
+.ta-report-photos a { display: grid; gap: 0.3rem; color: var(--text-secondary); text-decoration: none; font-size: 0.78rem; }
+.ta-report-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; border: 1px solid var(--dark-border); }
+.ta-report-photos a:hover span { color: var(--text-primary); }
+.ta-report-pdf { margin-top: 0.9rem; display: inline-flex; gap: 0.45rem; }

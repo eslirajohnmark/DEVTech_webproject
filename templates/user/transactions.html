@@ -121,6 +121,14 @@
                         {% if transaction.booking %}
                             <h4>{{ transaction.booking.service.name }}</h4>
                             <p><i class="fas fa-tag"></i> Booking #{{ transaction.booking.booking_number }}</p>
+                            {% if transaction.booking.booking_fee %}
+                            <p class="user-transaction-fee-note"><i class="fas fa-receipt"></i>
+                                Balance after the ₱{{ "{:,.2f}".format(transaction.booking.booking_fee) }} booking fee is deducted</p>
+                            {% endif %}
+                        {% elif booking_fee_booking(transaction) %}
+                            <h4>Booking Fee</h4>
+                            <p><i class="fas fa-tag"></i> Booking #{{ booking_fee_booking(transaction) }}</p>
+                            <p class="user-transaction-fee-note"><i class="fas fa-circle-info"></i> Confirms your booking. Deducted from your final bill.</p>
                         {% elif transaction.order %}
                             <h4>Shop Order</h4>
                             <p><i class="fas fa-tag"></i> Order #{{ transaction.order.order_number }}</p>
@@ -537,5 +545,14 @@
     document.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', () => {
         DevtechPay.open({transactionId: btn.dataset.pay, title: btn.dataset.title, onPaid: () => location.reload()});
     }));
+    // Just booked: open the booking fee payment straight away.
+    (function () {
+        const id = new URLSearchParams(location.search).get('pay');
+        const btn = id && document.querySelector('[data-pay="' + CSS.escape(id) + '"]');
+        if (btn) {
+            history.replaceState(null, '', location.pathname);
+            btn.click();
+        }
+    })();
 </script>
 {% endblock %}

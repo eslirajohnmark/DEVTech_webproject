@@ -609,6 +609,71 @@ def job_intake(job_id):
 # SERVICE REPORT
 # ---------------------------------------------------------------------------
 
+REPORT_MAX_FILES = 12
+
+
+def report_files(booking_id, report=None):
+    """Photos / screenshots attached to a job's service report. Files uploaded
+    before the report had an id are stored with owner_id 0."""
+    owners = [0] + ([report.id] if report and report.id else [])
+    return UploadedFile.query.filter(UploadedFile.owner_type == 'report', UploadedFile.booking_id == booking_id,
+                                     UploadedFile.owner_id.in_(owners))\
+        .order_by(UploadedFile.id).all()
+
+
+def render_report_pdf(r):
+    """The service report as PDF bytes, with its photos."""
+    from app import SystemSetting
+    from services import report_pdf
+    from services.upload_service import path_for
+    b = db.session.get(Booking, r.booking_id)
+    tech = db.session.get(Technician, r.technician_id)
+    name_row = SystemSetting.query.filter_by(setting_key='system_name').first()
+    attachments = []
+    from services import file_store
+    for f in report_files(b.id, r):
+        try:
+            if not file_store.exists(path_for(f)):
+                continue
+            with open(path_for(f), 'rb') as fh:
+                attachments.append((fh.read(), f.mime_type, f.caption, f.original_name))
+        except OSError:
+            continue                                  # file missing on disk: leave it out
+    approvals = ApprovalRequest.query.filter_by(booking_id=b.id).order_by(ApprovalRequest.id).all()
+    return report_pdf.build(r, b, tech.full_name if tech else 'Technician',
+                            (name_row.value if name_row and name_row.value else 'DEVTech Computer Services'),
+                            approvals=approvals, attachments=attachments)
+
+
+def store_report_pdf(r):
+    """Write the submitted report's PDF next to the other uploads (one per
+    report) and return its UploadedFile row. Does not commit."""
+    import os
+    import secrets
+    from flask import current_app
+    data = render_report_pdf(r)
+    old = UploadedFile.query.filter_by(owner_type='report_pdf', owner_id=r.id).first()
+    stored = secrets.token_hex(12) + '.pdf'
+    folder = current_app.config['TECH_UPLOAD_FOLDER']
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, stored), 'wb') as fh:
+        fh.write(data)
+    from services import file_store
+    file_store.saved(os.path.join(folder, stored))
+    b = db.session.get(Booking, r.booking_id)
+    row = old or UploadedFile(owner_type='report_pdf', owner_id=r.id, booking_id=r.booking_id,
+                              technician_id=r.technician_id)
+    row.filename, row.mime_type, row.size_bytes = stored, 'application/pdf', len(data)
+    row.original_name = f'service-report-{b.booking_number}.pdf'
+    row.uploaded_at = _now()
+    db.session.add(row)
+    return row
+
+
+def report_pdf_row(r):
+    return UploadedFile.query.filter_by(owner_type='report_pdf', owner_id=r.id).first()
+
+
 @technician_api_bp.route('/jobs/<int:job_id>/report', methods=['GET', 'POST'])
 @technician_required
 def job_report(job_id):
@@ -648,6 +713,12 @@ def job_report(job_id):
                 flash(msg, 'danger')
                 return redirect(url_for('technician.report_form', job_id=job_id))
             return jsonify({'ok': False, 'reason': msg}), 400
+        if action == 'submit':
+            diagnosis = body['diagnosis'] if 'diagnosis' in body else (r.diagnosis if r else '')
+            if not (diagnosis or '').strip():
+                return fail('Write what you found (the diagnosis) before submitting.')
+            if not (body.get('workPerformed') or '').strip():
+                return fail('Write the work performed before submitting.')
 
         if not r:
             r = ServiceReport(booking_id=job_id, created_at=_now())
@@ -671,6 +742,17 @@ def job_report(job_id):
         r.photos_note = body.get('photosNote', '')
         r.admin_note = body.get('adminNote', '')
 
+        # Notes on each photo come with the form as caption_<file id>.
+        for f in report_files(job_id, r):
+            key = f'caption_{f.id}'
+            if key in body and f.technician_id == session['user_id']:
+                f.caption = (body.get(key) or '').strip()[:255]
+        db.session.flush()
+        if r.status == 'submitted':
+            for f in report_files(job_id, r):
+                f.owner_id = r.id                     # the files now belong to this report
+            store_report_pdf(r)
+
         db.session.add(JobLog(
             booking_id=job_id, at=_now(),
             by_name=session.get('username', 'Technician'),
@@ -684,8 +766,11 @@ def job_report(job_id):
         db.session.commit()
 
         if r.status == 'submitted':
+            n = len(report_files(job_id, r))
             notify_admins('Service Report Submitted',
-                          f'{b.booking_number}: report submitted by {session.get("username")}.',
+                          f'{b.booking_number}: report submitted by {session.get("username")}'
+                          + (f' with {n} photo{"" if n == 1 else "s"}' if n else '')
+                          + '. The PDF is in Technician Activity > Service Reports.',
                           'info')
 
         if is_form:
@@ -711,6 +796,45 @@ def job_report(job_id):
         'recommendations': r.recommendations,
         'photosNote': r.photos_note, 'adminNote': r.admin_note,
     }})
+
+
+@technician_api_bp.route('/jobs/<int:job_id>/report.pdf')
+@technician_required
+def job_report_pdf(job_id):
+    import io
+    b = Booking.query.get_or_404(job_id)
+    if b.technician_id != session['user_id']:
+        abort(404)
+    r = ServiceReport.query.filter_by(booking_id=job_id).order_by(ServiceReport.id.desc()).first()
+    if not r:
+        abort(404)
+    row = report_pdf_row(r) if r.status == 'submitted' else None
+    from services.upload_service import path_for
+    import os
+    from services import file_store
+    if row and file_store.exists(path_for(row)):
+        return send_file(path_for(row), mimetype='application/pdf', download_name=row.original_name)
+    return send_file(io.BytesIO(render_report_pdf(r)), mimetype='application/pdf',
+                     download_name=f'service-report-{b.booking_number}-draft.pdf')
+
+
+@technician_api_bp.route('/uploads/<int:upload_id>', methods=['DELETE'])
+@technician_required
+def delete_upload(upload_id):
+    """Remove a photo from a service report that hasn't been submitted yet."""
+    import os
+    from services.upload_service import path_for
+    f = UploadedFile.query.get_or_404(upload_id)
+    if f.technician_id != session['user_id'] or f.owner_type != 'report':
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    r = ServiceReport.query.filter_by(booking_id=f.booking_id).order_by(ServiceReport.id.desc()).first()
+    if r and r.status == 'submitted' and f.owner_id == r.id:
+        return jsonify({'ok': False, 'reason': 'This report was submitted; its photos can no longer be removed.'}), 400
+    from services import file_store
+    file_store.removed(path_for(f))
+    db.session.delete(f)
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 # ---------------------------------------------------------------------------
@@ -940,6 +1064,13 @@ def incidents():
 def upload():
     from services.upload_service import save_upload
     file = request.files.get('file')
+    if request.form.get('ownerType') == 'report':
+        job = request.form.get('jobId', type=int)
+        r = ServiceReport.query.filter_by(booking_id=job).order_by(ServiceReport.id.desc()).first() if job else None
+        if r and r.status == 'submitted':
+            return jsonify({'ok': False, 'reason': 'This report was submitted; add photos to a new report.'}), 400
+        if job and len(report_files(job, r)) >= REPORT_MAX_FILES:
+            return jsonify({'ok': False, 'reason': f'A report can have up to {REPORT_MAX_FILES} photos.'}), 400
     ok, result = save_upload(
         file,
         request.form.get('ownerType', ''),
@@ -960,6 +1091,9 @@ def serve_upload(upload_id):
     if r.technician_id != session['user_id']:
         abort(404)
     from services.upload_service import path_for
+    from services import file_store
+    if not file_store.exists(path_for(r)):
+        abort(404)
     return send_file(path_for(r), mimetype=r.mime_type)
 
 

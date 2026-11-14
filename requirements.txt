@@ -21,6 +21,8 @@ blinker==1.9.0
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.41
 PyMySQL==1.1.1
+# PostgreSQL (Supabase): DATABASE_URL=postgresql://...
+psycopg[binary]==3.3.9
 cryptography==44.0.0
 
 
@@ -50,6 +52,11 @@ Flask-Caching==2.3.0
 
 # ---- Security headers ----
 flask-talisman==1.1.0
+
+
+# ---- Service report PDFs (fpdf2 brings Pillow for the photos) ----
+fpdf2==2.8.3
+pillow==13.0.0
 
 
 # ---- Environment ----

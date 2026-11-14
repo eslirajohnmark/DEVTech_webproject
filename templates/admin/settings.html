@@ -249,6 +249,15 @@
                     <input type="text" value="{{ settings.get('service_fee', '5') }}" class="admin-setting-input" style="width:100px;" id="service_fee" inputmode="decimal" title="Percentage, 0-100" />
                 </div>
             </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Booking Fee (₱)</span>
+                    <span class="admin-setting-desc">Paid by QR when a customer books a repair; deducted from their final bill. 0 turns it off.</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('booking_fee', '100') }}" class="admin-setting-input" style="width:100px;" id="booking_fee" inputmode="numeric" title="Whole pesos, 0-5000" />
+                </div>
+            </div>
         </div>
     </div>
 
@@ -318,7 +327,7 @@
 <script>
     const SETTING_FIELDS = ['system_name', 'system_email', 'default_currency', 'timezone',
                             'contact_phone', 'contact_email', 'contact_address', 'business_hours',
-                            'service_fee', 'enable_cod',
+                            'service_fee', 'booking_fee', 'enable_cod',
                             'shop_latitude', 'shop_longitude', 'shop_city', 'shop_province'];
 
     document.getElementById('shopLocateBtn').addEventListener('click', () => {

@@ -1,10 +1,12 @@
-"""Pytest fixtures. Runs against in-memory SQLite; never touches MySQL."""
+"""Pytest fixtures. Runs against in-memory SQLite; never touches MySQL.
+Set TEST_DATABASE_URL (e.g. a throwaway PostgreSQL) to run the same tests on it;
+every test drops and recreates the tables, so never point it at real data."""
 import os
 from datetime import date, time
 
 import pytest
 
-os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
+os.environ['DATABASE_URL'] = os.environ.get('TEST_DATABASE_URL') or 'sqlite:///:memory:'
 os.environ['FLASK_ENV'] = 'testing'
 os.environ['SECRET_KEY'] = 'test-secret-not-for-production'
 
@@ -24,7 +26,8 @@ def app(tmp_path):
     # Tests never call PayMongo for real; test_paymongo.py switches it on with a fake API.
     flask_app.config.update(PAYMONGO_ENABLED=False, PAYMONGO_SECRET_KEY='sk_test_dummy',
                             PAYMONGO_WEBHOOK_SECRET='')
-    flask_app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    if not os.environ.get('TEST_DATABASE_URL'):
+        flask_app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     flask_app.config['TECH_UPLOAD_FOLDER'] = str(tmp_path / 'tech')
     flask_app.config['RECEIPT_UPLOAD_FOLDER'] = str(tmp_path / 'receipts')
     flask_app.config['MESSAGE_UPLOAD_FOLDER'] = str(tmp_path / 'messages')

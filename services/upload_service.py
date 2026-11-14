@@ -131,6 +131,8 @@ def save_upload(file_storage, owner_type, owner_id, booking_id,
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, stored), 'wb') as fh:
         fh.write(data)
+    from services import file_store
+    file_store.saved(os.path.join(folder, stored))
 
     r = UploadedFile(
         owner_type=owner_type,
