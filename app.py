@@ -18,6 +18,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 import re
 import secrets
+import tempfile
 import shutil
 from werkzeug.utils import secure_filename
 from sqlalchemy import text, or_, and_, func, case as sa_case
@@ -48,12 +49,18 @@ load_dotenv()
 # ==================== ENVIRONMENT ====================
 IS_PRODUCTION = os.environ.get('FLASK_ENV', 'development') == 'production'
  
-app = Flask(__name__)
+# Vercel (it sets VERCEL=1) runs the app as serverless functions: the project
+# folder is read-only, only the temp folder can be written, and nothing runs
+# between requests. Uploads then live in the temp folder and, permanently, in
+# Supabase Storage (services/file_store.py).
+ON_VERCEL = os.environ.get('VERCEL') == '1'
+
+app = Flask(__name__, instance_path=(os.path.join(tempfile.gettempdir(), 'devtech-instance') if ON_VERCEL else None))
 # Behind a hosting proxy (Render, PythonAnywhere, Nginx) set BEHIND_PROXY=1: the app
 # then trusts the proxy's X-Forwarded-* headers, so links it builds (Google/Facebook
 # sign-in callbacks, emails) are https and rate limits see each visitor's own IP
 # instead of the proxy's. Leave it unset when nothing sits in front of the app.
-if os.environ.get('BEHIND_PROXY') == '1':
+if os.environ.get('BEHIND_PROXY') == '1' or ON_VERCEL:
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # No secrets in source. SECRET_KEY and DATABASE_URL come from the environment / .env.
@@ -120,10 +127,14 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
  
 # ==================== LOGGING ====================
 if not app.debug:
-    # Next to app.py, not wherever the server happened to start (hosts differ).
-    _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-    os.makedirs(_log_dir, exist_ok=True)
-    file_handler = RotatingFileHandler(os.path.join(_log_dir, 'devtech.log'), maxBytes=5 * 1024 * 1024, backupCount=5)
+    if ON_VERCEL:
+        # Read-only project folder: log to the console, which Vercel keeps in its Logs tab.
+        file_handler = logging.StreamHandler()
+    else:
+        # Next to app.py, not wherever the server happened to start (hosts differ).
+        _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+        os.makedirs(_log_dir, exist_ok=True)
+        file_handler = RotatingFileHandler(os.path.join(_log_dir, 'devtech.log'), maxBytes=5 * 1024 * 1024, backupCount=5)
     file_handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
@@ -347,7 +358,8 @@ app.jinja_env.filters['js_html'] = lambda v: htmlsafe_json_dumps(
     None if v is None else str(escape_markupsafe(v)))
 app.jinja_env.filters['fromjson'] = lambda s: json.loads(s) if s else []
  
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+if not ON_VERCEL:                          # legacy folder inside static/ (read-only on Vercel)
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['TECH_UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['RECEIPT_UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['MESSAGE_UPLOAD_FOLDER'], exist_ok=True)
@@ -1955,7 +1967,8 @@ def live_state(account):
 # straight away and the page simply polls again a few seconds later.
 app.config.setdefault('LIVE_WAIT_SECONDS', float(os.environ.get('LIVE_WAIT_SECONDS') or 25))
 app.config.setdefault('LIVE_RECHECK_SECONDS', float(os.environ.get('LIVE_RECHECK_SECONDS') or 1.5))
-app.config.setdefault('LIVE_MAX_WAITERS', int(os.environ.get('LIVE_MAX_WAITERS') or 32))
+# On Vercel each held request is a running function: pages poll instead (0 waiters).
+app.config.setdefault('LIVE_MAX_WAITERS', int(os.environ.get('LIVE_MAX_WAITERS') or (0 if ON_VERCEL else 32)))
 _live_changed = threading.Condition()
 _live_generation = [0]
 _live_waiters = [0]

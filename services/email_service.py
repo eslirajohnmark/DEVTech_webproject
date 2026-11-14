@@ -126,9 +126,13 @@ def _work():
 
 
 def queue_email(to, subject, html_body, text_body, app=None):
-    """Hand an email to the background sender. Returns True if queued."""
+    """Hand an email to the background sender. Returns True if queued (sent, on Vercel)."""
     if not is_enabled(app) or not deliverable(to):
         return False
+    if os.environ.get('VERCEL') == '1':
+        # Serverless: a background thread may be frozen once the response is sent,
+        # so the email goes out now, before the page finishes.
+        return send_now(to, subject, html_body, text_body)
     global _worker
     with _worker_lock:
         if _worker is None or not _worker.is_alive():

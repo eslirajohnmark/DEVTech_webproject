@@ -62,3 +62,30 @@ def test_without_online_payments_bookings_use_cash_after_repair_and_no_fee(custo
     customer_logged_in.post('/user/service-request', data=dict(data, payment_method='C.A.R'))
     b = Booking.query.one()
     assert b.booking_fee is None and Transaction.query.one().amount == Decimal('1500.00')
+
+
+def test_on_vercel_the_app_writes_only_to_the_temp_folder(tmp_path):
+    """VERCEL=1: temp-folder uploads, console logs, proxy headers trusted, pages poll."""
+    env = dict(os.environ, VERCEL='1', FLASK_ENV='production', SECRET_KEY='x' * 64,
+               DATABASE_URL='sqlite:///' + (tmp_path / 'v.db').as_posix())
+    env.pop('BEHIND_PROXY', None)
+    env.pop('LIVE_MAX_WAITERS', None)
+    code = ('import tempfile, logging, app\n'
+            'print(app.app.instance_path.startswith(tempfile.gettempdir()))\n'
+            'print(app.app.config["TECH_UPLOAD_FOLDER"].startswith(tempfile.gettempdir()))\n'
+            'print(type(app.app.wsgi_app).__name__)\n'
+            'print(app.app.config["LIVE_MAX_WAITERS"])\n'
+            'print(any(type(h) is logging.StreamHandler for h in app.app.logger.handlers))\n')
+    out = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env=env,
+                         cwd=os.path.dirname(os.path.dirname(__file__)))
+    assert out.stdout.strip().splitlines()[-5:] == ['True', 'True', 'ProxyFix', '0', 'True'], out.stderr[-500:]
+
+
+def test_on_vercel_emails_go_out_before_the_page_ends(monkeypatch):
+    from services import email_service
+    sent = []
+    monkeypatch.setenv('VERCEL', '1')
+    monkeypatch.setenv('BREVO_API_KEY', 'xkeysib-test')
+    monkeypatch.setattr(email_service, 'send_now', lambda *a: sent.append(a) or True)
+    assert email_service.queue_email('cara@gmail.com', 'Hi', '<p>x</p>', 'x')
+    assert sent and sent[0][0] == 'cara@gmail.com'          # sent now, not handed to a thread

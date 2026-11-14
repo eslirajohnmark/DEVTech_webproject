@@ -1,5 +1,7 @@
 # Deploy DEVTech for free
 
+> **Using Vercel + Supabase + Brevo?** Follow [DEPLOY_VERCEL.md](DEPLOY_VERCEL.md) instead.
+
 Two free ways to put DEVTech online. Read the table, pick one, and follow only that part.
 (The paid/VPS options are in [DEPLOY.md](DEPLOY.md).)
 

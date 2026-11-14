@@ -1,0 +1,9 @@
+# Not needed to run the website on Vercel
+tests/
+structure/
+logs/
+instance/
+venv/
+.venv/
+*.docx
+start_devtech.bat
