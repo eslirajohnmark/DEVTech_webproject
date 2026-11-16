@@ -1699,28 +1699,48 @@ def _unique_customer_username(email):
         username = f"{base}{secrets.token_hex(3)}"
     return username
 
+def ph_mobile_number(raw):
+    """A Philippine mobile number as +639XXXXXXXXX (12 digits: 63, then 9 and nine more),
+    or None. Spaces, dashes, brackets and a leading + are allowed when typing."""
+    digits = re.sub(r'[\s\-().]', '', raw or '')
+    if digits.startswith('+'):
+        digits = digits[1:]
+    return '+' + digits if re.fullmatch(r'639\d{9}', digits) else None
+
+def name_from_email(email):
+    """'cara.santos@gmail.com' -> 'Cara Santos': a name for an account registered without one."""
+    words = re.split(r'[._\-+]+', email.split('@')[0])
+    return ' '.join(w.capitalize() for w in words if w)[:100] or 'Customer'
+
 @app.route('/register', methods=['GET', 'POST'])
 @limiter.limit('5 per minute')
 def register():
     if request.method == 'POST':
-        full_name = (request.form.get('fullName') or '').strip()
-        email = (request.form.get('email') or '').strip().lower()
-        password = request.form.get('password')
-        re_password = request.form.get('rePassword')
-        phone = request.form.get('phone')
+        form = request.form
+        full_name = ' '.join((form.get('fullName') or '').split())
+        email = (form.get('email') or '').strip().lower()
+        password = form.get('password')
+        re_password = form.get('rePassword')
+        phone = ph_mobile_number(form.get('phone'))
 
-        if not full_name or not email or not password:
-            flash('All fields are required.', 'danger')
-            return render_template('auth/register.html')
+        def again(message):
+            flash(message, 'danger')
+            return render_template('auth/register.html', form=form)
+
+        if not email or not password:
+            return again('Please enter your email and a password.')
+        if not phone:
+            return again('Enter a 12-digit mobile number that starts with 63 9, e.g. +63 912 345 6789.')
+        if len(full_name) > 100:
+            return again('Please shorten your name (up to 100 characters).')
+        from services.password_rules import password_problem as strong_password_problem
+        if strong_password_problem(password):
+            return again(strong_password_problem(password))
         if password != re_password:
-            flash('Passwords do not match.', 'danger')
-            return render_template('auth/register.html')
-        if len(password) < 6:
-            flash('Password must be at least 6 characters long.', 'danger')
-            return render_template('auth/register.html')
+            return again('Passwords do not match.')
         if email_in_use(email):
-            flash('Email already registered.', 'danger')
-            return render_template('auth/register.html')
+            return again('Email already registered.')
+        full_name = full_name or name_from_email(email)       # optional: change it later in Profile
 
         user = Customer(username=_unique_customer_username(email), email=email,
                         full_name=full_name, phone=phone)

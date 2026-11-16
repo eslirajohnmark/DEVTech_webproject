@@ -13,6 +13,7 @@
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/vendor/jsQR.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/id-autofill.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/password-rules.js') }}" defer></script>
 </head>
 <body class="tech-login-page">
 
@@ -64,6 +65,7 @@
         <span>{{ errors.get('form') or 'Please fix the highlighted fields.' }}</span>
     </div>
 
+    <p class="tech-reg-note">Fields marked <span class="req">*</span> are required.</p>
     <form id="registerForm" method="POST" enctype="multipart/form-data" novalidate
           action="{{ url_for('technician.registration_update' if mode == 'update' else 'technician.register') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -189,15 +191,21 @@
                     <label class="tech-label" for="password">Password <span class="req">*</span></label>
                     <div class="tech-password-wrap">
                         <input class="tech-input {{ invalid('password') }}" id="password" name="password" type="password"
-                               placeholder="At least 8 characters" minlength="8" autocomplete="new-password"
+                               placeholder="Create a strong password" minlength="8" autocomplete="new-password"
                                aria-describedby="password-error" required />
                         <button type="button" class="tech-password-toggle" data-target="password" aria-label="Show password">
                             <i class="fas fa-eye"></i>
                         </button>
                     </div>
-                    <div class="tech-pw-meter" id="pwMeter">
-                        <div class="tech-pw-bar"><span></span></div>
-                        <span class="tech-pw-label" id="pwLabel">Enter a password</span>
+                    <div class="pw-rules" data-password-rules="password" aria-live="polite">
+                        <p class="pw-rules-title"><i class="fas fa-shield-halved" aria-hidden="true"></i> Your password must have:</p>
+                        <ul>
+                            <li data-rule="length">At least 8 characters</li>
+                            <li data-rule="upper">One capital letter (A-Z)</li>
+                            <li data-rule="lower">One small letter (a-z)</li>
+                            <li data-rule="digit">One number (0-9)</li>
+                            <li data-rule="special">One special character, e.g. ! @ # $ %</li>
+                        </ul>
                     </div>
                     {{ field_error('password') }}
                 </div>
@@ -279,19 +287,6 @@
         });
     });
 
-    // Password strength meter
-    var pw = document.getElementById('password');
-    if (pw) pw.addEventListener('input', function () {
-        var meter = document.getElementById('pwMeter'), label = document.getElementById('pwLabel'), v = pw.value;
-        if (!v) { meter.removeAttribute('data-tone'); label.textContent = 'Enter a password'; return; }
-        var score = 0;
-        if (v.length >= 8) score++;
-        if (/[A-Z]/.test(v)) score++;
-        if (/[0-9]/.test(v)) score++;
-        if (/[^A-Za-z0-9]/.test(v)) score++;
-        meter.setAttribute('data-tone', ['weak', 'fair', 'good', 'strong'][Math.min(score, 3)]);
-        label.textContent = ['Weak', 'Fair', 'Good', 'Strong'][Math.min(score, 3)];
-    });
 
     function setError(name, message) {
         var el = form.querySelector('[data-error-for="' + name + '"]');
@@ -413,7 +408,8 @@
         if (!isUpdate) {
             if (!/^TECH-\d{4}$/i.test(value('staffId'))) problems.staffId = 'Tech ID must look like TECH-0001.';
             var p = form.elements.password.value;
-            if (p.length < 8 || !/[A-Za-z]/.test(p) || !/\d/.test(p)) problems.password = 'Password must be 8+ characters with a letter and a number.';
+            var weak = window.passwordProblem ? window.passwordProblem(p) : '';
+            if (weak) problems.password = weak;
             else if (p !== form.elements.password2.value) problems.password2 = 'The passwords do not match.';
             if (!form.elements.privacy_consent.checked) problems.privacy_consent = 'You must agree to how your ID is used before registering.';
         }

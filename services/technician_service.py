@@ -367,10 +367,9 @@ def register_technician(form, files):
         elif record.technician_id or Technician.query.filter(func.upper(Technician.username) == staff_id).first():
             errors['staffId'] = 'This Tech ID already has an account.'
             errors['form'] = 'This Tech ID already has an account. Sign in, or check your registration status.'
-    if (len(password) < 8
-            or not re.search(r'[A-Za-z]', password)
-            or not re.search(r'\d', password)):
-        errors['password'] = 'Password must be 8+ characters with a letter and a number.'
+    from services.password_rules import password_problem
+    if password_problem(password):
+        errors['password'] = password_problem(password)
     elif password != (form.get('password2') or ''):
         errors['password2'] = 'The passwords do not match.'
     if not form.get('privacy_consent'):

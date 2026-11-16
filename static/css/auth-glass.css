@@ -41,6 +41,25 @@ h1, h2, .welcome, .form-title { font-family: var(--a-head); letter-spacing: -0.0
 .login-container .left .subtitle span { color: var(--a-blue); font-weight: 600; }
 body > .card .form-title { border-bottom-color: var(--a-line); }
 
+/* registration: required marks, password checklist */
+body > .card .req { color: #E5484D; font-weight: 700; margin-left: 0.15rem; }
+body > .card .form-note { margin: 0 0 1rem; font-size: 0.85rem; color: var(--a-muted); }
+.pw-rules { margin-top: 0.6rem; padding: 0.75rem 0.9rem; border-radius: 12px; background: rgba(37, 99, 235, 0.06);
+    border: 1px solid rgba(37, 99, 235, 0.18); }
+.pw-rules.is-complete { background: rgba(18, 183, 106, 0.08); border-color: rgba(18, 183, 106, 0.35); }
+.pw-rules-title { margin: 0 0 0.4rem; font-size: 0.85rem; font-weight: 600; color: var(--a-ink); }
+.pw-rules-title i { color: var(--a-blue); margin-right: 0.3rem; }
+.pw-rules ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+.pw-rules li { position: relative; padding-left: 1.4rem; font-size: 0.84rem; color: var(--a-ink-2); }
+.pw-rules li::before { content: ''; position: absolute; left: 0.15rem; top: 0.3rem; width: 0.7rem; height: 0.7rem;
+    border-radius: 50%; border: 2px solid #9AA6BF; }
+.pw-rules li.is-met { color: #0E7A4A; }
+.pw-rules li.is-met::before { border-color: #12B76A; background: #12B76A; }
+
+/* registration: optional label and the mobile number hint */
+body > .card .optional { font-weight: 400; color: var(--a-muted); }
+body > .card .field-hint { display: block; margin-top: 0.35rem; font-size: 0.8rem; color: var(--a-muted); }
+
 /* labels in sentence case */
 .login-container .input-group label, body > .card label { text-transform: none; letter-spacing: 0; font-size: 0.9rem; font-weight: 600; color: var(--a-ink-2); }
 
@@ -98,3 +117,6 @@ body > .card .form-title { border-bottom-color: var(--a-line); }
 @media (max-width: 900px) {
     .auth-pitch { font-size: 1.6rem; }
 }
+
+/* one show-password button: hide Edge's built-in one next to ours */
+input::-ms-reveal, input::-ms-clear { display: none; }

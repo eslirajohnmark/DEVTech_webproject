@@ -11,7 +11,7 @@ from services.upload_service import strip_jpeg_metadata
 from tests.conftest import login_as
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'\0' * 64
-PASSWORD = 'secretpass1'
+PASSWORD = 'Secret#pass1'
 
 
 def jpeg_with_location():

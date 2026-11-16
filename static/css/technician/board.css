@@ -56,6 +56,19 @@ h1, h2, h3, h4, .tech-brand-name, .tech-stat-num {
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .tech-autofill { color: var(--t-yellow); }
+
+/* registration: password checklist (dark) */
+.pw-rules { margin-top: 0.6rem; padding: 0.75rem 0.9rem; border-radius: var(--t-r-md); background: var(--t-glass-2);
+    border: 1px solid var(--t-border); }
+.pw-rules.is-complete { border-color: var(--t-yellow-line); background: var(--t-yellow-soft); }
+.pw-rules-title { margin: 0 0 0.4rem; font-size: 0.82rem; font-weight: 600; color: var(--t-text); }
+.pw-rules-title i { color: var(--t-yellow); margin-right: 0.3rem; }
+.pw-rules ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+.pw-rules li { position: relative; padding-left: 1.4rem; font-size: 0.8rem; color: var(--t-text-soft); }
+.pw-rules li::before { content: ''; position: absolute; left: 0.15rem; top: 0.28rem; width: 0.65rem; height: 0.65rem;
+    border-radius: 50%; border: 2px solid var(--t-text-muted); }
+.pw-rules li.is-met { color: var(--t-yellow); }
+.pw-rules li.is-met::before { border-color: var(--t-yellow); background: var(--t-yellow); }
 .rp-drop { position: relative; display: grid; justify-items: center; gap: 0.35rem; padding: 1.2rem 1rem; text-align: center;
     border: 1.5px dashed var(--t-glass-edge); border-radius: var(--t-r-md); background: var(--t-glass-2);
     transition: border-color var(--t-ease), background var(--t-ease); }
@@ -79,3 +92,6 @@ h1, h2, h3, h4, .tech-brand-name, .tech-stat-num {
     .rp-file { grid-template-columns: 52px minmax(0, 1fr) auto; }
     .rp-thumb { width: 52px; height: 52px; }
 }
+
+.tech-reg-note { margin: 0 0 1rem; font-size: 0.82rem; color: var(--t-text-muted); }
+.tech-reg-note .req { color: var(--t-red); font-weight: 700; }

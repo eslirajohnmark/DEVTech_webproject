@@ -54,7 +54,7 @@ def test_self_registered_technician_is_inactive(client, admin):
     db.session.commit()
     r = client.post('/technician/register', content_type='multipart/form-data', data={
         'fullname': 'New Tech', 'email': 'new@test.local', 'staffId': 'TECH-0042',
-        'password': 'password123', 'password2': 'password123', 'gender': 'male', 'dob': '1990-01-01',
+        'password': 'Password#123', 'password2': 'Password#123', 'gender': 'male', 'dob': '1990-01-01',
         'phone': '09171234567', 'id_type': 'UMID', 'id_number': 'CRN-0001-2345', 'privacy_consent': '1',
         'id_document': (BytesIO(b'\x89PNG\r\n\x1a\n' + b'0' * 64), 'id.png', 'image/png')})
     assert r.status_code == 302
