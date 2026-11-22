@@ -168,6 +168,40 @@ def register_commands(app):
         app_module.init_db()
         click.echo('Database ready.')
 
+    @app.cli.command('send-test-email')
+    @click.argument('to')
+    @click.option('--reset', is_flag=True, help='Send a real password-reset email for the account with this email.')
+    def send_test_email(to, reset):
+        """Send one email right now through Resend (or Brevo) and print the answer.
+        Use it to check RESEND_API_KEY / MAIL_FROM before relying on Forgot password."""
+        import os
+        import app as app_module
+        from services import email_service
+        click.echo(f'Provider: {email_service.provider() or "none (email is off)"} | '
+                   f'From: {os.environ.get("MAIL_FROM") or "DEVTech <onboarding@resend.dev>"}')
+        site = app_module._site_name()
+        if reset:
+            user = app_module.find_account_by_email(to.strip().lower())
+            if not user:
+                click.echo(f'No account uses {to}.', err=True)
+                raise SystemExit(1)
+            with app.test_request_context(base_url=os.environ.get('APP_BASE_URL') or 'http://127.0.0.1:5000'):
+                link = app_module._external_url('reset_password', token=app_module.make_reset_token(user))
+            subject = f'Reset your {site} password'
+            html_body, text_body = email_service.render(
+                'Reset your password', f'Hi {user.full_name},\n\nThis reset link was sent from the command line. '
+                'It works once and expires in 1 hour.', link, 'Choose a new password', site,
+                footer=email_service.SECURITY_FOOTER)
+        else:
+            subject = f'{site} test email'
+            html_body, text_body = email_service.render(
+                'Email is working', f'This test email from {site} arrived, so password reset emails will too.',
+                site_name=site, footer=email_service.SECURITY_FOOTER)
+        sent, provider, detail = email_service.send_with_detail(to, subject, html_body, text_body)
+        click.echo(('SENT: ' if sent else 'NOT SENT: ') + detail)
+        if not sent:
+            raise SystemExit(1)
+
     @app.cli.command('upgrade-db')
     def upgrade_db():
         """Bring an existing database up to date: create new tables, add
@@ -179,7 +213,8 @@ def register_commands(app):
                       'add_service_category_columns', 'add_profile_columns', 'add_workflow_columns',
                       'add_technician_verification_columns', 'add_booking_device_columns',
                       'add_shop_delivery_columns', 'add_paymongo_columns',
-                      'add_service_device_column', 'add_support_chat_columns'):
+                      'add_service_device_column', 'add_support_chat_columns',
+                      'add_service_fee_and_receipt_columns', 'add_id_back_and_address_columns'):
             getattr(app_module, patch)()
         app_module.move_legacy_receipts()
         released = app_module.release_reserved_cart_stock()

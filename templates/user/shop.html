@@ -707,8 +707,8 @@ function removeCartItem(itemId) {
         .catch(() => shopToast('Could not remove the item.', 'error'));
 }
 
-function clearCart() {
-    if (!confirm('Remove everything from your cart?')) return;
+async function clearCart() {
+    if (!(await devtechAsk('Remove everything from your cart?', {ok: 'Clear cart', tone: 'danger'}))) return;
     fetch('/api/cart/clear', {method: 'POST'})
         .then(r => r.json())
         .then(() => { shopToast('Cart cleared', 'info'); loadCart(); })

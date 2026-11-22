@@ -202,12 +202,57 @@
     </div>
 
     <!-- Payment Settings -->
-    <div class="admin-settings-section">
+    <div class="admin-settings-section" id="payments">
         <div class="admin-settings-header">
             <h3><i class="fas fa-credit-card"></i> Payment Settings</h3>
-            <p>Configure payment gateways</p>
+            <p>The QR code customers scan to pay, and the payment options</p>
         </div>
         <div class="admin-settings-body">
+            <div class="admin-setting-item admin-payqr">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Payment QR code</span>
+                    <span class="admin-setting-desc">Your GCash (or QR Ph) code. Customers scan it to pay the repair bill after the repair
+                        (and the booking fee when PayMongo is off), then send a screenshot that you check under Payments.</span>
+                </div>
+                <div class="admin-setting-control admin-payqr-control">
+                    {% if settings.get('payment_qr_file') %}
+                    <img class="admin-payqr-img" src="{{ url_for('payment_qr_image') }}" alt="Current payment QR code" width="120" height="120">
+                    {% else %}
+                    <span class="admin-payqr-empty"><i class="fas fa-qrcode"></i> No QR code yet</span>
+                    {% endif %}
+                    <form method="POST" action="{{ url_for('admin_payment_qr') }}" enctype="multipart/form-data" class="admin-payqr-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="file" name="payment_qr" accept="image/jpeg,image/png,image/webp" required aria-label="Payment QR code image">
+                        <button type="submit" class="admin-btn admin-btn-primary admin-btn-sm"><i class="fas fa-upload"></i> {{ 'Replace' if settings.get('payment_qr_file') else 'Upload' }} QR code</button>
+                    </form>
+                    {% if settings.get('payment_qr_file') %}
+                    <form method="POST" action="{{ url_for('admin_payment_qr') }}"
+                          data-confirm-title="Remove the payment QR code?" data-confirm="Customers then see only the account name and number." data-confirm-ok="Remove QR code" data-confirm-tone="danger">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="remove" value="1">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-secondary">Remove</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">Account name</span>
+                    <span class="admin-setting-desc">Shown under the QR code, so customers know who they are paying</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('payment_account_name', '') }}" class="admin-setting-input" id="payment_account_name" maxlength="80" placeholder="e.g. DEVTech Computer Services" />
+                </div>
+            </div>
+            <div class="admin-setting-item">
+                <div class="admin-setting-label">
+                    <span class="admin-setting-name">GCash number</span>
+                    <span class="admin-setting-desc">Shown under the QR code (customers can also send to this number)</span>
+                </div>
+                <div class="admin-setting-control">
+                    <input type="text" value="{{ settings.get('payment_account_number', '') }}" class="admin-setting-input" id="payment_account_number" maxlength="30" inputmode="tel" placeholder="09XX XXX XXXX" />
+                </div>
+            </div>
             <div class="admin-setting-item">
                 <div class="admin-setting-label">
                     <span class="admin-setting-name">Online payments (PayMongo)</span>
@@ -242,17 +287,17 @@
             </div>
             <div class="admin-setting-item">
                 <div class="admin-setting-label">
-                    <span class="admin-setting-name">Service Fee</span>
-                    <span class="admin-setting-desc">Additional service fee percentage</span>
+                    <span class="admin-setting-name">Service Fees</span>
+                    <span class="admin-setting-desc">Each service has its own fee on top of its starting price. Set them in Services &amp; Prices.</span>
                 </div>
                 <div class="admin-setting-control">
-                    <input type="text" value="{{ settings.get('service_fee', '5') }}" class="admin-setting-input" style="width:100px;" id="service_fee" inputmode="decimal" title="Percentage, 0-100" />
+                    <a class="admin-btn admin-btn-secondary" href="{{ url_for('admin_services') }}"><i class="fas fa-tags"></i> Set service fees</a>
                 </div>
             </div>
             <div class="admin-setting-item">
                 <div class="admin-setting-label">
                     <span class="admin-setting-name">Booking Fee (₱)</span>
-                    <span class="admin-setting-desc">Paid by QR when a customer books a repair; deducted from their final bill. 0 turns it off.</span>
+                    <span class="admin-setting-desc">Paid when a customer books a repair and deducted from their final bill. With PayMongo on, it is paid by QR Ph and confirmed automatically; otherwise with the QR code above and a screenshot. 0 turns it off.</span>
                 </div>
                 <div class="admin-setting-control">
                     <input type="text" value="{{ settings.get('booking_fee', '100') }}" class="admin-setting-input" style="width:100px;" id="booking_fee" inputmode="numeric" title="Whole pesos, 0-5000" />
@@ -274,19 +319,20 @@
                     <span class="admin-setting-desc">Current system health</span>
                 </div>
                 <div class="admin-setting-control">
+                    {% if deactivated %}
+                    <span class="admin-status-badge danger"><i class="fas fa-power-off"></i> Deactivated</span>
+                    {% else %}
                     <span class="admin-status-badge success"><i class="fas fa-check-circle"></i> Operational</span>
+                    {% endif %}
                 </div>
             </div>
             <div class="admin-setting-item">
                 <div class="admin-setting-label">
                     <span class="admin-setting-name">Maintenance Mode</span>
-                    <span class="admin-setting-desc">Put system into maintenance</span>
+                    <span class="admin-setting-desc">Turn it on or off with Deactivate / Reactivate System in the Danger Zone below</span>
                 </div>
                 <div class="admin-setting-control">
-                    <label class="admin-toggle">
-                        <input type="checkbox" />
-                        <span class="admin-toggle-slider"></span>
-                    </label>
+                    <span class="admin-status-badge {{ 'danger' if deactivated }}">{{ 'On' if deactivated else 'Off' }}</span>
                 </div>
             </div>
             <div class="admin-setting-item">
@@ -305,29 +351,65 @@
 </div>
 
 <!-- Danger Zone -->
-<div class="admin-danger-zone">
+<div class="admin-danger-zone is-locked" id="dangerZone">
     <div class="admin-danger-header">
         <i class="fas fa-exclamation-triangle"></i>
         <h3>Danger Zone</h3>
         <p>Irreversible actions - proceed with caution</p>
+        <button type="button" class="admin-btn admin-btn-sm admin-danger-unlock" id="dangerUnlock" aria-pressed="false">
+            <i class="fas fa-lock"></i> <span>Unlock to edit</span>
+        </button>
     </div>
+    <p class="admin-danger-state" id="dangerState" role="status">
+        <i class="fas fa-lock" aria-hidden="true"></i>
+        <span>Locked. Press <strong>Unlock to edit</strong> to use these actions. Each one asks you three times, the last time for your password.</span>
+    </p>
     <div class="admin-danger-actions">
-        <button class="admin-btn admin-btn-danger" onclick="confirmReset()">
+        <button type="button" class="admin-btn admin-btn-danger" data-danger="reset" disabled>
             <i class="fas fa-undo"></i> Reset All Settings
         </button>
-        <button class="admin-btn admin-btn-danger" onclick="confirmClearData()">
+        <button type="button" class="admin-btn admin-btn-danger" data-danger="clear" disabled>
             <i class="fas fa-trash"></i> Clear All Data
         </button>
-        <button class="admin-btn admin-btn-danger" onclick="confirmDeactivate()">
+        {% if deactivated %}
+        <button type="button" class="admin-btn admin-btn-danger admin-danger-reactivate" data-danger="reactivate" disabled>
+            <i class="fas fa-power-off"></i> Reactivate System
+        </button>
+        {% else %}
+        <button type="button" class="admin-btn admin-btn-danger" data-danger="deactivate" disabled>
             <i class="fas fa-ban"></i> Deactivate System
         </button>
+        {% endif %}
     </div>
 </div>
+
+{# Step 3 of 3: type the action's name and re-enter the password (checked again on the server). #}
+<dialog class="dc dc--admin dc--danger admin-danger-final" id="dangerFinal" aria-labelledby="dangerFinalTitle">
+    <form class="dc-card admin-danger-final-card" id="dangerFinalForm" novalidate>
+        <span class="dc-icon" aria-hidden="true"><i class="fas fa-shield-halved"></i></span>
+        <h2 class="dc-title" id="dangerFinalTitle">Step 3 of 3: confirm with your password</h2>
+        <p class="dc-message">To continue, type <strong class="admin-danger-phrase" id="dangerPhrase"></strong> exactly as shown,
+            then enter your admin password.</p>
+        <label class="admin-danger-field">
+            <span>Type the phrase</span>
+            <input type="text" id="dangerPhraseInput" autocomplete="off" spellcheck="false" autocapitalize="characters">
+        </label>
+        <label class="admin-danger-field">
+            <span>Your password</span>
+            <input type="password" id="dangerPassword" autocomplete="current-password" data-pw-toggle="off">
+        </label>
+        <p class="admin-danger-error" id="dangerError" role="alert" hidden></p>
+        <div class="dc-actions">
+            <button type="button" class="dc-btn dc-btn--cancel" id="dangerCancel">Cancel</button>
+            <button type="submit" class="dc-btn dc-btn--ok" id="dangerSubmit" disabled></button>
+        </div>
+    </form>
+</dialog>
 
 <script>
     const SETTING_FIELDS = ['system_name', 'system_email', 'default_currency', 'timezone',
                             'contact_phone', 'contact_email', 'contact_address', 'business_hours',
-                            'service_fee', 'booking_fee', 'enable_cod',
+                            'booking_fee', 'enable_cod', 'payment_account_name', 'payment_account_number',
                             'shop_latitude', 'shop_longitude', 'shop_city', 'shop_province'];
 
     document.getElementById('shopLocateBtn').addEventListener('click', () => {
@@ -368,9 +450,119 @@
         showAdminToast('This option is not available yet.');
     }
 
-    function confirmReset() { notAvailable(); }
-    function confirmClearData() { notAvailable(); }
-    function confirmDeactivate() { notAvailable(); }
+    // ---- Danger Zone: locked until unlocked; every action is confirmed three times ----
+    (function () {
+        const zone = document.getElementById('dangerZone');
+        if (!zone) return;
+        const unlockBtn = document.getElementById('dangerUnlock');
+        const state = document.getElementById('dangerState');
+        const buttons = zone.querySelectorAll('[data-danger]');
+        const dialog = document.getElementById('dangerFinal');
+        const form = document.getElementById('dangerFinalForm');
+        const phraseInput = document.getElementById('dangerPhraseInput');
+        const password = document.getElementById('dangerPassword');
+        const submit = document.getElementById('dangerSubmit');
+        const error = document.getElementById('dangerError');
+        const csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+        const PHRASES = {{ danger_phrases|tojson }};
+        const UNLOCK_MS = 2 * 60 * 1000;
+        const ACTIONS = {
+            reset: {verb: 'reset all settings', ok: 'Reset all settings', url: {{ url_for('admin_system_reset_settings')|tojson }},
+                warning: 'The shop name, contact details, business hours, booking fee and map location go back to their defaults. Anything you changed on this page is lost. Accounts, bookings and services are not touched.'},
+            clear: {verb: 'clear all data', ok: 'Clear all data', url: {{ url_for('admin_system_clear_data')|tojson }},
+                warning: 'Every booking, payment, order, message, notification, support chat, service report, intake record and their uploaded photos are permanently deleted. Accounts, services, products, the technician roster and settings are kept. This cannot be undone.'},
+            deactivate: {verb: 'deactivate the system', ok: 'Deactivate system', url: {{ url_for('admin_system_deactivate')|tojson }},
+                warning: 'Customers and technicians immediately see a maintenance page: they cannot sign in, book, track repairs or send messages. Admins keep full access and can reactivate it from here.'},
+            reactivate: {verb: 'reactivate the system', ok: 'Reactivate system', url: {{ url_for('admin_system_reactivate')|tojson }},
+                warning: 'Customers and technicians can sign in and use DEVTech again straight away.'},
+        };
+        const ask = (options) => window.DevtechConfirm ? DevtechConfirm(options)
+                                                       : Promise.resolve(window.confirm(options.title));
+        let relock = null, current = null;
+
+        function setLocked(locked) {
+            zone.classList.toggle('is-locked', locked);
+            buttons.forEach(b => { b.disabled = locked; });
+            unlockBtn.setAttribute('aria-pressed', locked ? 'false' : 'true');
+            unlockBtn.querySelector('i').className = locked ? 'fas fa-lock' : 'fas fa-lock-open';
+            unlockBtn.querySelector('span').textContent = locked ? 'Unlock to edit' : 'Lock again';
+            state.querySelector('span').innerHTML = locked
+                ? 'Locked. Press <strong>Unlock to edit</strong> to use these actions. Each one asks you three times, the last time for your password.'
+                : 'Unlocked for 2 minutes. Each action still asks you three times before anything happens.';
+            state.querySelector('i').className = locked ? 'fas fa-lock' : 'fas fa-lock-open';
+            clearTimeout(relock);
+            if (!locked) relock = setTimeout(() => setLocked(true), UNLOCK_MS);
+        }
+
+        unlockBtn.addEventListener('click', () => {
+            if (!zone.classList.contains('is-locked')) { setLocked(true); return; }
+            ask({title: 'Unlock the Danger Zone?', tone: 'danger', ok: 'Unlock',
+                 message: 'These actions affect the whole system and some cannot be undone. They unlock for 2 minutes.'})
+                .then(yes => { if (yes) setLocked(false); });
+        });
+
+        buttons.forEach(btn => btn.addEventListener('click', () => {
+            if (zone.classList.contains('is-locked')) return;
+            const a = ACTIONS[btn.dataset.danger];
+            ask({title: `Are you sure you want to ${a.verb}?`, tone: 'danger', ok: 'Yes, continue',
+                 message: 'Step 1 of 3. You will be asked two more times before anything happens.'})
+                .then(yes => yes && ask({title: 'Step 2 of 3: this is what will happen', tone: 'danger',
+                                         message: a.warning, ok: 'I understand, continue'}))
+                .then(yes => { if (yes) openFinal(btn.dataset.danger); });
+        }));
+
+        function openFinal(action) {
+            current = action;
+            document.getElementById('dangerPhrase').textContent = PHRASES[action];
+            phraseInput.value = '';
+            password.value = '';
+            error.hidden = true;
+            submit.textContent = ACTIONS[action].ok;
+            submit.disabled = true;
+            dialog.showModal();
+            phraseInput.focus();
+        }
+        function ready() {
+            submit.disabled = phraseInput.value.trim() !== PHRASES[current] || !password.value;
+        }
+        phraseInput.addEventListener('input', ready);
+        password.addEventListener('input', ready);
+        document.getElementById('dangerCancel').addEventListener('click', () => dialog.close());
+
+        form.addEventListener('submit', e => {
+            e.preventDefault();
+            if (submit.disabled) return;
+            submit.disabled = true;
+            submit.textContent = 'Working...';
+            fetch(ACTIONS[current].url, {method: 'POST', credentials: 'same-origin',
+                                         headers: {'Content-Type': 'application/json', 'Accept': 'application/json',
+                                                   'X-CSRFToken': csrf},
+                                         body: JSON.stringify({phrase: phraseInput.value.trim(), password: password.value})})
+                .then(r => r.json().catch(() => ({success: false, message: r.status === 429
+                    ? 'Too many attempts. Wait a few minutes and try again.' : 'Something went wrong. Try again.'})))
+                .then(d => {
+                    if (!d.success) {
+                        error.textContent = d.message || 'That did not work. Try again.';
+                        error.hidden = false;
+                        (d.field === 'phrase' ? phraseInput : password).focus();
+                        submit.textContent = ACTIONS[current].ok;
+                        ready();
+                        return;
+                    }
+                    dialog.close();
+                    password.value = '';
+                    showAdminToast(d.message);
+                    setTimeout(() => window.location.reload(), 1200);
+                })
+                .catch(() => {
+                    error.textContent = 'Could not reach the server. Check your connection and try again.';
+                    error.hidden = false;
+                    submit.textContent = ACTIONS[current].ok;
+                    ready();
+                });
+        });
+        dialog.addEventListener('close', () => { password.value = ''; });
+    })();
 
     // Only toggles backed by a real setting can be changed; the rest are disabled.
     document.querySelectorAll('.admin-toggle input').forEach(toggle => {
@@ -385,4 +577,11 @@
         });
     });
 </script>
+<style>
+    .admin-payqr-control { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; justify-content: flex-end; }
+    .admin-payqr-img { width: 120px; height: 120px; object-fit: contain; background: #fff; border-radius: 10px; padding: 6px; border: 1px solid var(--dark-border-light); }
+    .admin-payqr-empty { display: inline-flex; align-items: center; gap: 0.4rem; opacity: 0.7; font-size: 0.85rem; }
+    .admin-payqr-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+    .admin-payqr-form input[type="file"] { max-width: 220px; font-size: 0.8rem; }
+</style>
 {% endblock %}

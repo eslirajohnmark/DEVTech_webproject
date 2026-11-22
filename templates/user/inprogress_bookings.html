@@ -151,6 +151,7 @@
             booking_number: {{ (booking.booking_number)|js_html }},
             service_name: {{ (booking.service.name)|js_html }},
             service_price: {{ ("%.2f"|format(booking.service.price))|js_html }},
+            service_fee: {{ ("%.2f"|format(booking.service.service_fee or 0))|js_html }},
             device_type: {{ (booking.device_type)|js_html }},
             description: {{ (booking.description)|js_html }},
             address: {{ (booking.address or 'In-shop repair')|js_html }},
@@ -353,6 +354,11 @@
                         <span class="booking-detail-label">Price:</span>
                         <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${booking.service_price}</span>
                     </div>
+                    ${parseFloat(booking.service_fee) > 0 ? `
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Service fee:</span>
+                        <span class="booking-detail-value">₱${booking.service_fee}</span>
+                    </div>` : ''}
                     ${booking.description ? `
                     <div class="booking-detail-row">
                         <span class="booking-detail-label">Description:</span>

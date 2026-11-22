@@ -121,6 +121,7 @@ def test_email_goes_through_brevo_when_its_key_is_set(monkeypatch):
         return FakeResponse(201)
 
     monkeypatch.setenv('BREVO_API_KEY', 'xkeysib-test')
+    monkeypatch.delenv('EMAIL_PROVIDER', raising=False)
     monkeypatch.setenv('MAIL_FROM', 'DEVTech <hello@devtech.example.com>')
     monkeypatch.setattr(email_service.requests, 'post', post)
     assert email_service.is_enabled()
@@ -132,6 +133,7 @@ def test_email_goes_through_brevo_when_its_key_is_set(monkeypatch):
 
 def test_brevo_needs_a_sender_address(monkeypatch):
     monkeypatch.setenv('BREVO_API_KEY', 'xkeysib-test')
+    monkeypatch.delenv('EMAIL_PROVIDER', raising=False)
     monkeypatch.delenv('MAIL_FROM', raising=False)
     monkeypatch.setattr(email_service.requests, 'post', lambda *a, **k: pytest.fail('must not send'))
     assert not email_service.send_now('cara@gmail.com', 'S', '<p>x</p>', 'x')

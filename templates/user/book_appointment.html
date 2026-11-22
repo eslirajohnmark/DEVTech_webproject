@@ -55,9 +55,13 @@
             <span class="user-required-badge">* Required</span>
         </div>
 
-        <form class="user-booking-form" method="POST"
+        <form class="user-booking-form" method="POST" enctype="multipart/form-data"
               action="{{ url_for('request_service') }}"
-              id="bookingForm" novalidate>
+              id="bookingForm" novalidate data-booking-fee="{{ site().booking_fee or 0 }}"
+              data-fee-online="{{ '1' if site().online_payments else '' }}" data-fee-start="{{ url_for('api_booking_fee') }}"
+              data-ask-title="Are you sure you want to submit this repair request?"
+              data-ask="Check your device, service, schedule and location.{% if site().booking_fee %} Next, you pay the ₱{{ '{:,.2f}'.format(site().booking_fee) }} booking fee by QR and attach a screenshot of the payment.{% else %} The shop is notified straight away.{% endif %}"
+              data-ask-ok="Submit request">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if category %}
             <input type="hidden" name="preselected_category" value="{{ category.slug }}">
@@ -116,11 +120,12 @@
                         {% for service in services %}
                         <option value="{{ service.id }}"
                                 data-price="{{ service.price }}"
+                                data-service-fee="{{ service.service_fee or 0 }}"
                                 data-hours="{{ service.estimated_hours }}"
                                 data-description="{{ service.description or '' }}"
                                 data-devices="{{ service.device_types or '' }}"
                                 {% if wanted == service.id|string %}selected{% endif %}>
-                            {{ service.name }} (from ₱{{ "{:,.0f}".format(service.price or 0) }})
+                            {{ service.name }} (from ₱{{ "{:,.0f}".format(service.price or 0) }}{% if service.service_fee and service.service_fee > 0 %} + ₱{{ "{:,.0f}".format(service.service_fee) }} service fee{% endif %})
                         </option>
                         {% endfor %}
                         <option value="other">Other Service (Custom)</option>
@@ -289,18 +294,17 @@
                     <span class="user-step-number">06</span>
                     <h4 class="user-step-title">Payment Method <span class="user-required-star">*</span></h4>
                 </div>
+                <p class="bk-pay-lead">How you pay the repair bill. Either way you pay <strong>after the repair</strong>, and your device is released once the payment is checked.</p>
                 <div class="user-payment-options">
-                    {% if site().online_payments %}
-                    <label class="user-payment-option" for="payment-qr">
-                        <input type="radio" name="payment_method" id="payment-qr" value="QR Ph" checked>
+                    <label class="user-payment-option" for="payment-gcash">
+                        <input type="radio" name="payment_method" id="payment-gcash" value="GCash" checked>
                         <div class="user-payment-option-content">
-                            <i class="fas fa-qrcode" style="color:#2563eb;"></i>
-                            <span>QR Ph (GCash, Maya, bank apps)</span>
+                            <i class="fas fa-mobile-screen-button" style="color:#2563eb;"></i>
+                            <span>GCash / online payment</span>
                         </div>
                     </label>
-                    {% endif %}
                     <label class="user-payment-option" for="payment-car">
-                        <input type="radio" name="payment_method" id="payment-car" value="C.A.R" {% if not site().online_payments %}checked{% endif %}>
+                        <input type="radio" name="payment_method" id="payment-car" value="C.A.R">
                         <div class="user-payment-option-content">
                             <i class="fas fa-money-bill-wave" style="color:#22c55e;"></i>
                             <span>C.A.R (Cash After Repair)</span>
@@ -310,7 +314,7 @@
                 <div id="paymentInfo" style="margin-top:0.8rem;padding:0.8rem 1rem;background:var(--user-bg);border-radius:var(--user-radius-sm);border:1px solid var(--user-border);">
                     <p id="paymentDetails" style="font-size:0.85rem;color:var(--user-text-secondary);">
                         <i class="fas fa-info-circle"></i>
-                        <span id="paymentInfoText">{% if site().online_payments %}After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.{% else %}C.A.R (Cash After Repair) - You pay after the repair is completed and you are satisfied with the service.{% endif %}</span>
+                        <span id="paymentInfoText">GCash / online: when the repair is done, scan the shop's QR code on your Transactions page and send a screenshot of the payment. The technician checks it before releasing your device.</span>
                     </p>
                 </div>
             </div>
@@ -325,7 +329,8 @@
                     <ol>
                         <li><strong>Confirmation.</strong> This is a repair request. It is confirmed once DEVTech approves it and assigns a technician; you will be notified.</li>
                         <li><strong>Price and extra work.</strong> The listed price is the base price of the service. If the technician finds that more work or parts are needed, the job is put on hold and you are asked to approve or decline the extra cost first. Nothing extra is charged without your approval.</li>
-                        <li><strong>Payment.</strong> QR Ph payments go through PayMongo and are confirmed automatically. With C.A.R (Cash After Repair) you pay once the repair is done.</li>
+                        <li><strong>Booking fee.</strong> {% if site().online_payments %}The booking fee is paid before your request is sent: scan the QR Ph code (through PayMongo) with GCash, Maya or your bank's app, then attach a screenshot of the receipt. It is deducted from your final bill.{% else %}The booking fee is paid when you book, by scanning the shop's QR code and sending a screenshot. It is deducted from your final bill, and your booking is approved once it is checked.{% endif %}</li>
+                        <li><strong>Payment.</strong> The repair bill is paid after the repair, by GCash (with a screenshot) or in cash (C.A.R). Your device is released once the technician has checked the payment.</li>
                         <li><strong>Cancelling.</strong> You can cancel from My Bookings while the request is pending or confirmed. After work has started, contact us through Messages.</li>
                         <li><strong>Your data.</strong> Please back up your files before handing over your device. The technician records at intake whether you agreed to a data backup.</li>
                         <li><strong>Home service.</strong> Give an accurate address inside Tacloban City. Your technician's identity is verified by DEVTech; you can check this on Monitor Device.</li>
@@ -341,10 +346,65 @@
                 <button type="reset" class="user-btn-secondary" onclick="resetForm()">
                     <i class="fas fa-undo"></i> Clear All
                 </button>
-                <button type="submit" class="user-btn-primary" id="submitBtn" disabled>
+                <button type="button" class="user-btn-primary" id="submitBtn" disabled onclick="submitBooking()">
                     <i class="fas fa-check"></i> Submit Request
                 </button>
             </div>
+            {% if site().booking_fee %}
+            {% set online = site().online_payments %}
+            <input type="hidden" name="fee_transaction_id" id="feeTransactionId" form="bookingForm" value="">
+            <div class="user-modal bk-pay" id="feePayModal" aria-hidden="true">
+                <div class="user-modal-content bk-pay-card" role="dialog" aria-modal="true" aria-labelledby="feePayTitle">
+                    <div class="user-modal-header">
+                        <h2 id="feePayTitle"><i class="fas fa-{{ 'receipt' if online else 'qrcode' }}"></i> {{ 'Booking fee paid: attach your receipt' if online else 'Pay the booking fee' }}</h2>
+                        <button type="button" class="user-modal-close" data-fee-close aria-label="Close">&times;</button>
+                    </div>
+                    <div class="user-modal-body bk-pay-body">
+                        <p class="bk-pay-amount"><span>Booking fee</span><strong id="feeAmount">₱{{ "{:,.2f}".format(site().booking_fee) }}</strong></p>
+                        {% if online %}
+                        <p class="bk-pay-paid"><i class="fas fa-circle-check" aria-hidden="true"></i>
+                            <span><strong>Payment received through PayMongo.</strong> Now attach a screenshot of the receipt from your GCash, Maya or bank app as proof, then submit your booking.</span></p>
+                        {% else %}
+                        <div class="bk-pay-grid">
+                            <figure class="bk-pay-qr">
+                                {% if site().pay_qr %}
+                                <img src="{{ site().pay_qr }}" alt="The shop's GCash QR code" width="220" height="220">
+                                {% else %}
+                                <div class="bk-pay-noqr"><i class="fas fa-qrcode" aria-hidden="true"></i><span>Send to the GCash number below</span></div>
+                                {% endif %}
+                                {% if site().pay_name or site().pay_number %}
+                                <figcaption>{% if site().pay_name %}<strong>{{ site().pay_name }}</strong>{% endif %}{% if site().pay_number %}<span>{{ site().pay_number }}</span>{% endif %}</figcaption>
+                                {% endif %}
+                            </figure>
+                            <ol class="bk-pay-steps">
+                                <li>Open GCash, Maya or your bank's app and scan the code.</li>
+                                <li>Pay exactly <strong>₱{{ "{:,.2f}".format(site().booking_fee) }}</strong>.</li>
+                                <li>Take a screenshot of the receipt and attach it below.</li>
+                            </ol>
+                        </div>
+                        {% endif %}
+                        <label class="bk-pay-drop" for="feeReceipt" id="feeDrop">
+                            <span class="bk-pay-thumb" id="feeThumb" aria-hidden="true"><i class="fas fa-image"></i></span>
+                            <span class="bk-pay-drop-text">
+                                <strong id="feeFileName">Attach your payment screenshot</strong>
+                                <small>JPG, PNG, WEBP or GIF, up to 5 MB. Required.</small>
+                            </span>
+                            <input type="file" name="fee_receipt" id="feeReceipt" form="bookingForm" accept="image/jpeg,image/png,image/webp,image/gif">
+                        </label>
+                        <div class="user-form-group bk-pay-ref">
+                            <label for="feeReference">Reference number <span class="user-text-muted">(optional)</span></label>
+                            <input type="text" name="fee_reference" id="feeReference" form="bookingForm" maxlength="50" inputmode="numeric" autocomplete="off" placeholder="e.g. 1012 345 678901">
+                        </div>
+                        <p class="bk-pay-error" id="feeError" role="alert" hidden></p>
+                        <p class="bk-pay-note"><i class="fas fa-circle-info" aria-hidden="true"></i> {{ 'The fee is deducted from your final bill. If you go back to change the form, your payment is kept for this booking.' if online else 'We check the screenshot against the shop account, then approve your booking. The fee is deducted from your final bill.' }}</p>
+                    </div>
+                    <div class="user-modal-footer">
+                        <button type="button" class="user-btn-secondary" data-fee-close>Back to the form</button>
+                        <button type="button" class="user-btn-primary" id="feeSendBtn" disabled><i class="fas fa-paper-plane"></i> {{ 'Submit booking' if online else 'Send booking' }}</button>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             <div id="submitWarning" style="display:none;margin-top:0.5rem;padding:0.5rem 1rem;background:#fee2e2;border:1px solid #fecaca;border-radius:var(--user-radius-sm);color:#991b1b;font-size:0.85rem;">
                 <i class="fas fa-exclamation-circle"></i>
                 <span>Please pin a valid location within Tacloban City before submitting.</span>
@@ -360,14 +420,15 @@
             <div class="user-summary-item"><label>Issue</label><p id="summaryIssue" class="user-summary-placeholder">Not described yet</p></div>
             <div class="user-summary-item"><label>Location</label><p id="summaryAddress">In-shop repair</p></div>
             <div class="user-summary-item"><label>Schedule</label><p id="summarySchedule" class="user-summary-placeholder">Not set</p></div>
-            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">{{ 'QR Ph' if site().online_payments else 'C.A.R' }}</p></div>
+            <div class="user-summary-item"><label>Payment</label><p id="summaryPayment">GCash / online, after the repair</p></div>
         </div>
         <div class="user-summary-divider"></div>
         <div class="user-summary-total"><span>Estimated Duration</span><span class="user-total-value" id="summaryHours">1-2 hours</span></div>
         <div class="user-summary-total"><span>Starting price</span><span class="user-total-value" id="summaryPrice">₱0.00</span></div>
+        <div class="user-summary-total" id="summaryFeeRow" hidden><span>Service fee</span><span class="user-total-value" id="summaryFee">₱0.00</span></div>
         {% if site().booking_fee %}
         <div class="user-summary-total bk-fee" data-fee="{{ site().booking_fee }}">
-            <span>Booking fee <small>pay now by QR</small></span><span class="user-total-value">₱{{ "{:,.2f}".format(site().booking_fee) }}</span></div>
+            <span>Booking fee <small>pay first: scan the QR, then attach the receipt</small></span><span class="user-total-value">₱{{ "{:,.2f}".format(site().booking_fee) }}</span></div>
         <div class="user-summary-total"><span>Balance after repair <small>from</small></span><span class="user-total-value" id="summaryBalance">₱0.00</span></div>
         <p class="bk-fee-note"><i class="fas fa-circle-info" aria-hidden="true"></i>
             The booking fee confirms your slot and is deducted from your final bill.</p>

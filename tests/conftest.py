@@ -33,8 +33,9 @@ def app(tmp_path):
     flask_app.config['MESSAGE_UPLOAD_FOLDER'] = str(tmp_path / 'messages')
     flask_app.config['ID_UPLOAD_FOLDER'] = str(tmp_path / 'id_documents')
     flask_app.config['CREDENTIAL_UPLOAD_FOLDER'] = str(tmp_path / 'credentials')
+    flask_app.config['PAYMENT_QR_FOLDER'] = str(tmp_path / 'payment_qr')
     for key in ('TECH_UPLOAD_FOLDER', 'RECEIPT_UPLOAD_FOLDER', 'MESSAGE_UPLOAD_FOLDER', 'ID_UPLOAD_FOLDER',
-                'CREDENTIAL_UPLOAD_FOLDER'):
+                'CREDENTIAL_UPLOAD_FOLDER', 'PAYMENT_QR_FOLDER'):
         os.makedirs(flask_app.config[key], exist_ok=True)
 
     # Rate-limit counters live for the whole run; start each test from zero.
@@ -54,6 +55,15 @@ def app(tmp_path):
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+PROOF_PNG = b'\x89PNG\r\n\x1a\n' + b'\0' * 64
+
+
+def payment_proof(name='gcash-receipt.png'):
+    """A payment screenshot as a form file: (stream, file name, type)."""
+    from io import BytesIO
+    return (BytesIO(PROOF_PNG), name, 'image/png')
 
 
 def login_as(client, user):

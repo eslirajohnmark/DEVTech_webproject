@@ -38,6 +38,10 @@ GENDERS = ('Male', 'Female', 'Other')
 ID_TYPES = ('PhilSys National ID', "Driver's License", 'UMID', 'Passport', 'PRC ID',
             'Postal ID', "Voter's ID", 'SSS ID', 'PhilHealth ID', 'TIN ID')
 
+# IDs with details printed on the back too: a photo of the back is required for these.
+IDS_WITH_BACK = ('PhilSys National ID', "Driver's License", 'UMID', 'PRC ID', 'Postal ID')
+ADDRESS_MIN, ADDRESS_MAX = 8, 255
+
 ID_DOC_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'application/pdf'}
 ID_DOC_MAX_BYTES = 5 * 1024 * 1024
 DOC_NAME_RE = re.compile(r'^[0-9a-f]{32}\.(jpg|png|webp|pdf)$')
@@ -81,26 +85,43 @@ def _write_document(data, ext):
     return name
 
 
-def id_document_path(tech):
-    """Absolute path of this technician's ID document, or None."""
-    name = tech.id_document_file or ''
+def _id_file_path(name):
+    name = name or ''
     if not DOC_NAME_RE.match(name):
         return None
     path = os.path.join(current_app.config['ID_UPLOAD_FOLDER'], name)
     return path if file_store.exists(path) else None
 
 
-def send_id_document(tech):
-    """Response with the ID document, shown inline and never cached. The caller
-    has already checked that the viewer may see it."""
-    path = id_document_path(tech)
+def id_document_path(tech, side='front'):
+    """Absolute path of this technician's ID document (front or back), or None."""
+    return _id_file_path(tech.id_back_file if side == 'back' else tech.id_document_file)
+
+
+def send_id_file(name, mime, label):
+    """Response with an ID photo, shown inline and never cached. The caller has
+    already checked that the viewer may see it."""
+    path = _id_file_path(name)
     if not path:
         abort(404)
-    resp = send_file(path, mimetype=tech.id_document_mime, max_age=0,
-                     download_name='id-document' + os.path.splitext(path)[1])
+    resp = send_file(path, mimetype=mime, max_age=0, download_name=label + os.path.splitext(path)[1])
     resp.headers['Cache-Control'] = 'no-store, private'
     resp.headers['X-Content-Type-Options'] = 'nosniff'
     return resp
+
+
+def send_id_document(tech, side='front'):
+    if side == 'back':
+        return send_id_file(tech.id_back_file, tech.id_back_mime, 'id-back')
+    return send_id_file(tech.id_document_file, tech.id_document_mime, 'id-document')
+
+
+def needs_back(id_type):
+    return id_type in IDS_WITH_BACK
+
+
+def _clean_address(value):
+    return ' '.join((value or '').split())
 
 
 def delete_id_document(name):
@@ -188,7 +209,7 @@ def registration_details(tech):
     """The saved details of an existing technician, in the form's field names."""
     return {'fullname': tech.full_name, 'email': tech.email, 'phone': tech.phone or '',
             'gender': tech.gender or '', 'dob': tech.birth_date.isoformat() if tech.birth_date else '',
-            'id_type': tech.id_type or '', 'id_number': tech.id_number or ''}
+            'id_type': tech.id_type or '', 'id_number': tech.id_number or '', 'address': tech.address or ''}
 
 
 def _id_number_taken(id_type, id_number, exclude_id=None):
@@ -212,6 +233,7 @@ def _validate_details(form, tech=None):
         'dob': (form.get('dob') or '').strip(),
         'id_type': (form.get('id_type') or '').strip(),
         'id_number': ' '.join((form.get('id_number') or '').split()).upper(),
+        'address': _clean_address(form.get('address')),
     }
     if v['phone'].startswith('+63'):
         v['phone'] = '0' + v['phone'][3:]
@@ -241,7 +263,28 @@ def _validate_details(form, tech=None):
         errors['id_number'] = 'Enter the ID number exactly as printed (letters, numbers, spaces, dashes).'
     elif 'id_type' not in errors and _id_number_taken(v['id_type'], v['id_number'], tech.id if tech else None):
         errors['id_number'] = 'This ID is already linked to another technician account.'
+    if not ADDRESS_MIN <= len(v['address']) <= ADDRESS_MAX:
+        errors['address'] = 'Enter your home address: house no., street, barangay and city.'
     return v, errors
+
+
+def _check_id_photos(files, id_type, have_front=False, have_back=False, front='id_document', back='id_document_back'):
+    """Check the front (and, for IDs with a back, the back) photo. Returns
+    ({side: (data, mime, ext)}, {field: message}). Files already on record count."""
+    docs, errors = {}, {}
+    for side, field, have in (('front', front, have_front), ('back', back, have_back)):
+        upload = files.get(field)
+        if upload and upload.filename:
+            ok, doc = check_id_document(upload)
+            if ok:
+                docs[side] = doc
+            else:
+                errors[field] = doc
+        elif side == 'front' and not have:
+            errors[field] = 'Upload a photo or scan of the front of the ID.'
+        elif side == 'back' and not have and needs_back(id_type):
+            errors[field] = f'A {id_type} has details on the back too. Upload a photo of the back.'
+    return docs, errors
 
 
 def _add_event(tech, action, actor, reason=None, admin=None):
@@ -279,13 +322,15 @@ def employee_matches(record, values):
             and _plain_id(record.id_number) == _plain_id(values.get('id_number')))
 
 
-def save_employee(form, admin_name, record=None):
-    """Add or edit an employee record from the admin form. Once the technician
-    has registered, only the hire date and note can change (their account was
-    matched against the rest). Returns (True, record) or (False, {field: message})."""
+def save_employee(form, admin_name, record=None, files=None):
+    """Add or edit an employee record from the admin form, with photos of the
+    front and back of their valid ID. Once the technician has registered, only
+    the hire date, address and note can change (their account was matched
+    against the rest). Returns (True, record) or (False, {field: message})."""
     from app import TechnicianEmployee
+    files = files or {}
     registered = bool(record and record.technician_id)
-    errors, v = {}, {}
+    errors, v, docs = {}, {}, {}
     if not registered:
         v['tech_id'] = (form.get('tech_id') or '').strip().upper()
         v['full_name'] = ' '.join((form.get('full_name') or '').split())
@@ -319,6 +364,14 @@ def save_employee(form, admin_name, record=None):
                     if _plain_id(e.id_number) == _plain_id(v['id_number']) and (not record or e.id != record.id)]
             if same or _id_number_taken(v['id_type'], v['id_number']):
                 errors['id_number'] = 'This ID is already recorded for another technician.'
+        docs, doc_errors = _check_id_photos(
+            files, v['id_type'], front='id_front', back='id_back',
+            have_front=bool(record and _id_file_path(record.id_front_file)),
+            have_back=bool(record and _id_file_path(record.id_back_file)))
+        errors.update(doc_errors)
+    v['address'] = _clean_address(form.get('address'))
+    if not ADDRESS_MIN <= len(v['address']) <= ADDRESS_MAX:
+        errors['address'] = 'Enter their home address: house no., street, barangay and city.'
     v['note'] = ' '.join((form.get('note') or '').split())[:255] or None
     v['hired_on'] = None
     if form.get('hired_on'):
@@ -335,11 +388,22 @@ def save_employee(form, admin_name, record=None):
         db.session.add(record)
     for field, value in v.items():
         setattr(record, field, value)
+    written, replaced = [], []
+    for side, (data, mime, ext) in docs.items():
+        name = _write_document(data, ext)
+        written.append(name)
+        replaced.append(getattr(record, f'id_{side}_file'))
+        setattr(record, f'id_{side}_file', name)
+        setattr(record, f'id_{side}_mime', mime)
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
+        for name in written:
+            delete_id_document(name)
         return False, {'tech_id': 'That Tech ID was just used. Try another.'}
+    for name in replaced:
+        delete_id_document(name)
     return True, record
 
 
@@ -374,19 +438,21 @@ def register_technician(form, files):
         errors['password2'] = 'The passwords do not match.'
     if not form.get('privacy_consent'):
         errors['privacy_consent'] = 'You must agree to how your ID is used before registering.'
-    ok, doc = check_id_document(files.get('id_document'))
-    if not ok:
-        errors['id_document'] = doc
+    docs, doc_errors = _check_id_photos(files, values['id_type'])
+    errors.update(doc_errors)
     if errors:
         return {'ok': False, 'errors': errors}
 
-    data, mime, ext = doc
+    data, mime, ext = docs['front']
     stored = _write_document(data, ext)
+    back_name = back_mime = None
+    if 'back' in docs:
+        back_name, back_mime = _write_document(docs['back'][0], docs['back'][2]), docs['back'][1]
     user = Technician(
         username=record.tech_id, email=values['email'], full_name=record.full_name,
         phone=values['phone'], gender=values['gender'], birth_date=values['birth_date'],
-        id_type=values['id_type'], id_number=values['id_number'],
-        id_document_file=stored, id_document_mime=mime,
+        id_type=values['id_type'], id_number=values['id_number'], address=values['address'],
+        id_document_file=stored, id_document_mime=mime, id_back_file=back_name, id_back_mime=back_mime,
         # Stays inactive (cannot sign in) until an admin approves the ID.
         is_active=False, id_verified=False, verification_status='pending',
         verification_submitted_at=datetime.utcnow(),
@@ -401,6 +467,7 @@ def register_technician(form, files):
     except IntegrityError:
         db.session.rollback()
         delete_id_document(stored)
+        delete_id_document(back_name)
         return {'ok': False, 'errors': {'staffId': 'That Tech ID or email was just registered. Try another.'}}
 
     notify_admins('Technician Awaiting Verification',
@@ -427,22 +494,22 @@ def resubmit_registration(tech, form, files):
     if record and not any(f in errors for f in MATCH_FIELDS) and not employee_matches(record, values):
         errors['form'] = ("These details don't match your DEVTech employee record. Enter your name, "
                           "date of birth and ID exactly as printed on your ID, or ask the admin.")
-    upload = files.get('id_document')
-    doc = None
-    if upload and upload.filename:
-        ok, doc = check_id_document(upload)
-        if not ok:
-            errors['id_document'] = doc
-    elif not id_document_path(tech):
-        errors['id_document'] = 'Upload a photo or scan of your ID.'
+    docs, doc_errors = _check_id_photos(files, values['id_type'], have_front=bool(id_document_path(tech)),
+                                        have_back=bool(id_document_path(tech, 'back')))
+    errors.update(doc_errors)
     if errors:
         return {'ok': False, 'errors': errors}
 
-    old_file = None
-    if doc:
-        data, mime, ext = doc
-        old_file = tech.id_document_file
+    old_files = []
+    if 'front' in docs:
+        data, mime, ext = docs['front']
+        old_files.append(tech.id_document_file)
         tech.id_document_file, tech.id_document_mime = _write_document(data, ext), mime
+    if 'back' in docs:
+        data, mime, ext = docs['back']
+        old_files.append(tech.id_back_file)
+        tech.id_back_file, tech.id_back_mime = _write_document(data, ext), mime
+    tech.address = values['address']
     first_time = tech.verification_submitted_at is None
     tech.full_name = record.full_name if record else values['fullname']
     tech.email, tech.phone = values['email'], values['phone']
@@ -453,7 +520,8 @@ def resubmit_registration(tech, form, files):
     tech.verification_submitted_at = datetime.utcnow()
     _add_event(tech, 'submitted' if first_time else 'resubmitted', tech.username)
     db.session.commit()
-    delete_id_document(old_file)
+    for name in old_files:
+        delete_id_document(name)
 
     notify_admins('Technician Registration Updated' if not first_time else 'Technician Awaiting Verification',
                   f'{tech.full_name} ({tech.username}) sent '

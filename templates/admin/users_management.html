@@ -642,8 +642,9 @@
             });
     }
 
-    function revokeVerification(userKey, userName) {
-        if (!confirm(`Revoke identity verification for ${userName}? They won't be assignable to new bookings until re-verified.`)) return;
+    async function revokeVerification(userKey, userName) {
+        if (!(await devtechAsk(`Revoke identity verification for ${userName}?`,
+                {message: "They won't be assignable to new bookings until re-verified.", ok: 'Revoke', tone: 'danger'}))) return;
 
         fetch(`${userUrl(userKey)}/verify-id`, { method: 'DELETE' })
             .then(response => response.json())
@@ -889,14 +890,15 @@
     // DELETE USER
     // ============================================
 
-    function resetUserPassword(userKey) {
+    async function resetUserPassword(userKey) {
         const u = findUser(userKey);
         if (!u) return;
         if (userKey === currentAdminKey) {
             showAdminToast('Change your own password from your profile.', 'error');
             return;
         }
-        if (!confirm(`Reset the password for ${u.full_name}? Their current password will stop working.`)) return;
+        if (!(await devtechAsk(`Reset the password for ${u.full_name}?`,
+                {message: 'Their current password will stop working.', ok: 'Reset password', tone: 'danger'}))) return;
         fetch(`${userUrl(userKey)}/reset-password`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
@@ -915,14 +917,14 @@
         .catch(() => showAdminToast('An error occurred while resetting the password', 'error'));
     }
 
-    function deleteUser(userKey) {
+    async function deleteUser(userKey) {
         const u = findUser(userKey);
         if (!u) return;
         if (userKey === currentAdminKey) {
             showAdminToast("You can't delete your own account while logged in.", 'error');
             return;
         }
-        if (!confirm(`Delete ${u.full_name}? This cannot be undone.`)) return;
+        if (!(await devtechAsk(`Delete ${u.full_name}?`, {message: 'This cannot be undone.', ok: 'Delete', tone: 'danger'}))) return;
 
         fetch(userUrl(userKey), {
             method: 'DELETE',

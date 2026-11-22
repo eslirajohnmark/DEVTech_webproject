@@ -1,108 +1,105 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DEVTech - Login</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth-glass.css') }}">
-
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#13245C" />
+    <title>DEVTech · Sign in</title>
+    <link rel="icon" href="{{ url_for('static', filename='images/favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/staff-login.css') }}?v=3" />
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/staff-login.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/login-lock.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/busy-guard.js') }}" defer></script>
 </head>
-<body>
-    <div class="login-container">
-        <div class="left">
-            <h1 class="welcome">Welcome Back</h1>
-            <p class="subtitle">Login to your <span>DEVtech</span> account</p>
+<body class="sl-page" data-portal="customer">
+{% include 'partials/staff_login_traces.html' %}
+
+<main class="sl-panel">
+    <span class="sl-signal" aria-hidden="true"></span>
+
+    <section class="sl-intro" aria-label="About DEVTech">
+        <a class="sl-brand" href="{{ url_for('home') }}">
+            <span class="sl-brand-mark" aria-hidden="true"><i class="fas fa-microchip"></i></span>
+            <span class="sl-brand-word"><strong>DEV<b>Tech</b></strong><small>Computer Services</small></span>
+        </a>
+        <div>
+            <h1 class="sl-title">Your repair, from drop-off to pickup.</h1>
+            <p class="sl-lead">Book a repair, follow each stage live, and pay once the job is done.</p>
+        </div>
+        <ul class="sl-points">
+            <li><i class="fas fa-tower-broadcast" aria-hidden="true"></i><span>Follow every stage, from diagnosis to ready for pickup</span></li>
+            <li><i class="fas fa-qrcode" aria-hidden="true"></i><span>Pay by GCash QR or in cash after the repair</span></li>
+            <li><i class="fas fa-headset" aria-hidden="true"></i><span>Message the shop about a repair or an order</span></li>
+        </ul>
+        <p class="sl-intro-foot"><i class="fas fa-location-dot" aria-hidden="true"></i><span>{{ site().address or 'Tacloban City, Leyte' }}</span></p>
+    </section>
+
+    <section class="sl-socket">
+        <div class="sl-chip">
+            <header class="sl-chip-head">
+                <div>
+                    <h2>Sign in</h2>
+                    <p>Use the email and password of your DEVTech account.</p>
+                </div>
+                <span class="sl-led" aria-hidden="true"></span>
+            </header>
 
             {% with messages = get_flashed_messages(with_categories=true) %}
-                {% if messages %}
-                    <div class="flash-messages">
-                        {% for category, message in messages %}
-                            <div class="flash-message {{ category }}">
-                                <i class="fas fa-{% if category == 'success' %}check-circle{% elif category == 'danger' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
-                                {{ message }}
-                                <button class="flash-close">&times;</button>
-                            </div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
+            {% for category, message in messages %}
+            <div class="sl-flash {{ 'is-ok' if category == 'success' else ('is-info' if category in ('info', 'warning') else '') }}" role="alert">
+                <i class="fas fa-{{ 'circle-check' if category == 'success' else ('circle-info' if category in ('info', 'warning') else 'circle-exclamation') }}" aria-hidden="true"></i>
+                <span>{{ message }}</span>
+                <button type="button" class="sl-flash-close" aria-label="Dismiss">&times;</button>
+            </div>
+            {% endfor %}
             {% endwith %}
 
-            <form method="POST" action="{{ url_for('login') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="input-group">
-                    <label>Email Address</label>
-                    <div class="input-box">
-                        <i class="fa-regular fa-envelope"></i>
-                        <input type="email" name="email" placeholder="Enter your email" required>
+            <form method="POST" action="{{ url_for('login') }}" data-lock-seconds="{{ lock_seconds or 0 }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="sl-field">
+                    <label for="loginEmail">Email</label>
+                    <div class="sl-input">
+                        <i class="fas fa-envelope" aria-hidden="true"></i>
+                        <input type="email" id="loginEmail" name="email" autocomplete="username" placeholder="name@example.com" required
+                               value="{{ prefill_email or '' }}" {% if not prefill_email %}autofocus{% endif %} />
                     </div>
                 </div>
-
-                <div class="input-group">
-                    <label>Password</label>
-                    <div class="input-box">
-                        <i class="fa-solid fa-lock"></i>
-                        <input type="password" name="password" placeholder="Enter your password" required>
+                <div class="sl-field">
+                    <label for="loginPassword">Password</label>
+                    <div class="sl-input">
+                        <i class="fas fa-lock" aria-hidden="true"></i>
+                        <input type="password" id="loginPassword" name="password" autocomplete="current-password" placeholder="Your password" required
+                               {% if prefill_email %}autofocus{% endif %} />
+                        <button type="button" class="sl-eye admin-password-toggle" data-target="loginPassword" aria-label="Show password" aria-pressed="false">
+                            <i class="fas fa-eye" aria-hidden="true"></i>
+                        </button>
                     </div>
                 </div>
-
-                <div class="options-row">
-                    <label class="remember-me">
-                        <input type="checkbox" name="remember" checked>
-                        Remember me
-                    </label>
-                    <a href="{{ url_for('forgot_password') }}" class="forgot-link">Forgot Password?</a>
+                <div class="sl-row">
+                    <label class="sl-check"><input type="checkbox" name="remember" checked /> Remember me</label>
+                    <a class="sl-link" href="{{ url_for('forgot_password') }}">Forgot password?</a>
                 </div>
-
-                <button type="submit" class="login-btn neon-btn">Log In</button>
+                <p class="sl-lock-note" data-lock-note role="status" hidden></p>
+                <button type="submit" class="sl-btn sl-btn--go">
+                    <i class="fas fa-arrow-right-to-bracket" aria-hidden="true"></i> Sign in
+                </button>
             </form>
 
-            <div class="divider">or login with</div>
-
-            <div class="social-buttons">
-                <a href="{{ url_for('google_login') }}" class="social-btn google">
-                    <i class="fab fa-google"></i>
-                    Google
-                </a>
-                <a href="{{ url_for('facebook_login') }}" class="social-btn facebook">
-                    <i class="fab fa-facebook"></i>
-                    Facebook
-                </a>
-            </div>
-
-            <p class="signup-link">
-                Don't have an account? <a href="{{ url_for('register') }}">Sign up here</a>
-            </p>
-        </div>
-
-        <div class="right">
-            <div class="brand">
-                <p class="auth-mark"><i class="fas fa-microchip" aria-hidden="true"></i> DEVTech Computer Services</p>
-                <h2 class="auth-pitch">Your repair, from drop-off to pickup.</h2>
-                <ul class="auth-points">
-                    <li><i class="fas fa-tower-broadcast" aria-hidden="true"></i>
-                        <span><strong>Follow it live</strong>Each stage from diagnosis to ready for pickup, with repair notes along the way.</span></li>
-                    <li><i class="fas fa-qrcode" aria-hidden="true"></i>
-                        <span><strong>Pay by QR</strong>Scan with GCash, Maya or your bank app. Confirmed on the spot.</span></li>
-                    <li><i class="fas fa-headset" aria-hidden="true"></i>
-                        <span><strong>Chat with the shop</strong>Questions about a repair or an order go straight to our team.</span></li>
-                </ul>
-                <a href="{{ url_for('register') }}" class="auth-new"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Create an account</a>
-                <p class="auth-where"><i class="fas fa-location-dot" aria-hidden="true"></i>{{ site().address or 'Tacloban City, Leyte' }}</p>
+            <p class="sl-divider">New to DEVTech?</p>
+            <a class="sl-btn sl-btn--ghost" href="{{ url_for('register') }}">
+                <i class="fas fa-user-plus" aria-hidden="true"></i> Create an account
+            </a>
+            <div class="sl-links">
+                <a class="sl-link" href="{{ url_for('home') }}"><i class="fas fa-arrow-left" aria-hidden="true"></i> Back to the DEVTech site</a>
             </div>
         </div>
-    </div>
-
-    <script>
-        document.querySelectorAll('.flash-close').forEach(btn => {
-            btn.addEventListener('click', function() {
-                this.parentElement.remove();
-            });
-        });
-    </script>
+    </section>
+</main>
 </body>
 </html>

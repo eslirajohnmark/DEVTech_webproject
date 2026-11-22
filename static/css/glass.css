@@ -689,3 +689,4 @@
 #addressCoords.is-outside { color: var(--g-red); font-weight: 600; }
 .user-main-content .bk-shop-map { margin-top: 0; }
 .user-main-content .bk-shop .map-view-links { display: none; }   /* the card has its own directions button */
+.user-amount-fee { display: block; font-size: 0.75rem; color: var(--g-muted, #6A7792); }

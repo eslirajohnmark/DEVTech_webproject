@@ -82,7 +82,7 @@
     <div class="user-catalog-all-head">
         <div>
             <h2>All Services</h2>
-            <p>Prices are starting prices; the final cost depends on your device, the diagnosis and parts.</p>
+            <p>Prices are starting prices, plus each service's service fee; the final cost depends on your device, the diagnosis and parts.</p>
         </div>
         <div class="user-catalog-search">
             <i class="fas fa-search" aria-hidden="true"></i>
@@ -114,7 +114,7 @@
                             {% if svc.description %}<p>{{ svc.description }}</p>{% endif %}
                             <span class="user-catalog-svc-meta">
                                 <span><i class="fas fa-tag" aria-hidden="true"></i>
-                                    {% if svc.price and svc.price > 0 %}From ₱{{ "{:,.0f}".format(svc.price) }}{% else %}Price upon diagnosis{% endif %}</span>
+                                    {% if svc.price and svc.price > 0 %}From ₱{{ "{:,.0f}".format(svc.price) }}{% else %}Price upon diagnosis{% endif %}{% if svc.service_fee and svc.service_fee > 0 %} + ₱{{ "{:,.0f}".format(svc.service_fee) }} service fee{% endif %}</span>
                                 {% if for_devices %}<span><i class="fas fa-microchip" aria-hidden="true"></i> For {{ for_devices|join(', ') }}</span>{% endif %}
                                 <span><i class="fas fa-clock" aria-hidden="true"></i>
                                     ~{{ svc.estimated_hours or 1 }} hr{{ '' if (svc.estimated_hours or 1) == 1 else 's' }}</span>

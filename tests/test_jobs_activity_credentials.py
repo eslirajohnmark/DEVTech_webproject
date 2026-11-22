@@ -50,23 +50,62 @@ def test_submitting_the_report_does_not_move_the_job(tech_logged_in, assigned_bo
     assert 'tech-banner--ok' in html and db.session.get(Booking, assigned_booking.id).status == 'completed'
 
 
-def test_gcash_job_is_released_only_after_an_admin_confirms_payment(tech_logged_in, assigned_booking):
+def _customer_received(booking):
+    """The customer pressed "I received my device" (release waits for it)."""
+    from datetime import datetime
+    db.session.get(Booking, booking.id).customer_received_at = datetime.utcnow()
+    db.session.commit()
+
+
+def test_gcash_job_is_released_once_the_technician_checks_the_screenshot(tech_logged_in, assigned_booking):
     _in_repair(assigned_booking, report='submitted')
     _advance(tech_logged_in, assigned_booking)
     _pay(assigned_booking, 'GCash')
+    _customer_received(assigned_booking)
     html = _advance(tech_logged_in, assigned_booking).get_data(as_text=True)
-    assert 'been confirmed by an admin' in html
+    assert "customer hasn&#39;t paid" in html or "customer hasn't paid" in html     # no screenshot yet
     assert db.session.get(Booking, assigned_booking.id).status == 'completed'
-    Transaction.query.update({'payment_status': 'confirmed'})
+
+    # the customer sends a screenshot; the technician opens it and ticks the check
+    name = 'receipt_TRX_proof.png'
+    with open(os.path.join(flask_app.config['RECEIPT_UPLOAD_FOLDER'], name), 'wb') as fh:
+        fh.write(b'\x89PNG\r\n\x1a\n' + b'\0' * 32)
+    txn = Transaction.query.one()
+    txn.receipt_image, txn.gcash_reference = name, '1012 345'
     db.session.commit()
-    _advance(tech_logged_in, assigned_booking)
+    page = tech_logged_in.get(f'/technician/jobs/{assigned_booking.id}').get_data(as_text=True)
+    assert 'Open the payment screenshot' in page and 'reached the shop' in page and '1012 345' in page
+    assert tech_logged_in.get(f'/receipts/{txn.id}/{name}').status_code == 200       # their own job
+    assert 'tick the box' in _advance(tech_logged_in, assigned_booking).get_data(as_text=True)
+    assert db.session.get(Booking, assigned_booking.id).status == 'completed'
+    _advance(tech_logged_in, assigned_booking, payment_verified='1')
     assert db.session.get(Booking, assigned_booking.id).status == 'released'
+    txn = Transaction.query.one()
+    assert txn.payment_status == 'confirmed' and 'GCash checked at release' in txn.reviewed_by
+
+
+def test_other_technicians_cannot_open_a_payment_screenshot(app, assigned_booking):
+    from app import Technician
+    other = Technician(username='TECH-0099', email='other@test.local', full_name='Other Tech', is_active=True,
+                       id_verified=True)
+    other.set_password('testpassword1')
+    db.session.add(other)
+    name = 'receipt_TRX_other.png'
+    with open(os.path.join(flask_app.config['RECEIPT_UPLOAD_FOLDER'], name), 'wb') as fh:
+        fh.write(b'\x89PNG\r\n\x1a\n' + b'\0' * 32)
+    _pay(assigned_booking, 'GCash')
+    txn = Transaction.query.one()
+    txn.receipt_image = name
+    db.session.commit()
+    client = login_as(flask_app.test_client(), other)
+    assert client.get(f'/receipts/{txn.id}/{name}').status_code == 404
 
 
 def test_cash_after_repair_needs_the_cash_confirmed(tech_logged_in, assigned_booking):
     _in_repair(assigned_booking, report='submitted')
     _advance(tech_logged_in, assigned_booking)
     _pay(assigned_booking, 'C.A.R')
+    _customer_received(assigned_booking)
     page = tech_logged_in.get(f'/technician/jobs/{assigned_booking.id}').get_data(as_text=True)
     assert 'I collected ₱1,000.00 cash' in page and 'Release device to customer' in page
     assert 'tick the box' in _advance(tech_logged_in, assigned_booking).get_data(as_text=True)

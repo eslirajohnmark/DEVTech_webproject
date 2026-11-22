@@ -249,12 +249,50 @@
             </div>
 
             <div class="tech-field">
-                <label class="tech-label" for="photosNote">Photo record</label>
-                <input class="tech-input" id="photosNote" name="photosNote"
+                <span class="tech-label">Photo record</span>
+                <p class="tech-hint" style="margin-top:0;">Photograph the device as it was handed over: every side, the screen,
+                    and any damage or missing parts. These photos protect you and the customer if its condition is questioned later.</p>
+                {% if can_edit_photos %}
+                <div class="rp-drop" id="rpDrop" data-job="{{ job.id }}" data-max="{{ max_files }}"
+                     data-upload="{{ url_for('technician_api.upload') }}" data-owner-type="intake" data-form="" data-noun="intake record">
+                    <i class="fas fa-camera" aria-hidden="true"></i>
+                    <p><strong>Take or add photos of the device</strong><br>
+                       Drop them here, paste a screenshot (Ctrl+V), or
+                       <label for="rpFiles" class="rp-pick">choose photos</label>. On a phone this opens the camera.</p>
+                    <input type="file" id="rpFiles" accept="image/jpeg,image/png,image/webp,image/gif" multiple class="rp-input">
+                    <p class="tech-hint">JPG, PNG, WEBP or GIF, up to {{ max_files }} photos. Large photos are resized before upload.</p>
+                </div>
+                <p class="rp-status" id="rpStatus" role="status" aria-live="polite"></p>
+                {% endif %}
+                <ul class="rp-files" id="rpFiles-list">
+                    {% for f in files %}
+                    <li class="rp-file" data-id="{{ f.id }}">
+                        <a href="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" target="_blank" rel="noopener" class="rp-thumb">
+                            {% if f.mime_type.startswith('image/') %}<img src="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" alt="{{ f.caption or f.original_name }}" loading="lazy">
+                            {% else %}<i class="fas fa-file-pdf"></i>{% endif %}
+                        </a>
+                        <div class="rp-file-body">
+                            <label class="visually-hidden" for="cap{{ f.id }}">Note for {{ f.original_name }}</label>
+                            <input class="tech-input rp-caption" id="cap{{ f.id }}" name="caption_{{ f.id }}"
+                                   maxlength="255" value="{{ f.caption or '' }}" placeholder="What does this show? e.g. Crack on the top-left corner"
+                                   {% if not can_edit_photos %}disabled{% endif %}>
+                            <small>{{ f.original_name }}{% if not f.owner_id %} · not saved yet{% endif %}</small>
+                        </div>
+                        {% if can_edit_photos %}
+                        <button type="button" class="tech-btn tech-btn--ghost rp-remove" data-remove="{{ f.id }}" aria-label="Remove {{ f.original_name }}">
+                            <i class="fas fa-trash-can"></i></button>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% if not can_edit_photos and not files %}<p class="tech-hint">No photos were taken at intake.</p>{% endif %}
+            </div>
+
+            <div class="tech-field">
+                <label class="tech-label" for="photosNote">Notes on the photos (optional)</label>
+                <input class="tech-input" id="photosNote" name="photosNote" maxlength="1000"
                        value="{{ c.photos_note if c else '' }}"
-                       placeholder="e.g. 3 photos of the cracked panel and chassis corners" />
-                <p class="tech-hint">Photo upload arrives with the Flask backend; for now,
-                    note what was photographed.</p>
+                       placeholder="e.g. Photos 1-3: cracked panel and chassis corners" />
             </div>
         </section>
 
@@ -273,5 +311,11 @@
     </form>
 
 </section>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if current and can_edit_photos %}
+<script src="{{ url_for('static', filename='js/report-attachments.js') }}"></script>
 {% endif %}
 {% endblock %}

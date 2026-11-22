@@ -19,9 +19,7 @@
         <p>Live status of your repair — updates automatically.</p>
     </div>
     <div class="user-top-actions">
-        <button class="user-icon-btn" id="refreshBtn" title="Refresh">
-            <i class="fas fa-rotate"></i>
-        </button>
+        <span class="user-live-badge" title="This page updates by itself"><span aria-hidden="true"></span> Live</span>
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="Notifications">
             <i class="fas fa-bell"></i>
             {% if notifications and notifications|length > 0 %}

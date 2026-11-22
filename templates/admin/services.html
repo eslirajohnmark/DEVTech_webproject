@@ -1,6 +1,8 @@
 {% extends "base/admin_base.html" %}
 {% block title %}Services{% endblock %}
 
+{% macro peso(n) %}₱{{ '{:,.2f}'.format(n or 0) }}{% endmacro %}
+
 {% macro service_fields(s=None, default_category=None) %}
 <div class="admin-form-grid">
     <div class="admin-form-group">
@@ -18,6 +20,13 @@
     <div class="admin-form-group">
         <label>Starting price (₱)</label>
         <input type="number" name="price" min="1" step="0.01" required value="{{ '%.2f'|format(s.price) if s else '' }}">
+    </div>
+    <div class="admin-form-group">
+        <label>Service fee (₱)</label>
+        <input type="number" name="service_fee" min="0" max="{{ fee_limit }}" step="0.01"
+               value="{{ '%.2f'|format(s.service_fee or 0) if s else '' }}" placeholder="Suggested fee">
+        <small class="admin-muted">Added on top of the starting price. Leave blank for the suggested fee
+            (10% of the price, ₱{{ fee_min }} to ₱{{ fee_max }}); 0 for no fee.</small>
     </div>
     <div class="admin-form-group">
         <label>Estimated hours</label>
@@ -45,17 +54,70 @@
 {% if categories %}
 <details class="admin-card">
     <summary>Add a service</summary>
-    <form method="POST" action="{{ url_for('admin_service_create') }}">
+    <form method="POST" action="{{ url_for('admin_service_create') }}"
+          data-confirm-title="Add this service?" data-confirm="Customers can book it straight away." data-confirm-ok="Add service">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {{ service_fields() }}
         <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-plus"></i> Add service</button>
     </form>
 </details>
+
+<details class="admin-card">
+    <summary>Set service fees</summary>
+    <p class="admin-muted" style="margin:0.6rem 0 0.9rem;">The service fee is charged on top of each service's starting price.
+        Set one amount for many services at once, or go back to the suggested fee for each price
+        (10% of the price rounded to the nearest ₱50, from ₱{{ fee_min }} to ₱{{ fee_max }}).
+        To change a single service, use its Edit link below.</p>
+    <form method="POST" action="{{ url_for('admin_service_fees') }}" class="admin-fee-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="admin-form-grid">
+            <div class="admin-form-group">
+                <label for="feeScope">Services</label>
+                <select id="feeScope" name="scope">
+                    <option value="all">Every service ({{ categories|map(attribute='services')|map('length')|sum }})</option>
+                    {% for c in categories %}
+                    <option value="{{ c.id }}">{{ c.name }} ({{ c.services|length }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="admin-form-group">
+                <span class="admin-fee-label">New fee</span>
+                <label class="admin-fee-choice"><input type="radio" name="mode" value="fixed" checked> The same amount for each:</label>
+                <input type="number" name="amount" min="0" max="{{ fee_limit }}" step="0.01" placeholder="e.g. 150" aria-label="Service fee amount in pesos">
+                <label class="admin-fee-choice"><input type="radio" name="mode" value="suggested"> The suggested fee for each service's price</label>
+            </div>
+        </div>
+        <button type="submit" class="admin-btn admin-btn-primary"
+                data-confirm-title="Change the service fee?" data-confirm="Customers see the new fee on the chosen services straight away."
+                data-confirm-ok="Apply service fee">
+            <i class="fas fa-tags"></i> Apply service fee</button>
+    </form>
+</details>
 {% endif %}
+
+<section class="admin-card bookfee" id="bookingFee" aria-labelledby="bookingFeeTitle">
+    <div class="bookfee-text">
+        <h3 id="bookingFeeTitle"><i class="fas fa-ticket"></i> Booking fee</h3>
+        <p class="admin-muted">Paid by the customer before a repair request is sent, and deducted from their final bill.
+            Currently <strong>{{ '₱{:,}'.format(booking_fee) if booking_fee else 'off' }}</strong>.
+            New bookings use the new amount; bookings already made keep what they paid.</p>
+    </div>
+    <form method="POST" action="{{ url_for('admin_booking_fee') }}" class="bookfee-form"
+          data-confirm-title="Change the booking fee?" data-confirm="Customers pay the new amount on their next booking."
+          data-confirm-ok="Save booking fee">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="bookingFeeInput">Amount (₱)</label>
+        <input id="bookingFeeInput" type="number" name="booking_fee" min="0" max="{{ booking_fee_max }}" step="1"
+               value="{{ booking_fee }}" required inputmode="numeric" aria-describedby="bookingFeeHint">
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-floppy-disk"></i> Save</button>
+        <small id="bookingFeeHint" class="admin-muted">Whole pesos, 0 to {{ '{:,}'.format(booking_fee_max) }}. 0 turns it off.</small>
+    </form>
+</section>
 
 <details class="admin-card" {% if not categories %}open{% endif %}>
     <summary>Add a category</summary>
-    <form method="POST" action="{{ url_for('admin_category_create') }}">
+    <form method="POST" action="{{ url_for('admin_category_create') }}"
+          data-confirm-title="Add this category?" data-confirm-ok="Add category">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="admin-form-grid">
             <div class="admin-form-group"><label>Name</label><input type="text" name="name" maxlength="50" required></div>
@@ -67,16 +129,70 @@
 </details>
 
 {% for c in categories %}
-<h3 class="admin-panel-title" style="margin:1.5rem 0 0.8rem; display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+<h3 class="admin-panel-title" id="cat-{{ c.id }}" style="margin:1.5rem 0 0.8rem; display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; scroll-margin-top:1rem;">
     <i class="fas {{ c.icon or 'fa-tools' }}"></i> {{ c.name }}
     {% if not c.is_active %}<span class="admin-status-badge inactive">Hidden</span>{% endif %}
-    <form method="POST" action="{{ url_for('admin_category_toggle', category_id=c.id) }}" style="margin-left:auto;">
+    <span class="admin-muted" style="font-size:0.8rem; font-weight:500;">{{ c.services|length }} service{{ 's' if c.services|length != 1 }}</span>
+    {% if c.services %}
+    <button type="button" class="admin-btn admin-btn-sm admin-btn-primary" style="margin-left:auto;"
+            aria-expanded="{{ 'true' if editing == c.id else 'false' }}" aria-controls="catEdit{{ c.id }}" data-cat-edit="{{ c.id }}">
+        <i class="fas fa-pen-to-square"></i> Edit category &amp; prices</button>
+    {% endif %}
+    <form method="POST" action="{{ url_for('admin_category_toggle', category_id=c.id) }}" {% if not c.services %}style="margin-left:auto;"{% endif %}
+          data-confirm-title="{{ ('Hide ' if c.is_active else 'Show ') ~ c.name ~ '?' }}"
+          data-confirm="{{ 'Customers can no longer see or book the services in this category.' if c.is_active else 'Customers can see and book its services again.' }}"
+          data-confirm-ok="{{ 'Hide category' if c.is_active else 'Show category' }}" {% if c.is_active %}data-confirm-tone="danger"{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="admin-btn admin-btn-sm">{{ 'Hide category' if c.is_active else 'Show category' }}</button>
     </form>
 </h3>
+{% if c.services %}
+<form class="admin-card cat-edit" id="catEdit{{ c.id }}" method="POST" action="{{ url_for('admin_category_update', category_id=c.id) }}"
+      {% if editing != c.id %}hidden{% endif %}
+      data-confirm-title="Save {{ c.name }}?" data-confirm="Customers see the new names and prices straight away. Existing bookings keep what they were billed."
+      data-confirm-ok="Save category">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="admin-form-grid">
+        <div class="admin-form-group"><label for="catName{{ c.id }}">Category name</label>
+            <input id="catName{{ c.id }}" type="text" name="name" maxlength="50" required value="{{ c.name }}"></div>
+        <div class="admin-form-group"><label for="catIcon{{ c.id }}">Icon (Font Awesome)</label>
+            <input id="catIcon{{ c.id }}" type="text" name="icon" value="{{ c.icon or 'fa-tools' }}" pattern="fa-[a-z0-9-]+" title="e.g. fa-laptop"></div>
+        <div class="admin-form-group admin-form-wide"><label for="catDesc{{ c.id }}">Description</label>
+            <input id="catDesc{{ c.id }}" type="text" name="description" maxlength="500" value="{{ c.description or '' }}"></div>
+    </div>
+    <div class="cat-edit-tools" role="group" aria-label="Fill every row at once">
+        <span class="admin-muted">Fill every row:</span>
+        <label>Service fee ₱ <input type="number" min="0" max="{{ fee_limit }}" step="0.01" data-fill="fee" aria-label="Service fee for every service"></label>
+        <label>Raise prices by % <input type="number" min="-50" max="200" step="1" data-fill="raise" aria-label="Raise every starting price by this percent"></label>
+        <button type="button" class="admin-btn admin-btn-sm admin-btn-secondary" data-fill-apply>Fill in</button>
+        <small class="admin-muted">Fills the table below. Nothing is saved until you press Save.</small>
+    </div>
+    <div style="overflow-x:auto;">
+    <table class="admin-table cat-edit-table">
+        <thead><tr><th>Service</th><th>Starting price (₱)</th><th>Service fee (₱)</th><th>Est. hours</th><th>Customer pays from</th></tr></thead>
+        <tbody>
+        {% for s in c.services|sort(attribute='name') %}
+        <tr {% if not s.is_active %}class="is-hidden-svc"{% endif %}>
+            <td><input type="text" name="name_{{ s.id }}" value="{{ s.name }}" maxlength="100" required aria-label="Name of {{ s.name }}">
+                {% if not s.is_active %}<small class="admin-muted">Hidden from customers</small>{% endif %}</td>
+            <td><input type="number" name="price_{{ s.id }}" value="{{ '%.2f'|format(s.price or 0) }}" min="0" step="0.01" required data-price aria-label="Starting price of {{ s.name }}"></td>
+            <td><input type="number" name="fee_{{ s.id }}" value="{{ '%.2f'|format(s.service_fee or 0) }}" min="0" max="{{ fee_limit }}" step="0.01" data-fee aria-label="Service fee of {{ s.name }}"></td>
+            <td><input type="number" name="hours_{{ s.id }}" value="{{ s.estimated_hours or 1 }}" min="1" max="200" step="1" aria-label="Estimated hours of {{ s.name }}"></td>
+            <td class="cat-edit-total" data-total>{{ peso((s.price or 0) + (s.service_fee or 0)) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="admin-muted" style="margin:0.6rem 0;">A starting price of 0 means the price is set on diagnosis.</p>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-floppy-disk"></i> Save {{ c.name }}</button>
+        <button type="button" class="admin-btn admin-btn-secondary" data-cat-edit="{{ c.id }}">Cancel</button>
+    </div>
+</form>
+{% endif %}
 <div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
-<thead><tr><th>Service</th><th>Price</th><th>Est. hours</th><th>Status</th><th></th></tr></thead>
+<thead><tr><th>Service</th><th>Price</th><th>Service fee</th><th>Est. hours</th><th>Status</th><th></th></tr></thead>
 <tbody>
 {% for s in c.services|sort(attribute='name') %}
 <tr {% if not s.is_active %}style="opacity:0.6;"{% endif %}>
@@ -85,29 +201,94 @@
         {% if s.description %}<span class="admin-muted" style="display:block;">{{ s.description }}</span>{% endif %}
         <details class="admin-row-edit">
             <summary><i class="fas fa-pen"></i> Edit</summary>
-            <form method="POST" action="{{ url_for('admin_service_update', service_id=s.id) }}">
+            <form method="POST" action="{{ url_for('admin_service_update', service_id=s.id) }}"
+                  data-confirm-title="Save changes to {{ s.name }}?" data-confirm="Customers see the new details and prices straight away."
+                  data-confirm-ok="Save changes">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {{ service_fields(s) }}
                 <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Save changes</button>
             </form>
         </details>
     </td>
-    <td>{% if s.price and s.price > 0 %}₱{{ '%.2f'|format(s.price) }}{% else %}<span class="admin-muted">Upon diagnosis</span>{% endif %}</td>
+    <td>{% if s.price and s.price > 0 %}{{ peso(s.price) }}{% else %}<span class="admin-muted">Upon diagnosis</span>{% endif %}</td>
+    <td>{% if s.service_fee and s.service_fee > 0 %}{{ peso(s.service_fee) }}{% else %}<span class="admin-muted">None</span>{% endif %}</td>
     <td>{{ s.estimated_hours or 1 }}</td>
     <td><span class="admin-status-badge {{ 'active' if s.is_active else 'inactive' }}">{{ 'Bookable' if s.is_active else 'Hidden' }}</span></td>
     <td>
-        <form method="POST" action="{{ url_for('admin_service_toggle', service_id=s.id) }}" style="display:inline;">
+        <form method="POST" action="{{ url_for('admin_service_toggle', service_id=s.id) }}" style="display:inline;"
+              data-confirm-title="{{ ('Hide ' if s.is_active else 'Make ') ~ s.name ~ ('?' if s.is_active else ' bookable?') }}"
+              data-confirm="{{ 'Customers can no longer book this service.' if s.is_active else 'Customers can book it straight away.' }}"
+              data-confirm-ok="{{ 'Hide service' if s.is_active else 'Make bookable' }}" {% if s.is_active %}data-confirm-tone="danger"{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="admin-btn admin-btn-sm {{ 'admin-btn-danger' if s.is_active else 'admin-btn-primary' }}">{{ 'Hide' if s.is_active else 'Make bookable' }}</button>
         </form>
     </td>
 </tr>
 {% else %}
-<tr><td colspan="5" style="text-align:center;padding:1rem;">No services in this category yet.</td></tr>
+<tr><td colspan="6" style="text-align:center;padding:1rem;">No services in this category yet.</td></tr>
 {% endfor %}
 </tbody></table></div>
 {% else %}
 <p class="admin-muted">No categories yet. Add one above, then add services to it.</p>
 {% endfor %}
-<p class="admin-muted" style="margin-top:0.8rem;">Price changes apply to new bookings. Existing bookings keep the amount already billed on their transaction.</p>
+<p class="admin-muted" style="margin-top:0.8rem;">Price and fee changes apply to new bookings. Existing bookings keep the amount already billed on their transaction.</p>
+<style>
+    .cat-edit { margin: 0 0 1rem; border: 1px solid var(--primary); }
+    .cat-edit[hidden] { display: none; }
+    .bookfee { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.8rem 1.5rem; scroll-margin-top: 1rem; }
+    .bookfee-text { flex: 1 1 22rem; }
+    .bookfee h3 { margin: 0 0 0.3rem; font-size: 1rem; color: var(--text-primary); }
+    .bookfee h3 i { color: var(--primary); }
+    .bookfee p { margin: 0; font-size: 0.88rem; }
+    .bookfee-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.6rem; }
+    .bookfee-form label { font-size: 0.85rem; color: var(--text-secondary); }
+    .bookfee-form input { width: 7.5rem; padding: 0.45rem 0.6rem; border-radius: 8px; background: var(--dark-input);
+        color: var(--text-primary); border: 1px solid var(--dark-border-light); font: inherit; }
+    .bookfee-form input:focus { outline: none; border-color: var(--primary); }
+    .bookfee-form small { flex-basis: 100%; text-align: right; }
+    .cat-edit-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; margin: 0.4rem 0 0.8rem;
+        padding: 0.6rem 0.8rem; border-radius: 10px; background: rgba(37, 99, 235, 0.06); }
+    .cat-edit-tools label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+    .cat-edit-tools input { width: 6.5rem; }
+    .cat-edit-table input, .cat-edit-tools input { width: 100%; min-width: 6rem; padding: 0.4rem 0.55rem; border-radius: 8px;
+        background: var(--dark-input); color: var(--text-primary); border: 1px solid var(--dark-border-light); font: inherit; }
+    .cat-edit-table input:focus, .cat-edit-tools input:focus { outline: none; border-color: var(--primary); }
+    .cat-edit-table td { vertical-align: middle; }
+    .cat-edit-table td:first-child input { min-width: 14rem; }
+    .cat-edit-table .is-hidden-svc { opacity: 0.65; }
+    .cat-edit-total { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .cat-edit-table input:invalid { border-color: var(--danger); }
+</style>
+<script>
+(function () {
+    'use strict';
+    const peso = n => '₱' + Number(n || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    document.querySelectorAll('[data-cat-edit]').forEach(btn => btn.addEventListener('click', () => {
+        const form = document.getElementById('catEdit' + btn.dataset.catEdit);
+        form.hidden = !form.hidden;
+        document.querySelectorAll(`[aria-controls="${form.id}"]`).forEach(b => b.setAttribute('aria-expanded', String(!form.hidden)));
+        if (!form.hidden) form.querySelector('input[name="name"]').focus();
+    }));
+    document.querySelectorAll('.cat-edit').forEach(form => {
+        const total = row => {
+            const p = parseFloat(row.querySelector('[data-price]').value) || 0;
+            const f = parseFloat(row.querySelector('[data-fee]').value) || 0;
+            row.querySelector('[data-total]').textContent = peso(p + f);
+        };
+        form.addEventListener('input', e => { const row = e.target.closest('tbody tr'); if (row) total(row); });
+        form.querySelector('[data-fill-apply]').addEventListener('click', () => {
+            const fee = form.querySelector('[data-fill="fee"]').value;
+            const raise = parseFloat(form.querySelector('[data-fill="raise"]').value);
+            form.querySelectorAll('tbody tr').forEach(row => {
+                if (fee !== '') row.querySelector('[data-fee]').value = Number(fee).toFixed(2);
+                if (!isNaN(raise) && raise !== 0) {
+                    const p = row.querySelector('[data-price]');
+                    p.value = (Math.round((parseFloat(p.value) || 0) * (1 + raise / 100))).toFixed(2);
+                }
+                total(row);
+            });
+        });
+    });
+})();
+</script>
 {% endblock %}

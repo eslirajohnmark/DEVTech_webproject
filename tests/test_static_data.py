@@ -24,7 +24,7 @@ def test_home_shows_real_stats_once_there_is_data(client, assigned_booking):
     assigned_booking.status = 'released'
     db.session.commit()
     html = client.get('/').get_data(as_text=True)
-    assert 'Repairs Completed' in html and 'Verified Technician' in html
+    assert 'repairs finished' in html and 'verified technician' in html
 
 
 def test_contact_details_come_from_settings(client, customer):

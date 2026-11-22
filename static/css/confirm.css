@@ -1,0 +1,45 @@
+/* DEVTech confirmation dialog (static/js/confirm.js): a frosted glass card, styled for each portal.
+   Light glass + circuit blue for customers; navy glass (admin) or dark glass + tool yellow (technician). */
+.dc {
+    --dc-card: rgba(255, 255, 255, 0.86); --dc-edge: rgba(255, 255, 255, 0.9);
+    --dc-ink: #0F1E3D; --dc-ink-2: #3E4C69; --dc-accent: #2563EB; --dc-accent-ink: #fff;
+    --dc-cancel: rgba(15, 30, 61, 0.06); --dc-cancel-ink: #0F1E3D; --dc-danger: #DC2626;
+    margin: auto; padding: 0; border: 0; background: transparent; max-width: min(440px, calc(100vw - 32px)); width: 100%;
+    color: var(--dc-ink); font-family: 'IBM Plex Sans', system-ui, 'Segoe UI', sans-serif;
+}
+.dc--admin {
+    --dc-card: rgba(18, 29, 58, 0.9); --dc-edge: rgba(148, 170, 220, 0.2);
+    --dc-ink: #E5E7EB; --dc-ink-2: #A3B1CC; --dc-accent: #5B8CFF; --dc-accent-ink: #06122E;
+    --dc-cancel: rgba(255, 255, 255, 0.07); --dc-cancel-ink: #E5E7EB; --dc-danger: #EF4444;
+}
+.dc--tech {
+    --dc-card: rgba(14, 19, 38, 0.92); --dc-edge: rgba(250, 204, 21, 0.22);
+    --dc-ink: #F1F5F9; --dc-ink-2: #A8B3C7; --dc-accent: #FACC15; --dc-accent-ink: #161204;
+    --dc-cancel: rgba(255, 255, 255, 0.07); --dc-cancel-ink: #F1F5F9; --dc-danger: #EF4444;
+}
+.dc::backdrop { background: rgba(6, 12, 30, 0.45); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.dc-card {
+    margin: 0; padding: 1.4rem 1.4rem 1.2rem; border-radius: 18px;
+    background: var(--dc-card); border: 1px solid var(--dc-edge);
+    -webkit-backdrop-filter: blur(20px) saturate(150%); backdrop-filter: blur(20px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 30px 70px -30px rgba(0, 0, 0, 0.55);
+}
+.dc-icon {
+    display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 0.8rem; border-radius: 50%;
+    color: var(--dc-accent); box-shadow: inset 0 0 0 1.5px var(--dc-accent); font-size: 1.05rem;
+}
+.dc--danger .dc-icon { color: var(--dc-danger); box-shadow: inset 0 0 0 1.5px var(--dc-danger); }
+.dc-title { margin: 0; font: 600 1.18rem/1.3 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif; color: var(--dc-ink); }
+.dc-message { margin: 0.5rem 0 0; font-size: 0.93rem; line-height: 1.55; color: var(--dc-ink-2); }
+.dc-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.6rem; margin-top: 1.3rem; }
+.dc-btn {
+    min-height: 42px; padding: 0.55rem 1.1rem; border: 0; border-radius: 11px; cursor: pointer;
+    font: 600 0.92rem 'IBM Plex Sans', system-ui, sans-serif;
+}
+.dc-btn--cancel { background: var(--dc-cancel); color: var(--dc-cancel-ink); }
+.dc-btn--cancel:hover { filter: brightness(1.15); }
+.dc-btn--ok { background: var(--dc-accent); color: var(--dc-accent-ink); }
+.dc-btn--ok:hover { filter: brightness(1.08); }
+.dc--danger .dc-btn--ok { background: var(--dc-danger); color: #fff; }
+.dc-btn:focus-visible { outline: 2px solid var(--dc-accent); outline-offset: 2px; }
+@media (max-width: 420px) { .dc-actions .dc-btn { flex: 1; } }

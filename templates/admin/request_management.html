@@ -115,9 +115,17 @@
                     <i class="fas fa-eye"></i> View Details
                 </button>
                 {% if booking.status == 'pending' %}
+                    {% set fee_txn = booking_fee_transaction(booking) %}
+                    {% if fee_txn and fee_txn.payment_status != 'confirmed' %}
+                    <a class="admin-btn admin-btn-sm admin-btn-secondary" href="{{ url_for('admin_payments') }}"
+                       title="Approve after the booking fee screenshot is confirmed">
+                        <i class="fas fa-receipt"></i> {{ 'Fee rejected: waiting for a new screenshot' if fee_txn.payment_status == 'rejected' else ('Booking fee not paid yet' if fee_txn.payment_method == 'paymongo' else 'Check the booking fee first') }}
+                    </a>
+                    {% else %}
                     <button class="admin-btn admin-btn-sm admin-btn-approve" onclick='openAssignTechnicianModal({{ booking.id|string|tojson }}, {{ booking.user.full_name|tojson }})'>
                         <i class="fas fa-user-check"></i> Approve &amp; Assign
                     </button>
+                    {% endif %}
                     <button class="admin-btn admin-btn-sm admin-btn-reject" onclick='openRejectModal({{ booking.id|string|tojson }}, {{ booking.user.full_name|tojson }})'>
                         <i class="fas fa-times"></i> Reject
                     </button>
@@ -448,6 +456,10 @@
                             <span>₱${b.service.price.toFixed(2)}</span>
                         </div>
                         <div class="admin-detail-item">
+                            <label>Service Fee</label>
+                            <span>₱${(b.service.service_fee || 0).toFixed(2)}</span>
+                        </div>
+                        <div class="admin-detail-item">
                             <label>Est. Duration</label>
                             <span>${b.service.estimated_hours ? b.service.estimated_hours + ' hr(s)' : 'N/A'}</span>
                         </div>
@@ -455,7 +467,39 @@
                             <label>Requested On</label>
                             <span>${h(b.created_at || 'N/A')}</span>
                         </div>
+                        ${b.customer_received_at ? `
+                        <div class="admin-detail-item">
+                            <label>Customer Received Device</label>
+                            <span>${h(b.customer_received_at)}</span>
+                        </div>` : ''}
                     </div>
+
+                    ${b.intake ? `
+                    <div class="admin-detail-section-title">Device Intake</div>
+                    <div class="admin-detail-grid">
+                        <div class="admin-detail-item">
+                            <label>Recorded</label>
+                            <span>${h(b.intake.recorded_at || 'N/A')}</span>
+                        </div>
+                        <div class="admin-detail-item">
+                            <label>Condition</label>
+                            <span>${h(b.intake.condition || 'N/A')}</span>
+                        </div>
+                        ${b.intake.condition_notes ? `
+                        <div class="admin-detail-item" style="grid-column: 1 / -1;">
+                            <label>Condition Notes</label>
+                            <p>${h(b.intake.condition_notes)}</p>
+                        </div>` : ''}
+                        ${b.intake.photos.length ? `
+                        <div class="admin-detail-item" style="grid-column: 1 / -1;">
+                            <label>Photo Record (${b.intake.photos.length})</label>
+                            <ul class="admin-intake-photos">
+                                ${b.intake.photos.map(f => `
+                                <li><a href="${h(f.url)}" target="_blank" rel="noopener"><img src="${h(f.url)}" alt="${h(f.caption || f.name)}" loading="lazy"></a>
+                                    ${f.caption ? `<small>${h(f.caption)}</small>` : ''}</li>`).join('')}
+                            </ul>
+                        </div>` : ''}
+                    </div>` : ''}
 
                     ${b.technician ? `
                     <div class="admin-detail-section-title">Assigned Technician</div>

@@ -13,11 +13,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/profile.css') }}" />
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/confirm.js') }}" defer></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive-fixes.css') }}" />
     <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
     <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
     {% block extra_css %}{% endblock %}
+    <script src="{{ url_for('static', filename='js/busy-guard.js') }}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
@@ -108,6 +110,22 @@
         </header>
 
         <main class="tech-content" id="techContent">
+            {% if photo_notice %}
+            <div class="tech-photo-notice {{ 'is-overdue' if photo_notice.overdue }}" role="alert">
+                <span class="tech-photo-notice-icon" aria-hidden="true"><i class="fas fa-{{ 'triangle-exclamation' if photo_notice.overdue else 'camera' }}"></i></span>
+                <div class="tech-photo-notice-text">
+                    {% if photo_notice.overdue %}
+                    <strong>Your profile photo is overdue.</strong>
+                    <span>It was due {{ photo_notice.due }}. Add a clear photo of yourself now; until you do, the admin may suspend your account.</span>
+                    {% else %}
+                    <strong>Add a photo of yourself as your profile picture.</strong>
+                    <span>This is required for verified technicians, so customers can recognise who is handling their device.
+                        Add it by {{ photo_notice.due }}.</span>
+                    {% endif %}
+                </div>
+                <a class="tech-btn tech-btn--primary tech-btn--sm" href="{{ url_for('technician.profile') }}#look"><i class="fas fa-camera"></i> Add my photo</a>
+            </div>
+            {% endif %}
             {% block body %}{% endblock %}
         </main>
     </div>

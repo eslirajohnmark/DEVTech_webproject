@@ -87,10 +87,23 @@ def _is_cash_after_repair(txn):
     return bool(txn and (txn.payment_method or '').upper() == 'C.A.R')
 
 
+def _proof_waiting(txn):
+    """A GCash / online payment whose screenshot the customer sent and nobody has checked yet."""
+    return bool(txn and txn.payment_status == 'pending' and txn.receipt_image
+                and not _is_cash_after_repair(txn) and (txn.payment_method or '').lower() != 'paymongo')
+
+
+def _nothing_due(txn):
+    """A ₱0 repair bill: the booking fee already covered everything, so there is nothing to collect."""
+    return bool(txn and txn.payment_status in ('pending', 'rejected') and not txn.order_id
+                and float(txn.amount or 0) <= 0)
+
+
 def stage_requirements(b):
     """What the job needs before it can leave its current stage, for the job page
     and for advance_job (one list, so the page and the server never disagree).
     Returns {'manual', 'next', 'items': [{'label', 'met', 'hint'}]} or None."""
+    from app import receipt_url
     nxt = NEXT_STATUS.get(b.status)
     if not nxt or b.status == 'on_hold':
         return None
@@ -105,17 +118,39 @@ def stage_requirements(b):
         items = [{'label': 'Service report submitted', 'met': _report_submitted(b),
                   'hint': 'Submit your service report (save draft is not enough).'}]
     else:   # completed -> released
+        items = [{'label': 'Customer confirmed they received the device', 'met': bool(b.customer_received_at),
+                  'hint': 'Ask the customer to press "I received my device" on their Monitor Device page.'}]
         paid = bool(txn and txn.payment_status == 'confirmed')
-        if _is_cash_after_repair(txn) and not paid:
-            items = [{'label': f'Cash of ₱{float(txn.amount):,.2f} collected', 'met': None,
-                      'hint': 'C.A.R job: tick the box below once the customer has paid you in cash.'}]
+        if _nothing_due(txn):
+            items.append({'label': 'Payment confirmed', 'met': True,
+                          'hint': 'Nothing to pay: the booking fee already covers the whole bill.'})
+        elif _is_cash_after_repair(txn) and not paid:
+            items.append({'label': f'Cash of ₱{float(txn.amount):,.2f} collected', 'met': None,
+                          'hint': 'C.A.R job: tick the box below once the customer has paid you in cash.'})
+        elif _proof_waiting(txn):
+            items.append({'label': f'GCash payment of ₱{float(txn.amount):,.2f} checked', 'met': None,
+                          'hint': "Open the customer's payment screenshot, check that the money reached the "
+                                  'shop account, then tick the box below.'})
+        elif not paid and txn and txn.payment_status == 'rejected':
+            items.append({'label': 'Payment confirmed', 'met': False,
+                          'hint': 'The payment screenshot was rejected. The customer has to send a new one.'})
+        elif not paid and txn:
+            items.append({'label': 'Payment confirmed', 'met': False,
+                          'hint': 'Waiting for the customer to pay by GCash and send a screenshot of the payment.'})
         else:
-            items = [{'label': 'Payment confirmed', 'met': paid,
-                      'hint': 'An admin must confirm the GCash payment before the device is released.'
-                              if txn else 'This job has no payment record. Ask an admin to check it.'}]
+            items.append({'label': 'Payment confirmed', 'met': paid,
+                          'hint': 'Paid.' if paid else 'This job has no payment record. Ask an admin to check it.'})
+    unpaid_after_repair = (b.status == 'completed' and txn is not None and txn.payment_status != 'confirmed'
+                           and not _nothing_due(txn))
     return {'manual': b.status in MANUAL_STAGES, 'next': nxt, 'next_label': STATUS_LABELS[nxt],
-            'items': items, 'cash_due': float(txn.amount) if b.status == 'completed' and
-            _is_cash_after_repair(txn) and txn.payment_status != 'confirmed' else None}
+            'items': items, 'cash_due': float(txn.amount) if unpaid_after_repair and
+            _is_cash_after_repair(txn) else None,
+            # GCash: the technician checks the screenshot by hand before releasing.
+            'proof_due': ({'amount': float(txn.amount), 'url': receipt_url(txn),
+                           'reference': txn.gcash_reference or txn.reference_number or ''}
+                          if unpaid_after_repair and _proof_waiting(txn) else None),
+            # Release waits for the customer's "I received my device".
+            'awaiting_customer': b.status == 'completed' and not b.customer_received_at}
 
 
 def _maybe_advance(b, actor_name, reason_override=None):
@@ -193,6 +228,9 @@ def _intake_dict(r):
         'dataBackupConsent': r.data_backup_consent,
         'customerPresent': r.customer_present,
         'photosNote': r.photos_note,
+        'photos': [{'id': f.id, 'caption': f.caption, 'name': f.original_name,
+                    'url': url_for('technician_api.serve_upload', upload_id=f.id)}
+                   for f in intake_files(r.booking_id)],
     }
 
 
@@ -225,15 +263,21 @@ def me():
 
 
 @technician_api_bp.route('/login', methods=['POST'])
-@limiter.limit('5 per minute')
+@limiter.limit('20 per minute')
 def login():
+    from services import login_guard
     body = request.get_json(silent=True) or {}
     tech_id  = (body.get('technician_id') or '').strip().upper()
     password = body.get('password') or ''
+    wait = login_guard.seconds_left('technician', tech_id)
+    if wait:
+        return jsonify({'ok': False, 'reason': login_guard.locked_message(wait), 'retryAfter': wait}), 429
     user = Technician.query.filter(db.func.upper(Technician.username) == tech_id).first()
     if not user or not user.check_password(password):
-        return jsonify({'ok': False,
-                        'reason': 'Incorrect Tech ID or password.'}), 401
+        left, locked = login_guard.record_failure('technician', tech_id)
+        return jsonify({'ok': False, 'reason': login_guard.failure_message('Incorrect Tech ID or password.', left, locked),
+                        'retryAfter': locked or None}), 401
+    login_guard.clear('technician', tech_id)
     if not user.is_active:
         return jsonify({'ok': False,
                         'reason': 'This technician account has been deactivated.'}), 403
@@ -395,26 +439,45 @@ def advance_job(job_id):
     if b.status == 'in_progress' and not _report_submitted(b):
         return fail("Can't move to Ready for Collection yet: submit your service report first.")
     cash_note = ''
+    if b.status == 'completed' and not b.customer_received_at:
+        return fail("Can't release yet: the customer hasn't confirmed they received the device. "
+                    'Ask them to press "I received my device" on their Monitor Device page.')
     if b.status == 'completed':
         txn = b.transaction
         if not txn:
             return fail("Can't release yet: this job has no payment record. Ask an admin to check it.")
         if txn.payment_status != 'confirmed':
-            if not _is_cash_after_repair(txn):
-                return fail("Can't release yet: the GCash payment hasn't been confirmed by an admin.")
-            got_cash = (request.get_json(silent=True) or {}).get('cashReceived') if request.is_json \
-                else request.form.get('cash_received')
-            if not got_cash:
-                return fail(f"Can't release yet: confirm that you collected ₱{float(txn.amount):,.2f} "
-                            'cash from the customer (tick the box), then release.')
+            body = (request.get_json(silent=True) or {}) if request.is_json else request.form
             now = datetime.utcnow()
-            # Only while still unpaid, so a double click can't record it twice.
             from app import Transaction
-            Transaction.query.filter(Transaction.id == txn.id, Transaction.payment_status.in_(('pending', 'rejected')))\
+            if _nothing_due(txn):
+                how = 'nothing due: covered by the booking fee'
+                cash_note = ' Nothing to pay: the booking fee covered the bill.'
+                allowed_from = ('pending', 'rejected')
+            elif _is_cash_after_repair(txn):
+                if not body.get('cashReceived' if request.is_json else 'cash_received'):
+                    return fail(f"Can't release yet: confirm that you collected ₱{float(txn.amount):,.2f} "
+                                'cash from the customer (tick the box), then release.')
+                how, cash_note = 'cash at release', f' Cash payment of ₱{float(txn.amount):,.2f} collected.'
+                allowed_from = ('pending', 'rejected')
+            elif _proof_waiting(txn):
+                if not body.get('paymentVerified' if request.is_json else 'payment_verified'):
+                    return fail("Can't release yet: check the customer's GCash screenshot against the shop "
+                                f'account (₱{float(txn.amount):,.2f}), tick the box, then release.')
+                how = 'GCash checked at release'
+                cash_note = f' GCash payment of ₱{float(txn.amount):,.2f} checked by the technician.'
+                allowed_from = ('pending',)
+            elif txn.payment_status == 'rejected':
+                return fail("Can't release yet: the payment screenshot was rejected. "
+                            'The customer has to send a new one.')
+            else:
+                return fail("Can't release yet: the customer hasn't paid. Ask them to pay by GCash and send "
+                            'a screenshot, or to pay in cash (C.A.R).')
+            # Only while still unpaid, so a double click can't record it twice.
+            Transaction.query.filter(Transaction.id == txn.id, Transaction.payment_status.in_(allowed_from))\
                 .update({'payment_status': 'confirmed', 'updated_at': now, 'reviewed_at': now,
-                         'reviewed_by': f'{session.get("username", "Technician")} (cash at release)'},
+                         'reviewed_by': f'{session.get("username", "Technician")} ({how})'},
                         synchronize_session=False)
-            cash_note = f' Cash payment of ₱{float(txn.amount):,.2f} collected.'
 
     texts = {'diagnosis_pending': 'Device received and recorded. Diagnosis in progress.',
              'in_progress': 'Diagnosis complete. Repair started.',
@@ -435,8 +498,10 @@ def advance_job(job_id):
                         + (' You can now rate your technician on the Monitor Device page.'
                            if nxt == 'completed' else ''), 'info', role='customer')
     if cash_note:
-        notify_admins('Cash Collected', f'{b.booking_number}: {session.get("username")} collected '
-                      f'₱{float(b.transaction.amount):,.2f} cash and released the device.', 'info')
+        what = 'collected' if 'Cash' in cash_note else 'checked the GCash payment of'
+        notify_admins('Payment Collected' if 'Cash' in cash_note else 'GCash Payment Checked',
+                      f'{b.booking_number}: {session.get("username")} {what} '
+                      f'₱{float(b.transaction.amount):,.2f} and released the device.', 'info')
     if not request.is_json:
         flash(f'Moved to {STATUS_LABELS[nxt]}.' + cash_note, 'success')
         return redirect(url_for('technician.job_detail', job_id=b.id))
@@ -581,11 +646,21 @@ def job_intake(job_id):
         r.data_backup_consent = bool(body.get('dataBackupConsent'))
         r.customer_present    = bool(body.get('customerPresent'))
         r.photos_note         = body.get('photosNote', '')
+        db.session.flush()
+
+        # The photo record: photos uploaded on the form belong to this intake record now.
+        photos = intake_files(job_id)
+        for photo in photos:
+            photo.owner_id = r.id
+            caption = body.get(f'caption_{photo.id}')
+            if isinstance(caption, str):
+                photo.caption = caption.strip()[:255] or None
 
         db.session.add(JobLog(
             booking_id=job_id, at=_now(),
             by_name=session.get('username', 'Technician'),
-            action='intake', text='Intake recorded.',
+            action='intake', text='Intake recorded' + (
+                f' with {len(photos)} {"photo" if len(photos) == 1 else "photos"}.' if photos else '.'),
         ))
 
         # Auto-advance confirmed -> diagnosis_pending (guard inside helper)
@@ -610,6 +685,12 @@ def job_intake(job_id):
 # ---------------------------------------------------------------------------
 
 REPORT_MAX_FILES = 12
+INTAKE_MAX_FILES = 12
+
+
+def intake_files(booking_id):
+    """Photos taken at device intake (the photo record), saved or not yet saved."""
+    return UploadedFile.query.filter(UploadedFile.owner_type == 'intake', UploadedFile.booking_id == booking_id)        .order_by(UploadedFile.id).all()
 
 
 def report_files(booking_id, report=None):
@@ -821,12 +902,22 @@ def job_report_pdf(job_id):
 @technician_api_bp.route('/uploads/<int:upload_id>', methods=['DELETE'])
 @technician_required
 def delete_upload(upload_id):
-    """Remove a photo from a service report that hasn't been submitted yet."""
+    """Remove a photo from a service report that hasn't been submitted yet, or from
+    the intake photo record while intake can still be changed."""
     import os
     from services.upload_service import path_for
     f = UploadedFile.query.get_or_404(upload_id)
-    if f.technician_id != session['user_id'] or f.owner_type != 'report':
+    if f.technician_id != session['user_id'] or f.owner_type not in ('report', 'intake'):
         return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    if f.owner_type == 'intake':
+        b = db.session.get(Booking, f.booking_id)
+        if not b or b.technician_id != session['user_id'] or b.status not in INTAKE_STATUSES:
+            return jsonify({'ok': False, 'reason': 'This job has moved on; its intake photos are kept as a record.'}), 400
+        from services import file_store
+        file_store.removed(path_for(f))
+        db.session.delete(f)
+        db.session.commit()
+        return jsonify({'ok': True})
     r = ServiceReport.query.filter_by(booking_id=f.booking_id).order_by(ServiceReport.id.desc()).first()
     if r and r.status == 'submitted' and f.owner_id == r.id:
         return jsonify({'ok': False, 'reason': 'This report was submitted; its photos can no longer be removed.'}), 400
@@ -1071,6 +1162,14 @@ def upload():
             return jsonify({'ok': False, 'reason': 'This report was submitted; add photos to a new report.'}), 400
         if job and len(report_files(job, r)) >= REPORT_MAX_FILES:
             return jsonify({'ok': False, 'reason': f'A report can have up to {REPORT_MAX_FILES} photos.'}), 400
+    if request.form.get('ownerType') == 'intake':
+        b = db.session.get(Booking, request.form.get('jobId', type=int) or 0)
+        if not b or b.technician_id != session['user_id']:
+            return jsonify({'ok': False, 'reason': 'Choose one of your jobs first.'}), 400
+        if b.status not in INTAKE_STATUSES:
+            return jsonify({'ok': False, 'reason': 'Intake photos can only be added while the job is active.'}), 400
+        if len(intake_files(b.id)) >= INTAKE_MAX_FILES:
+            return jsonify({'ok': False, 'reason': f'An intake record can have up to {INTAKE_MAX_FILES} photos.'}), 400
     ok, result = save_upload(
         file,
         request.form.get('ownerType', ''),

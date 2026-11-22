@@ -256,49 +256,6 @@ body {
     margin-left: 15px;
 }
 
-.login-container .social-buttons {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 30px;
-}
-
-.login-container .social-btn {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    padding: 14px;
-    border-radius: 12px;
-    border: 2px solid #e0e2e8;
-    background: white;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    font-weight: 500;
-    color: #1a1a2e;
-    font-size: 0.95rem;
-    text-decoration: none;
-}
-
-.login-container .social-btn:hover {
-    border-color: var(--primary);
-    background: #f8f9ff;
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-}
-
-.login-container .social-btn i {
-    font-size: 1.3rem;
-}
-
-.login-container .social-btn.google i {
-    color: #db4437;
-}
-
-.login-container .social-btn.facebook i {
-    color: #1877f2;
-}
-
 .login-container .signup-link {
     text-align: center;
     color: #6c757d;

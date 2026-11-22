@@ -40,15 +40,56 @@
         {% if locked %}
         <p class="admin-muted tv-small" style="margin-top:0;">
             <i class="fas fa-lock"></i> {{ edit.tech_id }} has registered, so the name, birth date and ID stay as matched.
-            Only the hire date and note can change.
+            Only the hire date, address and note can change.
         </p>
         {% else %}
-        <p class="admin-muted tv-small" style="margin-top:0;">Copy the name, birth date and ID number exactly as printed on their valid ID.</p>
+        <p class="admin-muted tv-small" style="margin-top:0;">Upload the front and back of their valid ID, and copy the name, birth date and ID number exactly as printed on it.</p>
         {% endif %}
         {% if errors %}<div class="tr-error-box" role="alert"><i class="fas fa-circle-exclamation"></i> Please fix the highlighted fields.</div>{% endif %}
 
-        <form method="POST" action="{{ url_for('admin_tech_roster_save', record_id=edit.id) if edit else url_for('admin_tech_roster_save') }}" class="tr-form" novalidate>
+        <form method="POST" action="{{ url_for('admin_tech_roster_save', record_id=edit.id) if edit else url_for('admin_tech_roster_save') }}" class="tr-form" novalidate
+              enctype="multipart/form-data" data-ids-with-back="{{ ids_with_back|join('|') }}"
+              data-confirm-title="{{ 'Save changes to ' ~ edit.tech_id ~ '?' if edit else 'Add this technician to the roster?' }}"
+              data-confirm="{{ 'The record is updated straight away.' if edit else 'Only this Tech ID can then register, with an ID that matches these details.' }}"
+              data-confirm-ok="{{ 'Save changes' if edit else 'Add to roster' }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if not locked %}
+            {# The front is kept with the record and also read on this computer to fill in the fields
+               (static/js/id-scan.js: a PhilSys QR code, or the printed text; only that text is sent for reading). #}
+            {% set has_front = edit and edit.id_front_file %}
+            {% set has_back = edit and edit.id_back_file %}
+            <div class="admin-form-group tr-wide tr-scan-first" id="trIdRead"
+                 data-action="{{ url_for('admin_tech_roster_read_id') }}" data-max-bytes="{{ 10 * 1024 * 1024 }}">
+                <span class="tr-label" id="trIdScanLabel">Front of their valid ID{% if not has_front %} <span class="tr-req">*</span>{% endif %}</span>
+                <label class="tr-scan {{ 'is-invalid' if errors.get('id_front') }}" for="trIdScan">
+                    <span class="tr-scan-thumb" id="trIdThumb" aria-hidden="true"><i class="fas fa-id-card"></i></span>
+                    <span class="tr-scan-text">
+                        <strong id="trIdScanName">{{ 'Replace the photo of the front' if has_front else 'Choose a photo of the front' }}</strong>
+                        <small>JPG, PNG or WEBP, up to 5 MB. Also fills in the fields below: a PhilSys National ID's QR code is read first; for other IDs, the printed text.</small>
+                    </span>
+                    <input type="file" id="trIdScan" name="id_front" accept="image/jpeg,image/png,image/webp" aria-labelledby="trIdScanLabel">
+                </label>
+                {% if has_front %}<small class="admin-muted"><i class="fas fa-paperclip"></i> On file: <a href="{{ url_for('admin_tech_roster_id_photo', record_id=edit.id, side='front') }}" target="_blank" rel="noopener">view the front</a></small>{% endif %}
+                {{ err('id_front') }}
+                <button type="button" class="admin-btn admin-btn-sm admin-btn-secondary tr-ocr" id="trIdOcr" hidden>
+                    <i class="fas fa-font"></i> Read the printed text instead</button>
+                <p class="tr-scan-note" id="trIdScanNote" role="status" hidden></p>
+            </div>
+            <div class="admin-form-group tr-wide">
+                <span class="tr-label" id="trIdBackLabel">Back of their valid ID <span class="tr-req" id="trBackReq" hidden>*</span></span>
+                <label class="tr-scan {{ 'is-invalid' if errors.get('id_back') }}" for="trIdBack">
+                    <span class="tr-scan-thumb" id="trBackThumb" aria-hidden="true"><i class="fas fa-id-card-clip"></i></span>
+                    <span class="tr-scan-text">
+                        <strong id="trBackName">{{ 'Replace the photo of the back' if has_back else 'Choose a photo of the back' }}</strong>
+                        <small>Needed when the ID has details on the back: {{ ids_with_back|join(', ') }}.</small>
+                    </span>
+                    <input type="file" id="trIdBack" name="id_back" accept="image/jpeg,image/png,image/webp" aria-labelledby="trIdBackLabel">
+                </label>
+                {% if has_back %}<small class="admin-muted"><i class="fas fa-paperclip"></i> On file: <a href="{{ url_for('admin_tech_roster_id_photo', record_id=edit.id, side='back') }}" target="_blank" rel="noopener">view the back</a></small>{% endif %}
+                {{ err('id_back') }}
+                <small class="admin-muted"><i class="fas fa-lock"></i> The ID photos are kept privately with this record. Only admins can open them, and every view is logged.</small>
+            </div>
+            {% endif %}
             <div class="admin-form-group">
                 <label for="trTechId">Tech ID</label>
                 <input id="trTechId" name="tech_id" maxlength="12" required {% if locked %}disabled{% endif %}
@@ -90,6 +131,12 @@
                 {{ err('hired_on') }}
             </div>
             <div class="admin-form-group tr-wide">
+                <label for="trAddress">Home address</label>
+                <input id="trAddress" name="address" maxlength="255" required autocomplete="off"
+                       value="{{ form.get('address') or (edit.address if edit and edit.address else '') }}" placeholder="House no., street, barangay, city">
+                {{ err('address') }}
+            </div>
+            <div class="admin-form-group tr-wide">
                 <label for="trNote">Note (optional)</label>
                 <input id="trNote" name="note" maxlength="255"
                        value="{{ form.get('note') or (edit.note if edit and edit.note else '') }}" placeholder="e.g. Tacloban branch, hardware team">
@@ -117,9 +164,13 @@
             {% for e in records %}
             <tr>
                 <td class="tr-mono">{{ e.tech_id }}</td>
-                <td>{{ e.full_name }}{% if e.note %}<br><span class="admin-muted">{{ e.note }}</span>{% endif %}</td>
+                <td>{{ e.full_name }}{% if e.address %}<br><span class="admin-muted"><i class="fas fa-location-dot"></i> {{ e.address }}</span>{% endif %}{% if e.note %}<br><span class="admin-muted">{{ e.note }}</span>{% endif %}</td>
                 <td>{{ e.birth_date.strftime('%b %d, %Y') }}</td>
-                <td>{{ e.id_type }}<br><span class="admin-muted tr-mono">{{ e.id_number }}</span></td>
+                <td>{{ e.id_type }}<br><span class="admin-muted tr-mono">{{ e.id_number }}</span>
+                    {% if e.id_front_file or e.id_back_file %}<br><span class="tr-photos">
+                        {% if e.id_front_file %}<a href="{{ url_for('admin_tech_roster_id_photo', record_id=e.id, side='front') }}" target="_blank" rel="noopener"><i class="fas fa-image"></i> Front</a>{% endif %}
+                        {% if e.id_back_file %}<a href="{{ url_for('admin_tech_roster_id_photo', record_id=e.id, side='back') }}" target="_blank" rel="noopener"><i class="fas fa-image"></i> Back</a>{% endif %}
+                    </span>{% else %}<br><span class="admin-muted"><i class="fas fa-triangle-exclamation"></i> No ID photos</span>{% endif %}</td>
                 <td>
                     {% if e.technician_id %}
                     <a class="tv-status tv-status--verified" href="{{ url_for('admin_tech_verification_detail', tech_id=e.technician_id) }}">Registered</a>
@@ -133,7 +184,7 @@
                     <a class="admin-btn admin-btn-sm admin-btn-secondary" href="{{ url_for('admin_tech_roster', edit=e.id) }}#rosterForm">Edit</a>
                     {% if not e.technician_id %}
                     <form method="POST" action="{{ url_for('admin_tech_roster_delete', record_id=e.id) }}"
-                          onsubmit="return confirm('Remove {{ e.tech_id }} from the roster?');">
+                          data-confirm-title="Remove {{ e.tech_id }} from the roster?" data-confirm="They can no longer register with this Tech ID." data-confirm-ok="Remove" data-confirm-tone="danger">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="admin-btn admin-btn-sm admin-btn-reject">Remove</button>
                     </form>
@@ -161,4 +212,46 @@
         </div>
     </section>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if not locked %}
+<script src="{{ url_for('static', filename='js/vendor/jsQR.js') }}"></script>
+<script src="{{ url_for('static', filename='js/id-autofill.js') }}"></script>
+<script src="{{ url_for('static', filename='js/id-scan.js') }}"></script>
+<script>
+(function () {
+    // The back is required for IDs with details on the back; show a preview of it.
+    var form = document.querySelector('.tr-form');
+    var type = document.getElementById('trIdType'), req = document.getElementById('trBackReq');
+    var withBack = (form.dataset.idsWithBack || '').split('|');
+    function sync() { req.hidden = withBack.indexOf(type.value) === -1; }
+    type.addEventListener('change', sync);
+    sync();
+    var input = document.getElementById('trIdBack'), thumb = document.getElementById('trBackThumb');
+    var name = document.getElementById('trBackName');
+    input.addEventListener('change', function () {
+        var f = input.files[0];
+        thumb.innerHTML = '<i class="fas fa-id-card-clip"></i>';
+        name.textContent = f ? f.name : 'Choose a photo of the back';
+        if (!f) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+            if (input.files[0] !== f) return;
+            var img = document.createElement('img');
+            img.src = reader.result; img.alt = '';
+            thumb.replaceChildren(img);
+        };
+        reader.readAsDataURL(f);
+    });
+})();
+</script>
+{% endif %}
+<style>
+    .tr-req { color: var(--danger); }
+    .tr-scan.is-invalid { border-color: var(--danger); }
+    .tr-photos { display: inline-flex; gap: 0.7rem; font-size: 0.82rem; }
+    .tr-photos a { text-decoration: none; }
+    .tr-scan-thumb img { width: 100%; height: 100%; object-fit: cover; }
+</style>
 {% endblock %}

@@ -11,9 +11,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/technician/main.css') }}" />
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/confirm.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/vendor/jsQR.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/id-autofill.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/password-rules.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/busy-guard.js') }}" defer></script>
 </head>
 <body class="tech-login-page">
 
@@ -67,6 +69,7 @@
 
     <p class="tech-reg-note">Fields marked <span class="req">*</span> are required.</p>
     <form id="registerForm" method="POST" enctype="multipart/form-data" novalidate
+          data-ids-with-back="{{ ids_with_back|join('|') }}"
           action="{{ url_for('technician.registration_update' if mode == 'update' else 'technician.register') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -85,7 +88,7 @@
             {% endif %}
             <div class="tech-field">
                 <span class="tech-label" id="idDocLabel">
-                    Photo or scan of the ID {% if mode != 'update' %}<span class="req">*</span>{% endif %}
+                    Front of the ID {% if mode != 'update' %}<span class="req">*</span>{% endif %}
                 </span>
                 {% if mode == 'update' and tech.id_document_file %}
                 <p class="tech-hint" style="margin:0 0 0.5rem;">
@@ -97,7 +100,7 @@
                 <label class="tech-upload {{ invalid('id_document') }}" for="id_document">
                     <span class="tech-upload-thumb" id="idDocThumb" aria-hidden="true"><i class="fas fa-id-card"></i></span>
                     <span class="tech-upload-text">
-                        <strong id="idDocName">Choose a photo or PDF of your ID</strong>
+                        <strong id="idDocName">Choose a photo or PDF of the front</strong>
                         <small>JPG, PNG, WEBP or PDF · up to {{ max_mb }} MB · all four corners visible and readable</small>
                     </span>
                     <input type="file" id="id_document" name="id_document" data-max-bytes="{{ max_mb * 1024 * 1024 }}"
@@ -107,6 +110,28 @@
                 </label>
                 {{ field_error('id_document') }}
                 <p class="tech-reg-autofill" id="idAutofillNote" role="status" hidden></p>
+            </div>
+            <div class="tech-field">
+                <span class="tech-label" id="idBackLabel">
+                    Back of the ID <span class="req" id="idBackReq" {% if form.get('id_type') not in ids_with_back %}hidden{% endif %}>*</span>
+                </span>
+                {% if mode == 'update' and tech.id_back_file %}
+                <p class="tech-hint" style="margin:0 0 0.5rem;">
+                    <i class="fas fa-paperclip"></i> The back is already on file
+                    (<a href="{{ url_for('technician.registration_document', side='back') }}" target="_blank" rel="noopener">view it</a>).
+                </p>
+                {% endif %}
+                <label class="tech-upload {{ invalid('id_document_back') }}" for="id_document_back">
+                    <span class="tech-upload-thumb" id="idBackThumb" aria-hidden="true"><i class="fas fa-id-card-clip"></i></span>
+                    <span class="tech-upload-text">
+                        <strong id="idBackName">Choose a photo or PDF of the back</strong>
+                        <small id="idBackHint">Needed when the ID has details on the back: {{ ids_with_back|join(', ') }}.</small>
+                    </span>
+                    <input type="file" id="id_document_back" name="id_document_back" data-max-bytes="{{ max_mb * 1024 * 1024 }}"
+                           accept="image/jpeg,image/png,image/webp,application/pdf"
+                           aria-labelledby="idBackLabel" aria-describedby="id_document_back-error" />
+                </label>
+                {{ field_error('id_document_back') }}
                 <p class="tech-reg-notice">
                     <i class="fas fa-lock"></i>
                     Your ID is stored privately and is seen only by DEVTech administrators to confirm who you are.
@@ -181,6 +206,13 @@
                     {{ field_error('dob') }}
                 </div>
             </div>
+            <div class="tech-field">
+                <label class="tech-label" for="address">Home address <span class="req">*</span></label>
+                <input class="tech-input {{ invalid('address') }}" id="address" name="address" type="text"
+                       maxlength="255" autocomplete="street-address" placeholder="House no., street, barangay, city"
+                       value="{{ form.get('address', '') }}" aria-describedby="address-error" required />
+                {{ field_error('address') }}
+            </div>
         </fieldset>
 
         {% if mode != 'update' %}
@@ -250,7 +282,10 @@
         <div id="reviewDoc" class="tech-reg-review-doc"></div>
         <div class="tech-reg-actions">
             <button type="button" class="tech-btn tech-btn--ghost" id="reviewEdit"><i class="fas fa-pen"></i> Edit</button>
-            <button type="button" class="tech-btn tech-btn--primary" id="reviewSubmit">
+            <button type="button" class="tech-btn tech-btn--primary" id="reviewSubmit"
+                    data-confirm-title="Are you sure you want to submit your information?"
+                    data-confirm="An administrator checks your details against your ID. Make sure they match before you send them."
+                    data-confirm-ok="{{ 'Send update' if mode == 'update' else 'Submit registration' }}">
                 <i class="fas fa-paper-plane"></i> {{ 'Send updated registration' if mode == 'update' else 'Submit registration' }}
             </button>
         </div>
@@ -274,7 +309,13 @@
     var panel = document.getElementById('reviewPanel');
     var summary = document.getElementById('formErrorSummary');
     var fileInput = document.getElementById('id_document');
+    var backInput = document.getElementById('id_document_back');
     var isUpdate = {{ 'true' if mode == 'update' else 'false' }};
+    var hasBack = {{ 'true' if mode == 'update' and tech and tech.id_back_file else 'false' }};
+    var withBack = (form.dataset.idsWithBack || '').split('|');
+    function backNeeded() { return withBack.indexOf(form.elements.id_type.value) !== -1; }
+    function showBackNeed() { document.getElementById('idBackReq').hidden = !backNeeded(); }
+    form.elements.id_type.addEventListener('change', showBackNeed);
 
     // Show / hide password
     document.querySelectorAll('.tech-password-toggle').forEach(function (btn) {
@@ -292,7 +333,8 @@
         var el = form.querySelector('[data-error-for="' + name + '"]');
         var input = form.elements[name];
         if (el) { el.textContent = message || ''; el.hidden = !message; }
-        var box = name === 'id_document' ? fileInput.closest('.tech-upload') : input;
+        var box = name === 'id_document' ? fileInput.closest('.tech-upload')
+            : (name === 'id_document_back' ? backInput.closest('.tech-upload') : input);
         if (box && box.classList) box.classList.toggle('is-invalid', !!message);
         if (input && input.setAttribute) input.setAttribute('aria-invalid', message ? 'true' : 'false');
     }
@@ -300,7 +342,7 @@
     // A field's message goes away as soon as it is changed.
     ['input', 'change'].forEach(function (type) {
         form.addEventListener(type, function (e) {
-            if (e.target.name && e.target !== fileInput) setError(e.target.name, '');
+            if (e.target.name && e.target !== fileInput && e.target !== backInput) setError(e.target.name, '');
             if (!form.querySelector('[data-error-for]:not([hidden])')) summary.classList.remove('is-shown');
         });
     });
@@ -386,6 +428,34 @@
         }
     });
 
+    // Preview of the back
+    var backThumb = document.getElementById('idBackThumb'), backName = document.getElementById('idBackName');
+    var backPreview = '';
+    backInput.addEventListener('change', function () {
+        var f = backInput.files[0];
+        backPreview = '';
+        backThumb.innerHTML = '<i class="fas fa-id-card-clip"></i>';
+        backName.textContent = f ? f.name : 'Choose a photo or PDF of the back';
+        setError('id_document_back', '');
+        if (!f) return;
+        if (f.size > Number(backInput.dataset.maxBytes)) {
+            setError('id_document_back', 'This file is larger than {{ max_mb }} MB.');
+            return;
+        }
+        if (/^image\//.test(f.type)) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                backPreview = reader.result;
+                var img = document.createElement('img');
+                img.src = backPreview; img.alt = '';
+                backThumb.innerHTML = ''; backThumb.appendChild(img);
+            };
+            reader.readAsDataURL(f);
+        } else {
+            backThumb.innerHTML = '<i class="fas fa-file-pdf"></i>';
+        }
+    });
+
     function value(name) {
         var el = form.elements[name];
         if (!el) return '';
@@ -396,7 +466,7 @@
     // Quick checks before the review; the server checks everything again.
     function check() {
         var problems = {};
-        ['fullname', 'email', 'phone', 'gender', 'dob', 'id_type', 'id_number'].forEach(function (n) {
+        ['fullname', 'email', 'phone', 'gender', 'dob', 'id_type', 'id_number', 'address'].forEach(function (n) {
             if (!value(n)) problems[n] = 'This field is required.';
         });
         if (value('fullname') && value('fullname').split(/\s+/).length < 2) problems.fullname = 'Enter your full name as it appears on your ID.';
@@ -405,6 +475,10 @@
         var f = fileInput.files[0];
         if (!f && !isUpdate) problems.id_document = 'Upload a photo or scan of your ID.';
         if (f && f.size > Number(fileInput.dataset.maxBytes)) problems.id_document = 'This file is larger than {{ max_mb }} MB.';
+        var fb = backInput.files[0];
+        if (!fb && !hasBack && backNeeded()) problems.id_document_back = 'This ID has details on the back too. Upload a photo of the back.';
+        if (fb && fb.size > Number(backInput.dataset.maxBytes)) problems.id_document_back = 'This file is larger than {{ max_mb }} MB.';
+        if (value('address') && value('address').length < 8) problems.address = 'Enter your home address: house no., street, barangay and city.';
         if (!isUpdate) {
             if (!/^TECH-\d{4}$/i.test(value('staffId'))) problems.staffId = 'Tech ID must look like TECH-0001.';
             var p = form.elements.password.value;
@@ -430,10 +504,12 @@
         }
         var rows = [['Full name', value('fullname')], ['Email', value('email')], ['Mobile', value('phone')],
                     ['Gender', value('gender')], ['Date of birth', value('dob')], ['ID type', value('id_type')],
-                    ['ID number', value('id_number')]];
+                    ['ID number', value('id_number')], ['Home address', value('address')]];
         if (!isUpdate) rows.push(['Tech ID', value('staffId').toUpperCase()]);
         var f = fileInput.files[0];
-        rows.push(['ID file', f ? f.name : 'Keep the ID already on file']);
+        rows.push(['ID front', f ? f.name : 'Keep the one already on file']);
+        var fb = backInput.files[0];
+        rows.push(['ID back', fb ? fb.name : (hasBack ? 'Keep the one already on file' : 'Not added')]);
         var list = document.getElementById('reviewList');
         list.textContent = '';
         rows.forEach(function (r) {
@@ -443,11 +519,12 @@
         });
         var doc = document.getElementById('reviewDoc');
         doc.textContent = '';
-        if (docPreview) {
+        [[docPreview, 'Front of the ID you are uploading'], [backPreview, 'Back of the ID you are uploading']].forEach(function (d) {
+            if (!d[0]) return;
             var img = document.createElement('img');
-            img.src = docPreview; img.alt = 'Preview of the ID you are uploading';
+            img.src = d[0]; img.alt = d[1];
             doc.appendChild(img);
-        }
+        });
         form.hidden = true;
         panel.hidden = false;
         panel.focus();

@@ -57,15 +57,28 @@ function toggleMobileMenu() {
 // session. If not, show a banner but do NOT reload the page — the
 // admin may be halfway through typing something, and a silent reload
 // would throw that away. Reloading is opt-in via the banner's button.
+//
+// Only a 401 means "signed out". A 5xx/504 (cold start, slow database)
+// says nothing about the session, so it is ignored, and a 401 is
+// re-checked once before the banner appears.
 // ============================================
 function startSessionWatch() {
+    function checkSession() {
+        return fetch('/api/admin/session-check', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.status !== 401; })
+            .catch(function () { return true; /* network hiccup — assume still signed in */ });
+    }
+
     setInterval(function () {
         if (document.visibilityState !== 'visible') return;
-        fetch('/api/admin/session-check', { credentials: 'same-origin' })
-            .then(function (r) {
-                if (!r.ok) showSessionEndedBanner();
-            })
-            .catch(function () { /* transient network hiccup — skip */ });
+        checkSession().then(function (signedIn) {
+            if (signedIn) return;
+            setTimeout(function () {
+                checkSession().then(function (stillSignedIn) {
+                    if (!stillSignedIn) showSessionEndedBanner();
+                });
+            }, 4000);
+        });
     }, 45000);
 }
 
@@ -158,15 +171,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // ---- confirm delete actions ----
-    document.querySelectorAll('.admin-btn-danger[data-confirm]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            if (!confirm(this.dataset.confirm ||
-                         'Are you sure you want to perform this action?')) {
-                e.preventDefault();
-            }
-        });
-    });
+    // Confirmations (data-confirm) are handled for every portal by static/js/confirm.js.
 
     // ---- search filter ----
     const searchInput = document.getElementById('searchInput');

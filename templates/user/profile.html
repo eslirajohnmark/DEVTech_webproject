@@ -421,10 +421,10 @@
             }
         }
 
-        editToggle.addEventListener('click', function(e) {
+        editToggle.addEventListener('click', async function(e) {
             e.preventDefault();
             if (isEditing) {
-                if (confirm('Are you sure you want to cancel? Your changes will not be saved.')) {
+                if (await devtechAsk('Discard your changes?', {message: 'Your changes will not be saved.', ok: 'Discard changes'})) {
                     toggleEdit(false);
                 }
             } else {
@@ -432,8 +432,8 @@
             }
         });
 
-        cancelEdit.addEventListener('click', function() {
-            if (confirm('Are you sure you want to cancel? Your changes will not be saved.')) {
+        cancelEdit.addEventListener('click', async function() {
+            if (await devtechAsk('Discard your changes?', {message: 'Your changes will not be saved.', ok: 'Discard changes'})) {
                 toggleEdit(false);
             }
         });
@@ -588,12 +588,12 @@
     // DELETE ACCOUNT
     // ============================================
 
-    function confirmDeleteAccount() {
-        if (!confirm('⚠️ Are you sure you want to delete your account? This action cannot be undone!')) {
+    async function confirmDeleteAccount() {
+        if (!(await devtechAsk('Delete your account?', {message: 'This cannot be undone.', ok: 'Yes, continue', tone: 'danger'}))) {
             return;
         }
         
-        if (!confirm('⚠️⚠️ FINAL WARNING: This will permanently delete all your data. Are you absolutely sure?')) {
+        if (!(await devtechAsk('Final warning: delete all your data?', {message: 'Your account and all its data are permanently deleted.', ok: 'Delete my account', tone: 'danger'}))) {
             return;
         }
         

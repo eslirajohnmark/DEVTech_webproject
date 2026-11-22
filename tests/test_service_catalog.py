@@ -4,6 +4,7 @@ from datetime import date, time, timedelta
 from decimal import Decimal
 
 from app import db, Booking, Service, ServiceCategory, init_db
+from tests.conftest import payment_proof
 from services.service_catalog import CATALOG, sync_service_catalog
 
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
@@ -122,7 +123,6 @@ def test_booking_page_preselects_the_service_and_saves_brand_and_model(customer_
     _old_catalog()
     _sync(replace=True)
     from app import app as flask_app
-    flask_app.config['PAYMONGO_ENABLED'] = True              # the QR booking fee needs online payments
     svc = Service.query.filter_by(name='Laptop RAM Upgrade').one()
     page = customer_logged_in.get(f'/user/book/hardware-upgrade?service={svc.id}').get_data(as_text=True)
     assert f'value="{svc.id}"' in page and 'selected' in page.split(f'value="{svc.id}"')[1][:400]
@@ -133,8 +133,9 @@ def test_booking_page_preselects_the_service_and_saves_brand_and_model(customer_
     customer_logged_in.post('/user/service-request', data={
         'service_id': str(svc.id), 'device_type': 'Laptop', 'device_brand': ' Acer ', 'device_model': 'Aspire 5',
         'problem_description': 'The laptop is slow and I want to add 16 GB of memory', 'booking_date': TOMORROW, 'booking_time': '10:00', 'in_shop': 'on',
-        'payment_method': 'QR Ph', 'accept_terms': 'on'})
+        'payment_method': 'QR Ph', 'accept_terms': 'on', 'fee_receipt': payment_proof()})   # an older form's value
     b = Booking.query.one()
+    assert b.transaction.payment_method == 'GCash'
     assert (b.device_type, b.device_brand, b.device_model) == ('Laptop', 'Acer', 'Aspire 5')
     assert b.booking_fee == Decimal('100.00') and b.transaction.amount == Decimal('200.00')   # ₱300 - ₱100
 

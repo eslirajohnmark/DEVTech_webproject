@@ -13,6 +13,23 @@
     </div>
 </div>
 
+{% if photo_overdue %}
+<div class="tv-photo-alert" role="status">
+    <i class="fas fa-camera" aria-hidden="true"></i>
+    <div>
+        <strong>{{ photo_overdue|length }} verified {{ 'technician has' if photo_overdue|length == 1 else 'technicians have' }} not added a profile photo
+            {{ photo_rule.DAYS }} days after the notice.</strong>
+        Open each one to send another notice or suspend the account.
+        <ul>
+            {% for t in photo_overdue %}
+            <li><a href="{{ url_for('admin_tech_verification_detail', tech_id=t.id) }}">{{ t.full_name }} ({{ t.username }})</a>,
+                due {{ photo_rule.due_text(t) }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
 <div class="admin-stats-grid">
     {% for key, icon, tone in [('pending', 'fa-hourglass-half', 'warning'), ('needs_correction', 'fa-pen-to-square', 'warning'),
                                ('verified', 'fa-circle-check', 'primary'), ('rejected', 'fa-circle-xmark', 'danger'),

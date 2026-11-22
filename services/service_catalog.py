@@ -301,6 +301,13 @@ CATALOG = [
 ]
 
 
+def suggested_fee(price):
+    """The suggested service fee for a starting price (same rule as app.suggested_service_fee):
+    10% rounded to the nearest 50, kept between 50 and 500."""
+    fee = round(max(float(price or 0), 0) * 0.10 / 50) * 50
+    return float(min(500, max(50, fee)))
+
+
 def _find_service(Service, names):
     """The first service whose name matches one of names (case-insensitive), in order."""
     for n in names:
@@ -343,8 +350,8 @@ def sync_service_catalog(db, ServiceCategory, Service, replace=False):
             devices = ','.join(svc['devices'])
             if match is None:
                 match = Service(category_id=cat.id, name=svc['name'], description=svc['description'],
-                                price=svc['price'], estimated_hours=svc['hours'], is_active=True,
-                                device_types=devices)
+                                price=svc['price'], service_fee=suggested_fee(svc['price']),
+                                estimated_hours=svc['hours'], is_active=True, device_types=devices)
                 db.session.add(match)
                 db.session.flush()
                 kept_service_ids.add(match.id)
@@ -360,6 +367,8 @@ def sync_service_catalog(db, ServiceCategory, Service, replace=False):
             elif not match.price:
                 changes.append(f'starting price {svc["name"]}: {svc["price"]}')
                 match.price = svc['price']
+            if getattr(match, 'service_fee', None) is None:
+                match.service_fee = suggested_fee(match.price)   # a fee the admin set is kept
             if (match.device_types or '') != devices:
                 changes.append(f'devices {svc["name"]}: {devices}')
             match.name, match.description, match.category_id = svc['name'], svc['description'], cat.id

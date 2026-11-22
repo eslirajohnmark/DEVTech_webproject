@@ -2,12 +2,14 @@
 
 {% block title %}Transactions{% endblock %}
 
+{% macro peso(n) %}₱{{ "{:,.2f}".format(n or 0) }}{% endmacro %}
+
 {% block content %}
 <!-- Top Bar -->
 <div class="user-top-bar">
     <div class="user-page-title">
         <h1>Transactions</h1>
-        <p>View and manage your payment transactions</p>
+        <p>Your booking fees, repair bills and shop payments</p>
     </div>
     <div class="user-top-actions">
         <a href="{{ url_for('notifications') }}" class="user-icon-btn" title="View notifications">
@@ -35,524 +37,402 @@
     {% endif %}
 {% endwith %}
 
+{% set n_pending = transactions|selectattr('payment_status', 'equalto', 'pending')|list|length %}
+{% set n_confirmed = transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length %}
+{% set n_rejected = transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length %}
+
 <!-- Stats Summary -->
 <div class="user-stats-grid">
     <div class="user-stat-card">
-        <div class="user-stat-icon" style="background:rgba(37,99,235,0.08); color:var(--primary);">
-            <i class="fas fa-receipt"></i>
-        </div>
-        <div class="user-stat-info">
-            <span class="user-stat-number">{{ transactions|length }}</span>
-            <span class="user-stat-label">Total Transactions</span>
-        </div>
+        <div class="user-stat-icon" style="background:rgba(37,99,235,0.08); color:var(--primary);"><i class="fas fa-receipt"></i></div>
+        <div class="user-stat-info"><span class="user-stat-number">{{ transactions|length }}</span><span class="user-stat-label">Total Transactions</span></div>
     </div>
     <div class="user-stat-card">
-        <div class="user-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);">
-            <i class="fas fa-clock"></i>
-        </div>
-        <div class="user-stat-info">
-            <span class="user-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'pending')|list|length }}</span>
-            <span class="user-stat-label">Pending</span>
-        </div>
+        <div class="user-stat-icon" style="background:rgba(245,158,11,0.08); color:var(--warning);"><i class="fas fa-clock"></i></div>
+        <div class="user-stat-info"><span class="user-stat-number">{{ n_pending }}</span><span class="user-stat-label">Pending</span></div>
     </div>
     <div class="user-stat-card">
-        <div class="user-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);">
-            <i class="fas fa-check-circle"></i>
-        </div>
-        <div class="user-stat-info">
-            <span class="user-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length }}</span>
-            <span class="user-stat-label">Confirmed</span>
-        </div>
+        <div class="user-stat-icon" style="background:rgba(34,197,94,0.08); color:var(--success);"><i class="fas fa-check-circle"></i></div>
+        <div class="user-stat-info"><span class="user-stat-number">{{ n_confirmed }}</span><span class="user-stat-label">Confirmed</span></div>
     </div>
     <div class="user-stat-card">
-        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);">
-            <i class="fas fa-times-circle"></i>
-        </div>
-        <div class="user-stat-info">
-            <span class="user-stat-number">{{ transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length }}</span>
-            <span class="user-stat-label">Rejected</span>
-        </div>
+        <div class="user-stat-icon" style="background:rgba(239,68,68,0.08); color:var(--danger);"><i class="fas fa-times-circle"></i></div>
+        <div class="user-stat-info"><span class="user-stat-number">{{ n_rejected }}</span><span class="user-stat-label">Rejected</span></div>
     </div>
 </div>
 
 <!-- Filter Tabs -->
 <div class="user-filter-tabs">
-    <button class="user-filter-tab active" onclick="filterTransactions('all', this)">
-        <i class="fas fa-list"></i> All
-        <span class="user-tab-badge">{{ transactions|length }}</span>
+    {% for key, label, icon, n in [('all', 'All', 'fa-list', transactions|length), ('pending', 'Pending', 'fa-clock', n_pending),
+                                   ('confirmed', 'Confirmed', 'fa-check-circle', n_confirmed), ('rejected', 'Rejected', 'fa-times-circle', n_rejected)] %}
+    <button type="button" class="user-filter-tab {% if loop.first %}active{% endif %}" data-filter="{{ key }}">
+        <i class="fas {{ icon }}"></i> {{ label }} <span class="user-tab-badge">{{ n }}</span>
     </button>
-    <button class="user-filter-tab" onclick="filterTransactions('pending', this)">
-        <i class="fas fa-clock" style="color:var(--warning);"></i> Pending
-        <span class="user-tab-badge">{{ transactions|selectattr('payment_status', 'equalto', 'pending')|list|length }}</span>
-    </button>
-    <button class="user-filter-tab" onclick="filterTransactions('confirmed', this)">
-        <i class="fas fa-check-circle" style="color:var(--success);"></i> Confirmed
-        <span class="user-tab-badge">{{ transactions|selectattr('payment_status', 'equalto', 'confirmed')|list|length }}</span>
-    </button>
-    <button class="user-filter-tab" onclick="filterTransactions('rejected', this)">
-        <i class="fas fa-times-circle" style="color:var(--danger);"></i> Rejected
-        <span class="user-tab-badge">{{ transactions|selectattr('payment_status', 'equalto', 'rejected')|list|length }}</span>
-    </button>
+    {% endfor %}
 </div>
 
 <!-- Transactions List -->
 <div class="user-transaction-container">
     {% if transactions %}
-        <div class="user-transaction-list">
-            {% for transaction in transactions %}
-            <div class="user-transaction-item" data-status="{{ transaction.payment_status }}">
-                <!-- Transaction Header -->
-                <div class="user-transaction-header">
-                    <div class="user-transaction-left">
-                        <span class="user-transaction-id">#{{ transaction.transaction_number }}</span>
-                        <span class="user-transaction-status {{ transaction.payment_status }}">
-                            {{ transaction.payment_status|capitalize }}
-                        </span>
-                    </div>
-                    <span class="user-transaction-date">
-                        <i class="fas fa-calendar-alt"></i> 
-                        {{ transaction.transaction_date.strftime('%b %d, %Y at %I:%M %p') }}
-                    </span>
+    <div class="user-transaction-list">
+        {% for t in transactions %}
+        {% set bill = bill_for(t) %}
+        {% set fee_for = booking_fee_booking(t) %}
+        {% set extra_for = extra_work_booking(t) %}
+        {% set blocked = pay_after_repair_block(t) if t.payment_status in ('pending', 'rejected') else None %}
+        {% set proof_sent = t.payment_status == 'pending' and t.receipt_image %}
+        {% set cash = (t.payment_method or '')|upper == 'C.A.R' %}
+        {% set online_fee = fee_for and (t.payment_method or '') == 'paymongo' %}
+        {% set covered = nothing_due(t) %}
+        {% set payable = t.payment_status in ('pending', 'rejected') and not blocked and not t.order and not online_fee and not covered %}
+        {% if t.booking %}{% set title = t.booking.service.name %}{% set ref = 'Booking #' ~ t.booking.booking_number %}
+        {% elif fee_for %}{% set title = 'Booking fee' %}{% set ref = 'Booking #' ~ fee_for %}
+        {% elif t.order %}{% set title = 'Shop order' %}{% set ref = 'Order #' ~ t.order.order_number %}
+        {% elif extra_for %}{% set title = 'Approved extra work' %}{% set ref = 'Booking #' ~ extra_for %}
+        {% else %}{% set title = 'Payment' %}{% set ref = '' %}{% endif %}
+        <div class="user-transaction-item" data-status="{{ t.payment_status }}">
+            <div class="user-transaction-header">
+                <div class="user-transaction-left">
+                    <span class="user-transaction-id">#{{ t.transaction_number }}</span>
+                    <span class="user-transaction-status {{ t.payment_status }}">{{ t.payment_status|capitalize }}</span>
                 </div>
+                <span class="user-transaction-date"><i class="fas fa-calendar-alt"></i> {{ t.transaction_date.strftime('%b %d, %Y at %I:%M %p') }}</span>
+            </div>
 
-                <!-- Transaction Body -->
-                <div class="user-transaction-body">
-                    <div class="user-transaction-info">
-                        {% if transaction.booking %}
-                            <h4>{{ transaction.booking.service.name }}</h4>
-                            <p><i class="fas fa-tag"></i> Booking #{{ transaction.booking.booking_number }}</p>
-                            {% if transaction.booking.booking_fee %}
-                            <p class="user-transaction-fee-note"><i class="fas fa-receipt"></i>
-                                Balance after the ₱{{ "{:,.2f}".format(transaction.booking.booking_fee) }} booking fee is deducted</p>
-                            {% endif %}
-                        {% elif booking_fee_booking(transaction) %}
-                            <h4>Booking Fee</h4>
-                            <p><i class="fas fa-tag"></i> Booking #{{ booking_fee_booking(transaction) }}</p>
-                            <p class="user-transaction-fee-note"><i class="fas fa-circle-info"></i> Confirms your booking. Deducted from your final bill.</p>
-                        {% elif transaction.order %}
-                            <h4>Shop Order</h4>
-                            <p><i class="fas fa-tag"></i> Order #{{ transaction.order.order_number }}</p>
-                        {% elif extra_work_booking(transaction) %}
-                            <h4>Approved Extra Work</h4>
-                            <p><i class="fas fa-tag"></i> Booking #{{ extra_work_booking(transaction) }}</p>
-                        {% else %}
-                            <h4>Manual Payment</h4>
-                        {% endif %}
-                        <p><i class="fas fa-credit-card"></i> {{ payment_method_label(transaction.payment_method) }}</p>
-                        {% if transaction.gcash_reference %}
-                            <p><i class="fas fa-mobile-alt"></i> GCash Ref: {{ transaction.gcash_reference }}</p>
-                        {% endif %}
-                        {% for r in transaction.refunds %}
-                            <p class="user-transaction-refund refund-{{ r.status }}">
-                                <i class="fas fa-rotate-left"></i>
-                                {% if r.status == 'pending' %}
-                                    <strong>Refund in progress:</strong> ₱{{ "%.2f"|format(r.amount) }}, opened {{ r.created_at.strftime('%b %d, %Y') if r.created_at else '' }}.
-                                {% elif r.status == 'refunded' %}
-                                    <strong>Refunded:</strong> ₱{{ "%.2f"|format(r.amount) }} via {{ r.method }}{% if r.reference %} (ref {{ r.reference }}){% endif %}
-                                    on {{ r.processed_at.strftime('%b %d, %Y') if r.processed_at else '' }}.
-                                {% else %}
-                                    <strong>No refund issued:</strong> {{ r.note }}
-                                {% endif %}
-                            </p>
-                        {% endfor %}
-                        {% if transaction.rejection_reason %}
-                            <p class="user-transaction-rejection">
-                                <i class="fas fa-exclamation-circle"></i> 
-                                <strong>Reason:</strong> {{ transaction.rejection_reason }}
-                            </p>
-                        {% endif %}
-                    </div>
-                    <div class="user-transaction-amount">
-                        <span class="user-transaction-price">₱{{ "%.2f"|format(transaction.amount) }}</span>
-                        <span class="user-transaction-method">{{ payment_method_label(transaction.payment_method) }}</span>
-                    </div>
-                </div>
-
-                <!-- Transaction Actions -->
-                <div class="user-transaction-actions">
-                    {% if transaction.payment_status == 'pending' %}
-                        {% if can_pay_online(transaction) %}
-                        <button type="button" class="user-btn-primary small" data-pay="{{ transaction.id }}"
-                                data-title="Pay {{ transaction.transaction_number }}">
-                            <i class="fas fa-qrcode"></i> Pay by QR
-                        </button>
-                        {% elif transaction.payment_method == 'C.A.R' %}
-                        <span class="user-transaction-note"><i class="fas fa-store"></i> Pay at the shop after the repair</span>
-                        {% endif %}
-                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
-                            <i class="fas fa-eye"></i> View Details
-                        </button>
-                    {% elif transaction.payment_status == 'confirmed' %}
-                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
-                            <i class="fas fa-eye"></i> View Details
-                        </button>
-                        {% if transaction.receipt_image %}
-                            <button class="user-btn-secondary small" onclick="viewReceipt('{{ receipt_url(transaction) }}')">
-                                <i class="fas fa-image"></i> View Receipt
-                            </button>
-                        {% endif %}
-                    {% elif transaction.payment_status in ('cancelled', 'refunded') %}
-                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
-                            <i class="fas fa-eye"></i> View Details
-                        </button>
-                    {% elif transaction.payment_status == 'rejected' %}
-                        <button class="user-btn-secondary small" onclick="viewTransactionDetails('{{ transaction.id }}')">
-                            <i class="fas fa-eye"></i> View Details
-                        </button>
-                        {% if can_pay_online(transaction) %}
-                        <button type="button" class="user-btn-primary small" data-pay="{{ transaction.id }}"
-                                data-title="Pay {{ transaction.transaction_number }}">
-                            <i class="fas fa-qrcode"></i> Pay by QR
-                        </button>
-                        {% elif transaction.payment_method == 'C.A.R' %}
-                        <span class="user-transaction-note"><i class="fas fa-store"></i> Pay at the shop after the repair</span>
-                        {% endif %}
+            <div class="user-transaction-body">
+                <div class="user-transaction-info">
+                    <h4>{{ title }}</h4>
+                    {% if ref %}<p><i class="fas fa-tag"></i> {{ ref }}</p>{% endif %}
+                    <p><i class="fas fa-credit-card"></i> {{ payment_method_label(t.payment_method) }}</p>
+                    {% if fee_for %}<p class="user-transaction-fee-note"><i class="fas fa-circle-info"></i> Confirms your booking. Deducted from your final bill.{% if online_fee and t.payment_status == 'pending' %} Paid by QR through PayMongo and confirmed automatically.{% endif %}</p>{% endif %}
+                    {% if bill and (bill.additional or bill.booking_fee) %}
+                    <p class="user-transaction-fee-note"><i class="fas fa-receipt"></i>
+                        {% if bill.additional %}Includes {{ peso(bill.additional_total) }} approved extra work{% endif %}{% if bill.additional and bill.booking_fee %}, less{% elif bill.booking_fee %}Less{% endif %}
+                        {% if bill.booking_fee %} the {{ peso(bill.booking_fee) }} booking fee{% endif %}.</p>
                     {% endif %}
+                    {% if t.rejection_reason %}
+                    <p class="user-transaction-rejection"><i class="fas fa-exclamation-circle"></i> <strong>Reason:</strong> {{ t.rejection_reason }}</p>
+                    {% endif %}
+                    {% for r in t.refunds %}
+                    <p class="user-transaction-refund refund-{{ r.status }}"><i class="fas fa-rotate-left"></i>
+                        {% if r.status == 'pending' %}<strong>Refund in progress:</strong> {{ peso(r.amount) }}
+                        {% elif r.status == 'refunded' %}<strong>Refunded:</strong> {{ peso(r.amount) }} via {{ r.method }}{% if r.reference %} (ref {{ r.reference }}){% endif %}
+                        {% else %}<strong>No refund issued:</strong> {{ r.note }}{% endif %}</p>
+                    {% endfor %}
+                </div>
+                <div class="user-transaction-amount">
+                    <span class="user-transaction-price">{{ peso(t.amount) }}</span>
+                    <span class="user-transaction-method">{{ 'Total to pay' if bill and t.payment_status != 'confirmed' else payment_method_label(t.payment_method) }}</span>
                 </div>
             </div>
-            {% endfor %}
+
+            <div class="user-transaction-actions">
+                {% if covered %}
+                    <span class="user-transaction-note"><i class="fas fa-circle-check"></i> Nothing to pay: your booking fee covers this bill.</span>
+                {% elif blocked %}
+                    <span class="user-transaction-note"><i class="fas fa-screwdriver-wrench"></i> {{ blocked }}</span>
+                {% elif proof_sent %}
+                    <span class="user-transaction-note is-checking"><i class="fas fa-hourglass-half"></i> Screenshot sent. We are checking it.</span>
+                {% elif payable and cash and t.payment_status == 'pending' %}
+                    <span class="user-transaction-note"><i class="fas fa-store"></i> Pay {{ peso(t.amount) }} in cash at the shop, or by GCash now.</span>
+                {% endif %}
+                {# GCash / online: PayMongo's QR Ph (like booking and the shop); a repair payment then asks for
+                   the receipt screenshot. Without PayMongo: the shop's own QR and a screenshot. #}
+                {% if can_pay_online(t) %}
+                <button type="button" class="user-btn-primary small" data-pay-online="{{ t.id }}" data-amount="{{ peso(t.amount) }}"
+                        data-title="{{ title }}{% if ref %} · {{ ref }}{% endif %}"
+                        data-receipt-action="{{ url_for('user_payment_receipt', transaction_id=t.id) if not t.order else '' }}">
+                    <i class="fas fa-qrcode"></i> {{ 'Pay booking fee by QR' if online_fee else 'Pay with GCash' }}
+                </button>
+                {% elif payable %}
+                <button type="button" class="user-btn-primary small" data-gcash="{{ t.id }}" data-amount="{{ peso(t.amount) }}"
+                        data-title="{{ title }}{% if ref %} · {{ ref }}{% endif %}" data-action="{{ url_for('user_payment', transaction_id=t.id) }}">
+                    <i class="fas fa-qrcode"></i> {{ 'Send a new screenshot' if proof_sent or t.payment_status == 'rejected' else 'Pay with GCash' }}
+                </button>
+                {% endif %}
+                {% if needs_receipt(t) %}
+                <button type="button" class="user-btn-secondary small" data-receipt-only="{{ url_for('user_payment_receipt', transaction_id=t.id) }}"
+                        data-amount="{{ peso(t.amount) }}" data-title="{{ title }}{% if ref %} · {{ ref }}{% endif %}">
+                    <i class="fas fa-receipt"></i> Attach receipt screenshot
+                </button>
+                {% endif %}
+                <button type="button" class="user-btn-secondary small" data-details="{{ t.id }}"><i class="fas fa-eye"></i> View details</button>
+                {% if t.receipt_image %}
+                <button type="button" class="user-btn-secondary small" data-receipt="{{ receipt_url(t) }}"><i class="fas fa-image"></i> Screenshot</button>
+                {% endif %}
+            </div>
+
+            {# Shown in the details dialog straight away: everything is already on the page. #}
+            <template id="txnDetails{{ t.id }}">
+                <dl class="txn-detail">
+                    <div><dt>Transaction</dt><dd>#{{ t.transaction_number }}</dd></div>
+                    <div><dt>For</dt><dd>{{ title }}{% if ref %} · {{ ref }}{% endif %}</dd></div>
+                    <div><dt>Status</dt><dd><span class="user-transaction-status {{ t.payment_status }}">{{ t.payment_status|capitalize }}</span></dd></div>
+                    <div><dt>Payment method</dt><dd>{{ payment_method_label(t.payment_method) }}</dd></div>
+                    <div><dt>Created</dt><dd>{{ t.transaction_date.strftime('%b %d, %Y %I:%M %p') }}</dd></div>
+                    {% if t.gcash_reference or t.reference_number %}<div><dt>Reference no.</dt><dd>{{ t.gcash_reference or t.reference_number }}</dd></div>{% endif %}
+                    {% if t.reviewed_at %}<div><dt>Checked</dt><dd>{{ t.reviewed_at.strftime('%b %d, %Y %I:%M %p') }}</dd></div>{% endif %}
+                    {% if t.rejection_reason %}<div><dt>Rejected because</dt><dd class="txn-bad">{{ t.rejection_reason }}</dd></div>{% endif %}
+                </dl>
+                {% if bill %}
+                <table class="txn-bill">
+                    <caption>Repair bill</caption>
+                    <tbody>
+                        <tr><td>{{ t.booking.service.name }}</td><td>{% if bill.price_on_diagnosis %}Set on diagnosis{% else %}{{ peso(bill.service_price) }}{% endif %}</td></tr>
+                        {% if bill.service_fee %}<tr><td>Service fee</td><td>{{ peso(bill.service_fee) }}</td></tr>{% endif %}
+                        {% for a in bill.additional %}<tr><td>Extra work you approved: {{ a.work }}</td><td>{{ peso(a.cost) }}</td></tr>{% endfor %}
+                        {% if bill.booking_fee %}<tr class="txn-less"><td>Booking fee already paid</td><td>−{{ peso(bill.booking_fee) }}</td></tr>{% endif %}
+                    </tbody>
+                    <tfoot><tr><td>Total {{ 'paid' if t.payment_status == 'confirmed' else 'to pay' }}</td><td>{{ peso(t.amount) }}</td></tr></tfoot>
+                </table>
+                {% else %}
+                <p class="txn-total"><span>Amount</span><strong>{{ peso(t.amount) }}</strong></p>
+                {% endif %}
+                {% if t.order %}
+                <ul class="txn-items">{% for item in t.order.items %}<li>{{ item.quantity }} × {{ item.product.name if item.product else 'Removed product' }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if t.receipt_image %}<button type="button" class="user-btn-secondary small" data-receipt="{{ receipt_url(t) }}"><i class="fas fa-image"></i> View your screenshot</button>{% endif %}
+            </template>
         </div>
+        {% endfor %}
+    </div>
+    <div class="user-empty-state user-filter-empty-state" hidden>
+        <i class="fas fa-filter"></i>
+        <h3>No Results Found</h3>
+        <p>No transactions match the selected filter.</p>
+    </div>
     {% else %}
-        <div class="user-empty-state">
-            <i class="fas fa-receipt"></i>
-            <h3>No Transactions Found</h3>
-            <p>You haven't made any transactions yet.</p>
-            <a href="{{ url_for('request_service') }}" class="user-btn-primary">
-                <i class="fas fa-plus"></i> Book a Service
-            </a>
-        </div>
+    <div class="user-empty-state">
+        <i class="fas fa-receipt"></i>
+        <h3>No Transactions Found</h3>
+        <p>Your booking fees and repair bills show up here.</p>
+        <a href="{{ url_for('request_service') }}" class="user-btn-primary"><i class="fas fa-plus"></i> Book a Service</a>
+    </div>
     {% endif %}
 </div>
 
-<!-- ============================================ -->
-<!-- PAYMENT MODAL -->
-<!-- ============================================ -->
-<!-- ============================================ -->
-<!-- TRANSACTION DETAILS MODAL -->
-<!-- ============================================ -->
-<div class="user-modal" id="transactionDetailsModal">
-    <div class="user-modal-content" style="max-width: 600px;">
-        <div class="user-modal-header">
-            <h2><i class="fas fa-file-invoice"></i> Transaction Details</h2>
-            <button class="user-modal-close" onclick="closeTransactionDetails()">&times;</button>
-        </div>
-        <div class="user-modal-body" id="transactionDetailsBody">
-            <div id="transactionDetailsContent">
-                <div class="transaction-detail-loading">
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <p>Loading transaction details...</p>
-                </div>
+<!-- Pay with GCash: the shop's QR and a screenshot of the payment -->
+<div class="user-modal" id="gcashPayModal">
+    <div class="user-modal-content bk-pay-card" role="dialog" aria-modal="true" aria-labelledby="gcashPayTitle">
+        <form method="POST" enctype="multipart/form-data" id="gcashPayForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="payment_method" value="GCash">
+            <div class="user-modal-header">
+                <h2 id="gcashPayTitle"><i class="fas fa-qrcode"></i> Pay with GCash</h2>
+                <button type="button" class="user-modal-close" data-close aria-label="Close">&times;</button>
             </div>
+            <div class="user-modal-body bk-pay-body">
+                <p class="bk-pay-for" id="gcashPayFor"></p>
+                <p class="bk-pay-amount"><span id="gcashAmountLabel">Amount to pay</span><strong id="gcashPayAmount"></strong></p>
+                <p class="bk-pay-paid" id="gcashPaidNote" hidden><i class="fas fa-circle-check" aria-hidden="true"></i>
+                    <span><strong>Payment received through PayMongo.</strong> Now attach a screenshot of the receipt from your GCash, Maya or bank app as your proof.</span></p>
+                <div class="bk-pay-grid" id="gcashShopQr">
+                    <figure class="bk-pay-qr">
+                        {% if site().pay_qr %}
+                        <img src="{{ site().pay_qr }}" alt="The shop's GCash QR code" width="220" height="220" loading="lazy">
+                        {% else %}
+                        <div class="bk-pay-noqr"><i class="fas fa-qrcode" aria-hidden="true"></i><span>Send to the GCash number below</span></div>
+                        {% endif %}
+                        {% if site().pay_name or site().pay_number %}
+                        <figcaption>{% if site().pay_name %}<strong>{{ site().pay_name }}</strong>{% endif %}{% if site().pay_number %}<span>{{ site().pay_number }}</span>{% endif %}</figcaption>
+                        {% endif %}
+                    </figure>
+                    <ol class="bk-pay-steps">
+                        <li>Open GCash, Maya or your bank's app and scan the code.</li>
+                        <li>Pay the exact amount shown.</li>
+                        <li>Take a screenshot of the receipt and attach it below.</li>
+                    </ol>
+                </div>
+                <label class="bk-pay-drop" for="gcashReceipt">
+                    <span class="bk-pay-thumb" id="gcashThumb" aria-hidden="true"><i class="fas fa-image"></i></span>
+                    <span class="bk-pay-drop-text">
+                        <strong id="gcashFileName">Attach your payment screenshot</strong>
+                        <small>JPG, PNG, WEBP or GIF, up to 5 MB. Required.</small>
+                    </span>
+                    <input type="file" name="receipt_image" id="gcashReceipt" accept="image/jpeg,image/png,image/webp,image/gif" required>
+                </label>
+                <div class="user-form-group bk-pay-ref">
+                    <label for="gcashReference">Reference number <span class="user-text-muted">(optional)</span></label>
+                    <input type="text" name="reference_number" id="gcashReference" maxlength="50" autocomplete="off" placeholder="e.g. 1012 345 678901">
+                </div>
+                <p class="bk-pay-error" id="gcashError" role="alert" hidden></p>
+                <p class="bk-pay-note" id="gcashNote"><i class="fas fa-circle-info" aria-hidden="true"></i> The shop checks your screenshot against its GCash account. For a repair, your device is released once it is checked.</p>
+            </div>
+            <div class="user-modal-footer">
+                <button type="button" class="user-btn-secondary" data-close>Cancel</button>
+                <button type="submit" class="user-btn-primary" id="gcashSendBtn" disabled><i class="fas fa-paper-plane"></i> Send screenshot</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Transaction details -->
+<div class="user-modal" id="transactionDetailsModal">
+    <div class="user-modal-content" style="max-width: 560px;" role="dialog" aria-modal="true" aria-labelledby="txnDetailsTitle">
+        <div class="user-modal-header">
+            <h2 id="txnDetailsTitle"><i class="fas fa-file-invoice"></i> Transaction details</h2>
+            <button type="button" class="user-modal-close" data-close aria-label="Close">&times;</button>
         </div>
+        <div class="user-modal-body" id="transactionDetailsContent"></div>
         <div class="user-modal-footer">
-            <button class="user-btn-secondary" onclick="closeTransactionDetails()">Close</button>
+            <button type="button" class="user-btn-secondary" data-close>Close</button>
         </div>
     </div>
 </div>
 
-<!-- ============================================ -->
-<!-- RECEIPT VIEWER MODAL -->
-<!-- ============================================ -->
+<!-- Screenshot viewer -->
 <div class="user-modal" id="receiptViewerModal">
-    <div class="user-modal-content" style="max-width: 700px;">
+    <div class="user-modal-content" style="max-width: 700px;" role="dialog" aria-modal="true" aria-label="Payment screenshot">
         <div class="user-modal-header">
-            <h2><i class="fas fa-image"></i> Payment Receipt</h2>
-            <button class="user-modal-close" onclick="closeReceiptViewer()">&times;</button>
+            <h2><i class="fas fa-image"></i> Payment screenshot</h2>
+            <button type="button" class="user-modal-close" data-close aria-label="Close">&times;</button>
         </div>
         <div class="user-modal-body" style="text-align:center;">
-            <img id="receiptViewerImage" src="#" alt="Receipt" style="max-width:100%; max-height:70vh; border-radius:8px;">
+            <img id="receiptViewerImage" alt="Your payment screenshot" style="max-width:100%; max-height:70vh; border-radius:8px;">
         </div>
         <div class="user-modal-footer">
-            <button class="user-btn-secondary" onclick="closeReceiptViewer()">Close</button>
-            <a id="receiptDownloadLink" href="#" download="receipt" class="user-btn-primary">
-                <i class="fas fa-download"></i> Download
-            </a>
+            <button type="button" class="user-btn-secondary" data-close>Close</button>
+            <a id="receiptDownloadLink" href="#" download class="user-btn-primary"><i class="fas fa-download"></i> Download</a>
         </div>
     </div>
 </div>
 
-<!-- Toast Container -->
-<div id="toastContainer"></div>
-
 <script>
-    // ============================================
-    // STATE
-    // ============================================
-    
-    let currentTransactionId = null;
-    let transactionData = {};
-
-    // ============================================
-    // TOAST NOTIFICATION
-    // ============================================
-
-    function showUserToast(message, type = 'info', duration = 4000) {
-        let container = document.getElementById('toastContainer');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'toastContainer';
-            container.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                z-index: 10000;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-                max-width: 400px;
-                width: 100%;
-                pointer-events: none;
-            `;
-            document.body.appendChild(container);
-        }
-        
-        const toast = document.createElement('div');
-        const colors = {
-            'success': '#22c55e',
-            'error': '#ef4444',
-            'warning': '#f59e0b',
-            'info': '#2563eb'
-        };
-        
-        toast.style.cssText = `
-            pointer-events: auto;
-            background: var(--user-card);
-            padding: 12px 20px;
-            border-radius: 12px;
-            border-left: 4px solid ${colors[type] || '#2563eb'};
-            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: var(--user-text-primary);
-            transform: translateX(120%);
-            transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-            width: 100%;
-        `;
-        
-        const icons = {
-            'success': 'fa-check-circle',
-            'error': 'fa-exclamation-circle',
-            'warning': 'fa-exclamation-triangle',
-            'info': 'fa-info-circle'
-        };
-        
-        toast.innerHTML = `
-            <i class="fas ${icons[type] || 'fa-info-circle'}" style="color: ${colors[type] || '#2563eb'}; font-size: 1.2rem;"></i>
-            <span style="flex:1;">${message}</span>
-            <button onclick="this.parentElement.remove()" style="background:none; border:none; color:var(--user-text-muted); cursor:pointer; font-size:1.2rem; padding:0 4px;">&times;</button>
-        `;
-        
-        container.appendChild(toast);
-        
-        requestAnimationFrame(() => {
-            toast.style.transform = 'translateX(0)';
-        });
-        
-        setTimeout(() => {
-            toast.style.transform = 'translateX(120%)';
-            setTimeout(() => {
-                if (toast.parentElement) toast.remove();
-            }, 400);
-        }, duration);
-    }
-
-    // ============================================
-    // FILTER TRANSACTIONS
-    // ============================================
-
-    function filterTransactions(status, button) {
-        document.querySelectorAll('.user-filter-tab').forEach(tab => {
-            tab.classList.remove('active');
-        });
-        button.classList.add('active');
-
-        const items = document.querySelectorAll('.user-transaction-item');
-        let visibleCount = 0;
-
-        items.forEach(item => {
-            if (status === 'all' || item.dataset.status === status) {
-                item.style.display = '';
-                visibleCount++;
-            } else {
-                item.style.display = 'none';
-            }
-        });
-
-        // Show/hide empty state
-        const container = document.querySelector('.user-transaction-container');
-        let emptyState = container.querySelector('.user-filter-empty-state');
-        
-        if (visibleCount === 0) {
-            if (!emptyState) {
-                emptyState = document.createElement('div');
-                emptyState.className = 'user-empty-state user-filter-empty-state';
-                emptyState.innerHTML = `
-                    <i class="fas fa-filter"></i>
-                    <h3>No Results Found</h3>
-                    <p>No transactions match the selected filter.</p>
-                    <button class="user-btn-secondary" onclick="document.querySelector('.user-filter-tab').click()">
-                        <i class="fas fa-undo"></i> Reset Filter
-                    </button>
-                `;
-                container.appendChild(emptyState);
-            }
-            emptyState.style.display = 'block';
-        } else {
-            if (emptyState) {
-                emptyState.style.display = 'none';
-            }
-        }
-    }
-
-    // ============================================
-    // PAYMENT MODAL
-    // ============================================
-
-    function viewTransactionDetails(transactionId) {
-        const modal = document.getElementById('transactionDetailsModal');
-        const content = document.getElementById('transactionDetailsContent');
-        
-        modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
-        
-        content.innerHTML = `
-            <div class="transaction-detail-loading">
-                <i class="fas fa-spinner fa-spin"></i>
-                <p>Loading transaction details...</p>
-            </div>
-        `;
-        
-        // Find transaction from page
-        const item = document.querySelector(`.user-transaction-item`);
-        if (item) {
-            const header = item.querySelector('.user-transaction-header');
-            const body = item.querySelector('.user-transaction-body');
-            const amount = item.querySelector('.user-transaction-price');
-            
-            let html = '<div class="transaction-detail-content">';
-            
-            // Header
-            html += `<div class="transaction-detail-row"><strong>Transaction:</strong> <span>${header?.querySelector('.user-transaction-id')?.textContent || '-'}</span></div>`;
-            html += `<div class="transaction-detail-row"><strong>Status:</strong> <span class="user-transaction-status ${item.dataset.status}">${item.dataset.status|capitalize}</span></div>`;
-            html += `<div class="transaction-detail-row"><strong>Date:</strong> <span>${header?.querySelector('.user-transaction-date')?.textContent?.trim() || '-'}</span></div>`;
-            
-            // Body
-            html += `<div class="transaction-detail-row"><strong>Service:</strong> <span>${body?.querySelector('h4')?.textContent || '-'}</span></div>`;
-            
-            const pTags = body?.querySelectorAll('p') || [];
-            pTags.forEach(p => {
-                const text = p.textContent;
-                if (text.includes('Booking')) {
-                    html += `<div class="transaction-detail-row"><strong>Booking:</strong> <span>${text.replace('Booking', '').trim()}</span></div>`;
-                } else if (text.includes('GCash Ref')) {
-                    html += `<div class="transaction-detail-row"><strong>GCash Reference:</strong> <span>${text.replace('GCash Ref:', '').trim()}</span></div>`;
-                } else if (text.includes('Method')) {
-                    html += `<div class="transaction-detail-row"><strong>Payment Method:</strong> <span>${text.replace('Payment Method:', '').trim()}</span></div>`;
-                } else if (text.includes('Reason')) {
-                    html += `<div class="transaction-detail-row"><strong>Rejection Reason:</strong> <span style="color:var(--danger);">${text.replace('Reason:', '').trim()}</span></div>`;
-                }
-            });
-            
-            html += `<div class="transaction-detail-row"><strong>Amount:</strong> <span style="font-size:1.2rem; font-weight:700; color:var(--primary);">${amount?.textContent || '₱0.00'}</span></div>`;
-            
-            // Receipt
-            const receiptImage = item.querySelector('[data-receipt]');
-            if (receiptImage) {
-                html += `<div class="transaction-detail-row"><strong>Receipt:</strong> <button class="user-btn-secondary small" onclick="viewReceipt('${receiptImage.dataset.receipt}')"><i class="fas fa-image"></i> View Receipt</button></div>`;
-            }
-            
-            html += '</div>';
-            content.innerHTML = html;
-        }
-    }
-
-    function closeTransactionDetails() {
-        document.getElementById('transactionDetailsModal').classList.remove('active');
-        document.body.style.overflow = '';
-    }
-
-    // ============================================
-    // RECEIPT VIEWER
-    // ============================================
-
-    function viewReceipt(receiptPath) {
-        const modal = document.getElementById('receiptViewerModal');
-        const image = document.getElementById('receiptViewerImage');
-        const downloadLink = document.getElementById('receiptDownloadLink');
-        
-        image.src = receiptPath;
-        downloadLink.href = receiptPath;
-        downloadLink.download = receiptPath.split('/').pop();
-        
-        modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
-    }
-
-    function closeReceiptViewer() {
-        document.getElementById('receiptViewerModal').classList.remove('active');
-        document.body.style.overflow = '';
-    }
-
-    // ============================================
-    // MODAL CLOSE HANDLERS
-    // ============================================
-    
-    document.getElementById('transactionDetailsModal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            closeTransactionDetails();
-        }
+(function () {
+    'use strict';
+    const open = m => { m.classList.add('active'); document.body.style.overflow = 'hidden'; };
+    const close = m => {
+        m.classList.remove('active');
+        if (!document.querySelector('.user-modal.active')) document.body.style.overflow = '';
+    };
+    document.querySelectorAll('.user-modal').forEach(m => {
+        m.addEventListener('click', e => { if (e.target === m || e.target.closest('[data-close]')) close(m); });
+    });
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const top = [...document.querySelectorAll('.user-modal.active')].pop();
+        if (top) close(top);
     });
 
-    document.getElementById('receiptViewerModal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            closeReceiptViewer();
-        }
-    });
-
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closeTransactionDetails();
-            closeReceiptViewer();
-        }
-    });
-
-    // ============================================
-    // FLASH MESSAGE CLOSE
-    // ============================================
-    
-    document.querySelectorAll('.flash-close').forEach(btn => {
-        btn.addEventListener('click', function() {
-            this.parentElement.remove();
+    // ---- filter ----
+    const empty = document.querySelector('.user-filter-empty-state');
+    document.querySelectorAll('.user-filter-tab[data-filter]').forEach(tab => tab.addEventListener('click', () => {
+        document.querySelectorAll('.user-filter-tab').forEach(t => t.classList.toggle('active', t === tab));
+        let shown = 0;
+        document.querySelectorAll('.user-transaction-item').forEach(item => {
+            const on = tab.dataset.filter === 'all' || item.dataset.status === tab.dataset.filter;
+            item.hidden = !on;
+            shown += on;
         });
-    });
-
-    setTimeout(() => {
-        document.querySelectorAll('.flash-message').forEach(msg => {
-            msg.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-            msg.style.opacity = '0';
-            msg.style.transform = 'translateY(-20px)';
-            setTimeout(() => {
-                if (msg.parentElement) msg.remove();
-            }, 500);
-        });
-    }, 5000);
-
-
-    // QR payment (PayMongo): the dialog confirms by itself, then the page refreshes.
-    document.querySelectorAll('[data-pay]').forEach(btn => btn.addEventListener('click', () => {
-        DevtechPay.open({transactionId: btn.dataset.pay, title: btn.dataset.title, onPaid: () => location.reload()});
+        if (empty) empty.hidden = shown > 0;
     }));
-    // Just booked: open the booking fee payment straight away.
-    (function () {
-        const id = new URLSearchParams(location.search).get('pay');
-        const btn = id && document.querySelector('[data-pay="' + CSS.escape(id) + '"]');
-        if (btn) {
-            history.replaceState(null, '', location.pathname);
-            btn.click();
+
+    // ---- details: copied from the page, no request needed ----
+    const details = document.getElementById('transactionDetailsModal');
+    const detailsBody = document.getElementById('transactionDetailsContent');
+    const receipt = document.getElementById('receiptViewerModal');
+    function showReceipt(url) {
+        document.getElementById('receiptViewerImage').src = url;
+        document.getElementById('receiptDownloadLink').href = url;
+        open(receipt);
+    }
+    document.addEventListener('click', e => {
+        const d = e.target.closest('[data-details]');
+        if (d) {
+            const tpl = document.getElementById('txnDetails' + d.dataset.details);
+            detailsBody.replaceChildren(tpl.content.cloneNode(true));
+            open(details);
+            return;
         }
-    })();
+        const r = e.target.closest('[data-receipt]');
+        if (r) showReceipt(r.dataset.receipt);
+    });
+
+    // ---- pay with GCash: QR + screenshot ----
+    const pay = document.getElementById('gcashPayModal');
+    const form = document.getElementById('gcashPayForm');
+    const input = document.getElementById('gcashReceipt');
+    const send = document.getElementById('gcashSendBtn');
+    const error = document.getElementById('gcashError');
+    const thumb = document.getElementById('gcashThumb');
+    const fileName = document.getElementById('gcashFileName');
+    const TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    function resetFile() {
+        input.value = '';
+        thumb.innerHTML = '<i class="fas fa-image"></i>';
+        fileName.textContent = 'Attach your payment screenshot';
+        send.disabled = true;
+    }
+    function fail(msg) { error.textContent = msg; error.hidden = !msg; }
+    // paidOnline: PayMongo already confirmed the payment; only the receipt screenshot is asked for.
+    function openPayDialog(action, title, amount, paidOnline) {
+        form.action = action;
+        document.getElementById('gcashPayFor').textContent = title;
+        document.getElementById('gcashPayAmount').textContent = amount;
+        document.getElementById('gcashAmountLabel').textContent = paidOnline ? 'Paid' : 'Amount to pay';
+        document.getElementById('gcashPaidNote').hidden = !paidOnline;
+        document.getElementById('gcashShopQr').hidden = !!paidOnline;
+        document.getElementById('gcashNote').hidden = !!paidOnline;
+        document.getElementById('gcashPayTitle').innerHTML = paidOnline
+            ? '<i class="fas fa-receipt"></i> Attach your receipt' : '<i class="fas fa-qrcode"></i> Pay with GCash';
+        resetFile();
+        fail('');
+        send.innerHTML = paidOnline ? '<i class="fas fa-paper-plane"></i> Save receipt' : '<i class="fas fa-paper-plane"></i> Send screenshot';
+        open(pay);
+    }
+    document.querySelectorAll('[data-gcash]').forEach(btn => btn.addEventListener('click', () =>
+        openPayDialog(btn.dataset.action, btn.dataset.title, btn.dataset.amount, false)));
+    document.querySelectorAll('[data-receipt-only]').forEach(btn => btn.addEventListener('click', () =>
+        openPayDialog(btn.dataset.receiptOnly, btn.dataset.title, btn.dataset.amount, true)));
+    input.addEventListener('change', () => {
+        const file = input.files[0];
+        if (!file) { resetFile(); return; }
+        if (!TYPES.includes(file.type)) { resetFile(); fail('Choose an image: JPG, PNG, WEBP or GIF.'); return; }
+        if (file.size > 5 * 1024 * 1024) { resetFile(); fail('That image is larger than 5 MB. Crop it or take a smaller screenshot.'); return; }
+        fail('');
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (input.files[0] !== file) return;
+            const img = document.createElement('img');
+            img.src = reader.result;
+            img.alt = '';
+            thumb.replaceChildren(img);
+        };
+        reader.readAsDataURL(file);
+        fileName.textContent = file.name;
+        send.disabled = false;
+    });
+    form.addEventListener('submit', e => {
+        if (!input.files[0]) { e.preventDefault(); fail('Attach the screenshot of your payment first.'); return; }
+        send.disabled = true;
+        send.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+    });
+
+    // ---- GCash / online through PayMongo: scan the QR Ph code, then (repairs) attach the receipt ----
+    document.querySelectorAll('[data-pay-online]').forEach(btn => btn.addEventListener('click', () => {
+        if (!window.DevtechPay) { location.reload(); return; }
+        DevtechPay.open({
+            transactionId: btn.dataset.payOnline, title: btn.dataset.title,
+            onPaid: () => {
+                DevtechPay.close();
+                if (btn.dataset.receiptAction) openPayDialog(btn.dataset.receiptAction, btn.dataset.title, btn.dataset.amount, true);
+                else location.reload();
+            }
+        });
+    }));
+    // closing the receipt step without sending: the page still shows the paid payment
+    pay.addEventListener('click', e => {
+        if ((e.target === pay || e.target.closest('[data-close]')) && !document.getElementById('gcashPaidNote').hidden) location.reload();
+    });
+
+    // ---- flash messages ----
+    document.querySelectorAll('.flash-close').forEach(b => b.addEventListener('click', () => b.parentElement.remove()));
+    setTimeout(() => document.querySelectorAll('.flash-message').forEach(m => {
+        m.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+        m.style.opacity = '0';
+        m.style.transform = 'translateY(-20px)';
+        setTimeout(() => m.remove(), 500);
+    }), 6000);
+})();
 </script>
 {% endblock %}

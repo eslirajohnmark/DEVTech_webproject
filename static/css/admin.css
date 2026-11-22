@@ -2695,7 +2695,8 @@ a.admin-stat-card.tv-stat { text-decoration: none; color: inherit; }
 /* ---- Technician Roster (hired technicians) ------------------------------ */
 .tr-layout { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 1100px) { .tr-layout { grid-template-columns: minmax(0, 1fr); } }
-.tr-form { display: grid; gap: 0 0.8rem; }
+.tr-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 0.8rem; }
+.tr-form > * { min-width: 0; }
 .tr-form .admin-form-group { margin-bottom: 0.8rem; display: flex; flex-direction: column; gap: 0.3rem; }
 .tr-form input, .tr-form select {
     width: 100%; box-sizing: border-box;
@@ -2712,6 +2713,30 @@ a.admin-stat-card.tv-stat { text-decoration: none; color: inherit; }
 .tr-list { min-width: 0; }
 .tr-actions { white-space: nowrap; }
 .tr-actions form { display: inline; }
+/* fill the form from a photo of the technician's ID */
+.tr-label { font-size: 0.8rem; color: var(--text-secondary); }
+.tr-scan {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.7rem 0.8rem; cursor: pointer;
+    border: 1.5px dashed rgba(91, 140, 255, 0.45); border-radius: 10px; background: rgba(91, 140, 255, 0.06);
+}
+.tr-form .admin-form-group .tr-scan { display: flex; flex-direction: row; margin: 0; }
+.tr-form .tr-scan-first { margin-top: 0.4rem; }
+.tr-scan:hover, .tr-scan:focus-within { border-color: #5B8CFF; background: rgba(91, 140, 255, 0.12); }
+.tr-scan input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.tr-form .tr-scan input { padding: 0; border: 0; }
+.tr-scan-thumb {
+    flex: none; display: grid; place-items: center; width: 52px; height: 36px; overflow: hidden;
+    border-radius: 6px; background: rgba(91, 140, 255, 0.18); color: #5B8CFF;
+}
+.tr-scan-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.tr-scan-text { flex: 1; display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.tr-scan-text strong { font-size: 0.85rem; line-height: 1.3; overflow-wrap: anywhere; }
+.tr-scan-text small { line-height: 1.35; }
+.tr-scan-text small { color: var(--text-secondary); }
+.tr-scan-note { margin: 0; font-size: 0.8rem; padding: 0.5rem 0.7rem; border-radius: 8px; background: rgba(91, 140, 255, 0.1); }
+.tr-scan-note.is-ok { background: rgba(18, 183, 106, 0.12); color: #3DD68C; }
+.tr-scan-note.is-error { background: rgba(239, 68, 68, 0.12); color: var(--danger); }
+.tr-form .is-autofilled { border-color: #12B76A; box-shadow: 0 0 0 3px rgba(18, 183, 106, 0.15); }
 
 /* ---- Technician Activity: roster, one technician's jobs, reports ------- */
 .ta-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 0.9rem; }
@@ -2807,3 +2832,66 @@ a.admin-stat-card.tv-stat { text-decoration: none; color: inherit; }
 .admin-order-map summary::-webkit-details-marker { display: none; }
 .admin-order-map .map-view { width: 280px; }
 .admin-order-map .map-view-canvas { height: 180px; }
+
+/* Technician Verification: profile photo of a verified technician (services/profile_photo_rule.py) */
+.tv-photo-alert {
+    display: flex; gap: 0.8rem; align-items: flex-start; margin: 0 0 1rem; padding: 0.85rem 1rem;
+    border-radius: 12px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.35);
+    color: var(--text-secondary); font-size: 0.88rem;
+}
+.tv-photo-alert > i { color: #F59E0B; margin-top: 0.15rem; }
+.tv-photo-alert strong { color: var(--text-primary); }
+.tv-photo-alert ul { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.tv-photo-alert a { color: #8EAEFF; }
+.tv-photo { display: flex; gap: 0.9rem; align-items: flex-start; padding: 0.8rem; border-radius: 12px; border: 1px solid var(--dark-border-light, rgba(148,170,220,0.14)); }
+.tv-photo.is-overdue { border-color: rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.06); }
+.tv-photo > a { flex: none; border-radius: 50%; }
+.tv-photo-text { min-width: 0; font-size: 0.86rem; }
+.tv-photo-text p { margin: 0 0 0.4rem; }
+.tv-photo-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.4rem; }
+
+/* Maintenance mode banner (Settings > Danger Zone > Deactivate System) */
+.admin-offline-banner {
+    display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin: 0 0 1rem; padding: 0.75rem 1rem;
+    border-radius: 12px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.4);
+    color: var(--text-secondary); font-size: 0.88rem;
+}
+.admin-offline-banner > i { color: #F87171; }
+.admin-offline-banner strong { color: var(--text-primary); }
+.admin-offline-banner a { margin-left: auto; color: #8EAEFF; font-weight: 600; }
+
+/* Danger Zone: locked until unlocked, then three confirmations */
+.admin-danger-header { flex-wrap: wrap; }
+.admin-danger-unlock { margin-left: auto; background: rgba(255, 255, 255, 0.06); color: var(--text-primary);
+    border: 1px solid rgba(239, 68, 68, 0.45); }
+.admin-danger-unlock[aria-pressed="true"] { background: rgba(239, 68, 68, 0.18); }
+.admin-danger-state { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.9rem; font-size: 0.84rem; color: var(--text-secondary); }
+.admin-danger-zone.is-locked .admin-danger-actions .admin-btn { opacity: 0.45; cursor: not-allowed; }
+.admin-danger-reactivate { background: #16A34A; border-color: #16A34A; }
+.admin-danger-final .admin-danger-phrase { font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; color: #F87171; letter-spacing: 0.03em; }
+.admin-danger-field { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.85rem; font-size: 0.82rem; color: var(--dc-ink-2, #A3B1CC); }
+.admin-danger-field input {
+    width: 100%; min-height: 42px; padding: 0.55rem 0.75rem; border-radius: 10px; font: inherit; font-size: 0.92rem;
+    color: #E5E7EB; background: rgba(3, 8, 24, 0.55); border: 1px solid rgba(148, 170, 220, 0.22);
+}
+.admin-danger-field input:focus { outline: none; border-color: #5B8CFF; box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.2); }
+.admin-danger-error { margin: 0.8rem 0 0; padding: 0.55rem 0.75rem; border-radius: 10px; font-size: 0.85rem;
+    background: rgba(239, 68, 68, 0.12); color: #FCA5A5; }
+.admin-danger-final .dc-btn--ok:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Service Requests > details: the device intake photo record */
+.admin-intake-photos { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.5rem; }
+.admin-intake-photos li { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.admin-intake-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; display: block;
+    border: 1px solid var(--dark-border-light, rgba(148,170,220,0.14)); }
+.admin-intake-photos small { font-size: 0.74rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.tr-form .tr-ocr { align-self: flex-start; margin-top: 0.1rem; }
+.tr-form .tr-ocr[hidden] { display: none; }
+.tr-scan-note.is-busy { color: var(--text-secondary); }
+
+/* Services > Set service fees */
+.admin-fee-form .admin-fee-label { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.3rem; }
+.admin-fee-form .admin-fee-choice { display: flex; align-items: center; gap: 0.45rem; margin: 0.25rem 0;
+    font-size: 0.86rem; font-weight: 400; color: var(--text-primary); }
+.admin-fee-form .admin-fee-choice input { width: auto; margin: 0; accent-color: #5B8CFF; }

@@ -10,7 +10,7 @@ import pytest
 from app import (db, Booking, Customer, Technician, Notification, Order, Product, Service,
                  ServiceCategory, SystemSetting, Transaction)
 from models.technician_models import ApprovalRequest, IncidentReport, IntakeRecord, JobLog, ServiceReport
-from tests.conftest import login_as
+from tests.conftest import login_as, payment_proof
 
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 
@@ -27,11 +27,9 @@ def service(app):
 
 
 def _book(client, service, **overrides):
-    from app import app as flask_app
-    flask_app.config['PAYMONGO_ENABLED'] = True        # QR Ph needs online payments (reset per test)
     data = {'service_id': str(service.id), 'device_type': 'Laptop', 'problem_description': 'The laptop screen is cracked after it fell off the table',
             'booking_date': TOMORROW, 'booking_time': '10:00', 'in_shop': 'on',
-            'payment_method': 'QR Ph', 'accept_terms': 'on'}
+            'payment_method': 'GCash', 'accept_terms': 'on', 'fee_receipt': payment_proof()}
     data.update(overrides)
     return client.post('/user/service-request', data={k: v for k, v in data.items() if v is not None})
 
@@ -43,14 +41,16 @@ def _admin_notes(title_part):
 
 # ---------------------------------------------------------------- booking rules
 
-def test_valid_booking_records_terms_and_server_price(customer_logged_in, service):
+def test_valid_booking_records_terms_and_server_price(customer_logged_in, service, admin):
     _book(customer_logged_in, service)
     b = Booking.query.one()
     assert b.terms_accepted_at is not None and b.status == 'pending'
     # the ₱100 booking fee is paid now and deducted: the booking's charge is the balance
     assert Transaction.query.filter_by(booking_id=b.id).one().amount == Decimal('1400.00')
     fee = Transaction.query.filter(Transaction.transaction_number.like(f'FEE-{b.booking_number}-%')).one()
-    assert fee.amount == Decimal('100.00') and fee.payment_method == 'paymongo' and b.booking_fee == Decimal('100.00')
+    assert fee.amount == Decimal('100.00') and fee.payment_method == 'GCash' and b.booking_fee == Decimal('100.00')
+    assert fee.receipt_image and fee.payment_status == 'pending'          # the screenshot waits for an admin
+    assert _admin_notes('Booking Fee Awaiting') == 1
 
 
 def test_booking_fee_follows_the_setting_and_never_exceeds_the_price(customer_logged_in, service):
@@ -198,20 +198,33 @@ def test_payment_confirm_records_reviewer_and_is_idempotent(client, admin, custo
     assert Notification.query.filter_by(user_role='customer', title='Payment Confirmed').count() == 1
 
 
-def test_customer_payment_submission_is_validated(client, customer, admin, assigned_booking):
+def test_a_repair_bill_is_paid_after_the_repair_with_a_screenshot(client, customer, admin, assigned_booking):
     t = _txn(assigned_booking, status='rejected')
     login_as(client, customer)
+    # still being repaired: nothing can be paid yet
+    client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'receipt_image': payment_proof()})
+    t = db.session.get(Transaction, t.id)
+    assert t.payment_status == 'rejected' and not t.receipt_image
+    assert 'You can pay once the repair is done' in client.get('/user/transactions').get_data(as_text=True)
+
+    assigned_booking.status = 'completed'                     # Ready for Collection
+    db.session.commit()
     client.post(f'/user/payments/{t.id}', data={'payment_method': 'Bitcoin', 'reference_number': 'X1'})
     assert db.session.get(Transaction, t.id).payment_status == 'rejected'
-    # GCash was replaced by QR Ph through PayMongo: GCash references are no longer taken.
     client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'reference_number': 'GC-778899'})
-    assert db.session.get(Transaction, t.id).payment_status == 'rejected'
-    client.post(f'/user/payments/{t.id}', data={'payment_method': 'C.A.R', 'reference_number': 'R' * 51})
+    assert db.session.get(Transaction, t.id).payment_status == 'rejected'           # no screenshot
+    client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'reference_number': 'R' * 51,
+                                                 'receipt_image': payment_proof()})
     assert db.session.get(Transaction, t.id).payment_status == 'rejected'           # reference too long
-    client.post(f'/user/payments/{t.id}', data={'payment_method': 'C.A.R'})
+    client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'receipt_image': (io.BytesIO(b'%PDF-1.4 x'), 'r.pdf', 'application/pdf')})
+    assert db.session.get(Transaction, t.id).payment_status == 'rejected'           # a screenshot is an image
+    client.post(f'/user/payments/{t.id}', data={'payment_method': 'GCash', 'reference_number': 'GC-778899',
+                                                 'receipt_image': payment_proof()})
     t = db.session.get(Transaction, t.id)
-    assert t.payment_status == 'pending' and t.payment_method == 'C.A.R'
-    assert _admin_notes('Payment Awaiting') == 1
+    assert (t.payment_status, t.payment_method, t.gcash_reference) == ('pending', 'GCash', 'GC-778899')
+    assert t.receipt_image and _admin_notes('Payment Awaiting') == 1
+    page = client.get('/user/transactions').get_data(as_text=True)
+    assert 'Screenshot sent. We are checking it.' in page and 'id="txnDetails%d"' % t.id in page
 
 
 # ---------------------------------------------------------------- reassignment

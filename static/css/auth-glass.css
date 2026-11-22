@@ -84,8 +84,6 @@ body > .card .field-hint { display: block; margin-top: 0.35rem; font-size: 0.8re
 .login-container .login-btn:focus-visible, body > .card .btn-primary:focus-visible { outline: 3px solid rgba(37, 99, 235, 0.45); outline-offset: 2px; }
 
 .login-container .forgot-link, .login-container .signup-link a, body > .card .signin-link { color: var(--a-blue); }
-.login-container .social-btn { background: rgba(255, 255, 255, 0.8); border: 1px solid var(--a-line); border-radius: 14px; }
-.login-container .social-btn:hover { border-color: var(--a-blue); transform: none; box-shadow: none; }
 .login-container .divider { color: var(--a-muted); }
 
 /* ---------- the right side: the dark board ---------- */
@@ -120,3 +118,9 @@ body > .card .field-hint { display: block; margin-top: 0.35rem; font-size: 0.8re
 
 /* one show-password button: hide Edge's built-in one next to ours */
 input::-ms-reveal, input::-ms-clear { display: none; }
+
+/* sign-in paused after too many wrong passwords (static/js/login-lock.js) */
+.login-lock-note { margin: 0 0 0.9rem; padding: 0.65rem 0.85rem; border-radius: 12px; font-size: 0.88rem;
+    background: rgba(229, 72, 77, 0.08); border: 1px solid rgba(229, 72, 77, 0.3); color: #B42318; }
+.login-lock-note.is-open { background: rgba(18, 183, 106, 0.08); border-color: rgba(18, 183, 106, 0.35); color: #0E7A4A; }
+.login-container .login-btn:disabled { opacity: 0.6; cursor: not-allowed; }

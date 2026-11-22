@@ -36,8 +36,6 @@ Flask-WTF==1.2.2
 WTForms==3.2.1
 
 
-# ---- OAuth ----
-Authlib==1.4.0
 requests==2.32.3
 
 

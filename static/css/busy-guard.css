@@ -1,0 +1,8 @@
+/* static/js/busy-guard.js: a button waiting for the server */
+.is-busy,
+.is-busy:hover {
+    cursor: progress !important;
+    opacity: 0.72;
+    pointer-events: none;
+}
+.is-busy .fa-spin { margin-right: 0.15rem; }

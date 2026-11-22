@@ -1,0 +1,107 @@
+/* ==========================================================================
+   DEVTech customer payments: the booking-fee step on the booking form, the
+   "Pay with GCash" dialog and the bill on the Transactions page. Uses the
+   glass tokens from glass.css (light and dark).
+   ========================================================================== */
+
+.bk-pay-lead { margin: 0 0 0.7rem; font-size: 0.86rem; color: var(--g-ink-2); }
+
+/* ---- the dialog ---- */
+.user-modal .bk-pay-card { max-width: 560px; width: calc(100% - 32px); }
+.bk-pay-body { display: grid; gap: 0.9rem; }
+.bk-pay-for { margin: 0; font-size: 0.85rem; color: var(--g-muted); }
+.bk-pay-amount {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+    margin: 0; padding: 0.75rem 1rem; border-radius: 12px;
+    background: var(--g-blue-wash); border: 1px solid var(--g-line);
+}
+.bk-pay-amount span { font-size: 0.85rem; color: var(--g-ink-2); }
+.bk-pay-amount strong { font: 700 1.5rem/1 var(--g-font-head); color: var(--g-blue-deep); font-variant-numeric: tabular-nums; }
+
+.bk-pay-grid { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 1rem; align-items: center; }
+.bk-pay-qr { margin: 0; display: grid; gap: 0.45rem; justify-items: center; text-align: center; }
+.bk-pay-qr img {
+    width: 100%; max-width: 220px; height: auto; aspect-ratio: 1; object-fit: contain;
+    background: #fff; border-radius: 12px; padding: 8px; border: 1px solid var(--g-line);
+}
+.bk-pay-noqr {
+    width: 100%; max-width: 220px; aspect-ratio: 1; display: grid; place-content: center; gap: 0.5rem;
+    border: 2px dashed var(--g-line); border-radius: 12px; color: var(--g-muted); font-size: 0.82rem; padding: 1rem;
+}
+.bk-pay-noqr i { font-size: 2.4rem; opacity: 0.5; }
+.bk-pay-qr figcaption { display: grid; font-size: 0.82rem; color: var(--g-ink-2); }
+.bk-pay-qr figcaption strong { color: var(--g-ink); }
+.bk-pay-qr figcaption span { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+.bk-pay-steps { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.45rem; font-size: 0.88rem; color: var(--g-ink-2); }
+.bk-pay-steps strong { color: var(--g-ink); }
+
+/* the screenshot picker */
+.bk-pay-drop {
+    position: relative; display: flex; align-items: center; gap: 0.8rem; cursor: pointer;
+    padding: 0.7rem 0.85rem; border-radius: 12px;
+    border: 1.5px dashed rgba(37, 99, 235, 0.45); background: var(--g-panel-strong);
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.bk-pay-drop:hover, .bk-pay-drop:focus-within { border-color: var(--g-blue); background: var(--g-blue-wash); }
+.bk-pay-drop input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.bk-pay-thumb {
+    flex: 0 0 56px; height: 56px; border-radius: 10px; overflow: hidden; display: grid; place-items: center;
+    background: var(--g-blue-wash); color: var(--g-blue); font-size: 1.3rem;
+}
+.bk-pay-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.bk-pay-drop-text { display: grid; min-width: 0; }
+.bk-pay-drop-text strong { font-size: 0.9rem; color: var(--g-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-pay-drop-text small { font-size: 0.78rem; color: var(--g-muted); }
+.bk-pay-ref { margin: 0; }
+.bk-pay-ref label { display: block; font-size: 0.84rem; margin-bottom: 0.3rem; color: var(--g-ink-2); }
+.bk-pay-ref input { width: 100%; }
+.bk-pay-error {
+    margin: 0; padding: 0.55rem 0.8rem; border-radius: 10px; font-size: 0.85rem;
+    background: rgba(229, 72, 77, 0.1); color: var(--g-red);
+}
+.bk-pay-note { margin: 0; font-size: 0.8rem; color: var(--g-muted); }
+.user-modal .user-modal-footer .user-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+@media (max-width: 560px) {
+    .bk-pay-grid { grid-template-columns: minmax(0, 1fr); }
+    .bk-pay-qr img, .bk-pay-noqr { max-width: 200px; }
+}
+
+/* ---- Transactions page ---- */
+.user-transaction-note.is-checking { color: var(--g-amber); }
+.txn-detail { margin: 0 0 1rem; display: grid; gap: 0; }
+.txn-detail > div {
+    display: grid; grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr); gap: 0.8rem;
+    padding: 0.5rem 0; border-bottom: 1px solid var(--g-line); font-size: 0.88rem;
+}
+.txn-detail dt { color: var(--g-muted); }
+.txn-detail dd { margin: 0; color: var(--g-ink); overflow-wrap: anywhere; }
+.txn-detail .txn-bad { color: var(--g-red); }
+.txn-bill { width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.88rem; }
+.txn-bill caption { text-align: left; font: 600 0.95rem var(--g-font-head); color: var(--g-ink); padding-bottom: 0.4rem; }
+.txn-bill td { padding: 0.42rem 0; border-bottom: 1px dashed var(--g-line); color: var(--g-ink-2); }
+.txn-bill td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 1rem; }
+.txn-bill .txn-less td { color: var(--g-green); }
+.txn-bill tfoot td { border-bottom: 0; padding-top: 0.65rem; font: 700 1.05rem var(--g-font-head); color: var(--g-ink); }
+.txn-total { display: flex; justify-content: space-between; margin: 0 0 1rem; font-size: 0.95rem; }
+.txn-total strong { font-variant-numeric: tabular-nums; }
+.txn-items { margin: 0 0 1rem; padding-left: 1.1rem; font-size: 0.88rem; color: var(--g-ink-2); }
+
+/* PayMongo said the booking fee is paid: now the receipt */
+.bk-pay-paid { display: flex; gap: 0.7rem; align-items: flex-start; margin: 0; padding: 0.8rem 0.95rem; border-radius: 12px;
+    background: rgba(18, 183, 106, 0.1); border: 1px solid rgba(18, 183, 106, 0.35); color: var(--g-ink-2); font-size: 0.88rem; }
+.bk-pay-paid i { color: var(--g-green); font-size: 1.2rem; margin-top: 0.1rem; }
+.bk-pay-paid strong { color: var(--g-ink); }
+
+/* the booking form came back with what was typed (static draft in _booking_form_script.html) */
+.bk-draft-note { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.8rem; margin: 0 0 1rem;
+    padding: 0.7rem 0.9rem; border-radius: 12px; font-size: 0.86rem; color: var(--g-ink-2);
+    background: var(--g-blue-wash); border: 1px solid var(--g-line); }
+.bk-draft-note i { color: var(--g-blue); }
+.bk-draft-note span { flex: 1 1 16rem; }
+.bk-draft-note button { border: 1px solid var(--g-line); background: var(--g-panel-strong); color: var(--g-ink);
+    border-radius: 8px; padding: 0.3rem 0.7rem; font: inherit; font-size: 0.82rem; cursor: pointer; }
+
+/* hidden parts of the payment dialog (they have their own display) */
+.bk-pay-grid[hidden], .bk-pay-paid[hidden], .bk-pay-note[hidden] { display: none; }

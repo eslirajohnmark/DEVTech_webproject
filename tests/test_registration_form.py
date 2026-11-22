@@ -9,7 +9,7 @@ def _register(client, **fields):
     data = {'fullName': 'Cara Santos', 'email': 'cara@example.com', 'password': 'Secret#123',
             'rePassword': 'Secret#123', 'phone': '+63 912 345 6789'}
     data.update(fields)
-    return client.post('/register', data=data)
+    return client.post('/register', data=data, follow_redirects=True)
 
 
 @pytest.mark.parametrize('typed, saved', [
@@ -29,8 +29,9 @@ def test_other_numbers_are_refused(typed):
 
 
 def test_registration_saves_the_number_in_one_format(client):
-    r = _register(client)
-    assert r.status_code == 302
+    r = client.post('/register', data={'fullName': 'Cara Santos', 'email': 'cara@example.com', 'password': 'Secret#123',
+                                       'rePassword': 'Secret#123', 'phone': '+63 912 345 6789'})
+    assert r.status_code == 302 and r.headers['Location'].endswith('/login')
     c = Customer.query.filter_by(email='cara@example.com').one()
     assert (c.full_name, c.phone) == ('Cara Santos', '+639123456789')
 
@@ -47,6 +48,26 @@ def test_a_wrong_number_is_refused_and_the_form_keeps_what_was_typed(client):
     assert Customer.query.count() == 0
     assert '12-digit mobile number that starts with 63 9' in page
     assert 'value="cara@example.com"' in page and 'value="0912 345 6789"' in page
+    assert 'Secret#123' not in page                                   # passwords are never sent back
+
+
+def test_an_email_already_used_shows_nothing_about_the_account_or_what_was_typed(client, customer):
+    customer.full_name = 'Maria Existing Owner'
+    from app import db
+    db.session.commit()
+    r = client.post('/register', data={'fullName': 'Someone Else', 'email': customer.email, 'password': 'Secret#123',
+                                       'rePassword': 'Secret#123', 'phone': '+63 912 345 6789'})
+    assert r.status_code == 302 and r.headers['Location'].endswith('/register')   # Back never re-sends it
+    page = client.get('/register').get_data(as_text=True)
+    assert 'already registered' in page
+    for leak in ('Maria Existing Owner', customer.email, 'Someone Else', 'value="+63 912 345 6789"'):
+        assert leak not in page, leak
+    assert Customer.query.count() == 1
+
+
+def test_the_create_account_button_locks_until_the_answer(client):
+    page = client.get('/register').get_data(as_text=True)
+    assert 'data-busy-text="Creating your account…"' in page and 'js/busy-guard.js' in page
 
 
 def test_the_form_shows_the_rules(client):

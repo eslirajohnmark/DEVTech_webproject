@@ -2,7 +2,7 @@
 
 {% block title %}Order Management · DEVTech{% endblock %}
 {% block page_title %}Order Management{% endblock %}
-{% block page_subtitle %}View and manage all customer orders{% endblock %}
+{% block page_subtitle %}Prepare, send out and deliver customer orders{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
@@ -21,6 +21,15 @@
 
 {% block content %}
 {% set on_duty = riders|selectattr('is_active')|selectattr('on_duty')|list %}
+<div class="admin-top-bar">
+    <div class="admin-page-title">
+        <h1>Shop Orders</h1>
+        <p>Prepare, send out and deliver customer orders</p>
+    </div>
+    <div class="admin-top-actions">
+        {% include 'admin/_notification_bell.html' %}
+    </div>
+</div>
 
 <!-- Delivery riders: who is on duty drives the customers' delivery estimates -->
 <details class="admin-card admin-riders" {% if not riders %}open{% endif %}>
@@ -39,7 +48,7 @@
                     <button type="submit" class="admin-btn admin-btn-sm {{ '' if r.on_duty else 'admin-btn-primary' }}">{{ 'Set off duty' if r.on_duty else 'Set on duty' }}</button>
                 </form>
                 <form method="POST" action="{{ url_for('admin_rider_update', rider_id=r.id, action='active') }}"
-                      onsubmit="return confirm('Remove {{ r.name }} from the rider list?');">
+                      data-confirm-title="Remove {{ r.name }} from the rider list?" data-confirm-ok="Remove rider" data-confirm-tone="danger">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="admin-btn admin-btn-sm admin-btn-danger" aria-label="Remove {{ r.name }}"><i class="fas fa-user-minus"></i></button>
                 </form>
@@ -68,99 +77,230 @@
     </div>
 </details>
 
-<div class="admin-table-container">
-    <div style="padding:1rem 1.2rem; display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; justify-content:space-between;">
-        <h3 style="font-weight:600; color:var(--admin-text-primary);">
-            <i class="fas fa-shopping-cart" style="color:var(--admin-primary);"></i> Shop Orders
-        </h3>
-        <div style="display:flex; flex-wrap:wrap; gap:0.4rem;">
-            {% for key, label in [('all', 'All'), ('pending', 'Pending'), ('processing', 'Preparing'), ('out_for_delivery', 'Out for delivery'), ('completed', 'Delivered'), ('cancelled', 'Cancelled')] %}
-            <a href="{{ url_for('admin_orders', status=key) }}"
-               class="admin-btn admin-btn-sm {% if status_filter == key %}admin-btn-primary{% endif %}">
-                {{ label }}
-                ({{ counts.values()|sum if key == 'all' else counts.get(key, 0) }})
-            </a>
-            {% endfor %}
+<section class="ao" aria-labelledby="aoTitle">
+    <header class="ao-head">
+        <div>
+            <h2 id="aoTitle"><i class="fas fa-box" aria-hidden="true"></i> Shop orders</h2>
+            <p class="admin-muted">{{ counts.get('pending', 0) }} waiting to be prepared · {{ counts.get('processing', 0) }} being prepared · {{ counts.get('out_for_delivery', 0) }} on the road</p>
         </div>
-    </div>
-    <div style="overflow-x:auto;">
-    <table>
-        <thead>
-            <tr>
-                <th>Order #</th>
-                <th>Customer</th>
-                <th>Items</th>
-                <th>Deliver to</th>
-                <th>Total</th>
-                <th>Payment</th>
-                <th>Status / delivery</th>
-                <th>Date</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for order in orders %}
-            {% set eta = etas.get(order.id) %}
-            <tr>
-                <td>{{ order.order_number }}</td>
-                <td>{{ order.recipient_name or (order.user.full_name if order.user else 'Unknown') }}<br>
-                    <small style="opacity:0.7;">{{ order.recipient_phone or '' }}</small></td>
-                <td>
-                    {% for item in order.items %}
-                    <div>{{ item.quantity }} × {{ item.product.name if item.product else 'Removed product' }}</div>
-                    {% endfor %}
-                </td>
-                <td>{{ order.address_line or order.shipping_address or 'N/A' }}{% if order.city %}, {{ order.city }}{% endif %}
-                    {% if order.latitude is not none and order.longitude is not none %}
-                    <details class="admin-order-map"><summary><small><i class="fas fa-map-pin"></i> Show pin</small></summary>
-                        <div class="map-view" data-map-lat="{{ order.latitude }}" data-map-lng="{{ order.longitude }}" data-map-label="Delivery pin"></div>
-                    </details>
-                    {% endif %}
-                    {% if eta and eta.distance_km %}<br><small class="admin-muted">≈ {{ eta.distance_km }} km{% if eta.basis != 'pin' %} (by {{ eta.basis }}){% endif %}</small>{% endif %}
-                </td>
-                <td>₱{{ '{:,.2f}'.format(order.total_amount) }}</td>
-                <td>{{ (order.payment_method or 'N/A')|upper }}<br>
-                    <span class="admin-status-badge {% if order.payment_status == 'confirmed' %}active{% elif order.payment_status == 'pending' %}warning{% else %}inactive{% endif %}">{{ order.payment_status }}</span>
-                    {% if order.payment_method == 'gcash' and order.payment_status == 'pending' %}<br><a href="{{ url_for('admin_payments') }}"><small>Check screenshot</small></a>{% endif %}</td>
-                <td><span class="admin-status-badge {% if order.status == 'completed' %}active{% elif order.status in ('pending', 'processing', 'out_for_delivery') %}warning{% else %}inactive{% endif %}">{{ order_status_labels.get(order.status, order.status) }}</span>
-                    {% if order.rider and order.status in ('out_for_delivery', 'completed') %}<br><small><i class="fas fa-motorcycle"></i> {{ order.rider.name }}</small>{% endif %}
-                    {% if eta %}<br><small class="admin-muted" title="{{ eta.note }}">ETA {{ eta.label }}</small>{% endif %}
-                </td>
-                <td>{{ order.created_at.strftime('%Y-%m-%d') if order.created_at else 'N/A' }}</td>
-                <td class="admin-order-actions">
-                    {% for next_status in transitions.get(order.status, ()) %}
-                    <form method="POST" action="{{ url_for('admin_order_status', order_id=order.id, filter=status_filter) }}"
-                          {% if next_status == 'cancelled' %}onsubmit="return confirm('Cancel order {{ order.order_number }}? Its items go back into stock and any payment goes to Refunds.');"{% endif %}>
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="status" value="{{ next_status }}">
-                        {% if next_status == 'out_for_delivery' %}
-                            {% if on_duty %}
-                            <select name="rider_id" required aria-label="Rider for {{ order.order_number }}">
-                                {% for r in on_duty %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
-                            </select>
-                            <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary"
-                                {% if order.payment_method in ('gcash', 'paymongo') and order.payment_status != 'confirmed' %}disabled title="Not paid yet"{% endif %}>
-                                <i class="fas fa-motorcycle"></i> Send out
-                            </button>
-                            {% else %}
-                            <small class="admin-muted">No rider on duty</small>
-                            {% endif %}
-                        {% else %}
-                        <button type="submit" class="admin-btn admin-btn-sm {% if next_status == 'cancelled' %}admin-btn-danger{% else %}admin-btn-primary{% endif %}">
-                            {{ {'processing': 'Start preparing', 'completed': ('Mark delivered' if order.status == 'out_for_delivery' else 'Mark completed (picked up)'), 'cancelled': 'Cancel'}[next_status] }}
-                        </button>
-                        {% endif %}
-                    </form>
-                    {% else %}
-                    <small style="opacity:0.6;">No actions</small>
-                    {% endfor %}
-                </td>
-            </tr>
-            {% else %}
-            <tr><td colspan="9" style="text-align:center; padding:2rem; opacity:0.6;">No orders found.</td></tr>
+        <label class="ao-search">
+            <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+            <input type="search" id="aoSearch" placeholder="Find an order, customer or product" aria-label="Find an order on this page">
+        </label>
+    </header>
+
+    <nav class="ao-tabs" aria-label="Filter orders by status">
+        {% for key, label in [('all', 'All'), ('pending', 'Pending'), ('processing', 'Preparing'), ('out_for_delivery', 'Out for delivery'), ('completed', 'Delivered'), ('cancelled', 'Cancelled')] %}
+        <a href="{{ url_for('admin_orders', status=key) }}" class="ao-tab {% if status_filter == key %}is-current{% endif %}"
+           {% if status_filter == key %}aria-current="page"{% endif %}>
+            {{ label }} <span>{{ counts.values()|sum if key == 'all' else counts.get(key, 0) }}</span>
+        </a>
+        {% endfor %}
+    </nav>
+
+    <div class="ao-list" id="aoList">
+    {% for order in orders %}
+    {% set eta = etas.get(order.id) %}
+    {% set rank = {'pending': 0, 'processing': 1, 'out_for_delivery': 2, 'completed': 3}.get(order.status, -1) %}
+    {% set unpaid_online = order.payment_method in ('gcash', 'paymongo') and order.payment_status != 'confirmed' %}
+    {% set txn = order.transactions[0] if order.transactions else None %}
+    <article class="ao-card ao-card--{{ order.status }}" data-search="{{ (order.order_number ~ ' ' ~ (order.recipient_name or (order.user.full_name if order.user else '')) ~ ' ' ~ (order.recipient_phone or '') ~ ' ' ~ (order.items|map(attribute='product')|select|map(attribute='name')|join(' ')))|lower }}">
+        <header class="ao-card-head">
+            <div class="ao-id">
+                <strong>{{ order.order_number }}</strong>
+                <span class="admin-muted">{{ order.created_at.strftime('%b %d, %Y · %I:%M %p') if order.created_at else '' }}</span>
+            </div>
+            <span class="ao-state ao-state--{{ order.status }}">{{ order_status_labels.get(order.status, order.status) }}</span>
+            <span class="ao-total">₱{{ '{:,.2f}'.format(order.total_amount) }}</span>
+        </header>
+
+        {% if order.status == 'cancelled' %}
+        <p class="ao-cancelled"><i class="fas fa-ban" aria-hidden="true"></i> Cancelled{% if order.updated_at %} on {{ order.updated_at.strftime('%b %d, %Y') }}{% endif %}. Items went back into stock.</p>
+        {% else %}
+        <ol class="ao-rail" aria-label="Progress">
+            {% for label in ['Placed', 'Preparing', 'Out for delivery', 'Delivered'] %}
+            <li class="{{ 'is-done' if loop.index0 <= rank else '' }} {{ 'is-now' if loop.index0 == rank else '' }}">{{ label }}</li>
             {% endfor %}
-        </tbody>
-    </table>
+        </ol>
+        {% endif %}
+
+        <div class="ao-grid">
+            <div class="ao-cell">
+                <h3>Customer</h3>
+                <p><strong>{{ order.recipient_name or (order.user.full_name if order.user else 'Unknown') }}</strong></p>
+                {% if order.recipient_phone %}<p><a href="tel:{{ order.recipient_phone }}">{{ order.recipient_phone }}</a></p>{% endif %}
+            </div>
+            <div class="ao-cell">
+                <h3>Items <span class="admin-muted">({{ order.items|sum(attribute='quantity') }})</span></h3>
+                <ul class="ao-items">
+                    {% for item in order.items %}
+                    <li><span class="ao-qty">{{ item.quantity }}×</span> {{ item.product.name if item.product else 'Removed product' }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="ao-cell">
+                <h3>Deliver to</h3>
+                <p>{{ order.address_line or order.shipping_address or 'No address' }}{% if order.city %}, {{ order.city }}{% endif %}</p>
+                {% if eta and eta.distance_km %}<p class="admin-muted">≈ {{ eta.distance_km }} km from the shop{% if eta.basis != 'pin' %} (by {{ eta.basis }}){% endif %}</p>{% endif %}
+                {% if order.latitude is not none and order.longitude is not none %}
+                <details class="admin-order-map"><summary><i class="fas fa-map-pin"></i> Show the pin</summary>
+                    <div class="map-view" data-map-lat="{{ order.latitude }}" data-map-lng="{{ order.longitude }}" data-map-label="Delivery pin"></div>
+                </details>
+                {% endif %}
+            </div>
+            <div class="ao-cell">
+                <h3>Payment</h3>
+                <p>{{ {'gcash': 'GCash', 'cod': 'Cash on delivery', 'paymongo': 'Online (QR Ph)'}.get(order.payment_method, (order.payment_method or 'Not set')|upper) }}</p>
+                <span class="ao-pay ao-pay--{{ order.payment_status }}">{{ {'confirmed': 'Paid', 'pending': ('Cash on delivery' if order.payment_method == 'cod' else 'Waiting for payment'), 'rejected': 'Screenshot rejected', 'refunded': 'Refunded', 'cancelled': 'Cancelled'}.get(order.payment_status, order.payment_status) }}</span>
+                {% if txn and txn.receipt_image %}<p><a href="{{ receipt_url(txn) }}" target="_blank" rel="noopener"><i class="fas fa-image"></i> Payment screenshot</a></p>{% endif %}
+                {% if order.payment_method == 'gcash' and order.payment_status == 'pending' %}<p><a href="{{ url_for('admin_payments') }}">Check it under Payments</a></p>{% endif %}
+            </div>
+        </div>
+
+        <footer class="ao-foot">
+            <div class="ao-foot-info">
+                {% if order.rider and order.status in ('out_for_delivery', 'completed') %}<span><i class="fas fa-motorcycle" aria-hidden="true"></i> {{ order.rider.name }}</span>{% endif %}
+                {% if eta %}<span title="{{ eta.note }}"><i class="fas fa-clock" aria-hidden="true"></i> ETA {{ eta.label }}</span>{% endif %}
+                {% if order.status == 'completed' and order.delivered_at %}<span><i class="fas fa-circle-check" aria-hidden="true"></i> Delivered {{ order.delivered_at.strftime('%b %d, %I:%M %p') }}</span>{% endif %}
+            </div>
+            <div class="ao-actions admin-order-actions">
+                {% for next_status in transitions.get(order.status, ()) %}
+                <form method="POST" action="{{ url_for('admin_order_status', order_id=order.id, filter=status_filter) }}"
+                      {% if next_status == 'cancelled' %}data-confirm-title="Cancel order {{ order.order_number }}?" data-confirm="Its items go back into stock and any payment goes to Refunds." data-confirm-ok="Cancel order" data-confirm-tone="danger"{% endif %}>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="status" value="{{ next_status }}">
+                    {% if next_status == 'out_for_delivery' %}
+                        {% if on_duty %}
+                        <select name="rider_id" required aria-label="Rider for {{ order.order_number }}">
+                            {% for r in on_duty %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+                        </select>
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary" {% if unpaid_online %}disabled title="Not paid yet"{% endif %}>
+                            <i class="fas fa-motorcycle"></i> Send out
+                        </button>
+                        {% else %}
+                        <small class="admin-muted">No rider on duty</small>
+                        {% endif %}
+                    {% else %}
+                    <button type="submit" class="admin-btn admin-btn-sm {% if next_status == 'cancelled' %}admin-btn-danger{% else %}admin-btn-primary{% endif %}">
+                        {{ {'processing': 'Start preparing', 'completed': ('Mark delivered' if order.status == 'out_for_delivery' else 'Mark completed (picked up)'), 'cancelled': 'Cancel'}[next_status] }}
+                    </button>
+                    {% endif %}
+                </form>
+                {% else %}
+                <small class="admin-muted">Nothing left to do</small>
+                {% endfor %}
+            </div>
+        </footer>
+    </article>
+    {% else %}
+    <div class="ao-empty">
+        <i class="fas fa-box-open" aria-hidden="true"></i>
+        <p>{% if status_filter != 'all' %}No {{ order_status_labels.get(status_filter, status_filter)|lower }} orders.{% else %}No shop orders yet. They show up here as soon as a customer checks out.{% endif %}</p>
     </div>
-</div>
+    {% endfor %}
+    <p class="ao-empty ao-nomatch" id="aoNoMatch" hidden>No order on this page matches your search.</p>
+    </div>
+</section>
+
+<style>
+    .ao { margin-top: 1.25rem; }
+    .ao-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.8rem; }
+    .ao-head h2 { margin: 0 0 0.2rem; font-size: 1.15rem; color: var(--text-primary); }
+    .ao-head h2 i { color: var(--primary); }
+    .ao-head p { margin: 0; font-size: 0.85rem; }
+    .ao-search { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.75rem; min-width: min(320px, 100%);
+        background: var(--dark-input); border: 1px solid var(--dark-border-light); border-radius: var(--radius-md); }
+    .ao-search i { color: var(--text-muted); }
+    .ao-search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--text-primary); }
+    .ao-search:focus-within { border-color: var(--primary); }
+
+    .ao-tabs { display: flex; gap: 0.35rem; overflow-x: auto; padding-bottom: 0.2rem; margin-bottom: 1rem; }
+    .ao-tab { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.42rem 0.85rem;
+        border-radius: 999px; border: 1px solid var(--dark-border); color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; }
+    .ao-tab span { font-variant-numeric: tabular-nums; font-size: 0.75rem; padding: 0.05rem 0.45rem; border-radius: 999px; background: rgba(148, 170, 220, 0.12); }
+    .ao-tab:hover { color: var(--text-primary); border-color: var(--dark-border-light); }
+    .ao-tab.is-current { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .ao-tab.is-current span { background: rgba(255, 255, 255, 0.22); }
+
+    .ao-list { display: grid; gap: 0.9rem; }
+    .ao-card { background: var(--dark-card); border: 1px solid var(--dark-border); border-left: 4px solid var(--warning);
+        border-radius: var(--radius-lg); padding: 1rem 1.1rem; box-shadow: var(--shadow-glow);
+        -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+    .ao-card--processing { border-left-color: var(--primary); }
+    .ao-card--out_for_delivery { border-left-color: var(--info); }
+    .ao-card--completed { border-left-color: var(--success); }
+    .ao-card--cancelled { border-left-color: var(--danger); opacity: 0.85; }
+
+    .ao-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; }
+    .ao-id { display: grid; margin-right: auto; }
+    .ao-id strong { font-family: 'IBM Plex Sans Condensed', sans-serif; font-size: 1.05rem; color: var(--text-primary); letter-spacing: 0.02em; }
+    .ao-id span { font-size: 0.78rem; }
+    .ao-total { font: 700 1.25rem 'IBM Plex Sans Condensed', sans-serif; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+    .ao-state { font-size: 0.78rem; font-weight: 600; padding: 0.22rem 0.65rem; border-radius: 999px; background: rgba(247, 144, 9, 0.15); color: #FDB022; }
+    .ao-state--processing { background: rgba(91, 140, 255, 0.16); color: var(--primary-light); }
+    .ao-state--out_for_delivery { background: rgba(96, 165, 250, 0.16); color: #93C5FD; }
+    .ao-state--completed { background: rgba(18, 183, 106, 0.16); color: #4ADE80; }
+    .ao-state--cancelled { background: rgba(229, 72, 77, 0.16); color: #FCA5A5; }
+
+    .ao-rail { list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0.9rem 0 0.2rem; padding: 0; counter-reset: step; }
+    .ao-rail li { position: relative; padding-top: 1.1rem; font-size: 0.75rem; color: var(--text-muted); text-align: center; }
+    /* the line arriving at each step, from the previous dot to this one */
+    .ao-rail li::before { content: ""; position: absolute; top: 0.3rem; left: -50%; right: 50%; height: 3px; background: var(--dark-border-light); }
+    .ao-rail li:first-child::before { display: none; }
+    .ao-rail li::after { content: ""; position: absolute; top: 0; left: 50%; width: 0.75rem; height: 0.75rem; margin-left: -0.375rem;
+        border-radius: 50%; background: var(--dark-solid); border: 2px solid var(--dark-border-light); }
+    .ao-rail li.is-done { color: var(--text-secondary); }
+    .ao-rail li.is-done::before, .ao-rail li.is-done::after { background: var(--success); border-color: var(--success); }
+    .ao-rail li.is-now { color: var(--text-primary); font-weight: 600; }
+    .ao-rail li.is-now::after { box-shadow: 0 0 0 4px rgba(18, 183, 106, 0.25); }
+    .ao-cancelled { margin: 0.8rem 0 0; font-size: 0.85rem; color: #FCA5A5; }
+
+    .ao-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.9rem 1.2rem; margin-top: 0.9rem;
+        padding-top: 0.9rem; border-top: 1px dashed var(--dark-border-light); }
+    .ao-cell h3 { margin: 0 0 0.35rem; font-size: 0.78rem; font-weight: 600; color: var(--text-muted); }
+    .ao-cell p { margin: 0 0 0.2rem; font-size: 0.88rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+    .ao-cell strong { color: var(--text-primary); }
+    .ao-cell a { color: var(--primary-light); }
+    .ao-items { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.2rem; font-size: 0.88rem; color: var(--text-secondary); }
+    .ao-qty { display: inline-block; min-width: 1.8rem; color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .ao-pay { display: inline-block; margin: 0.15rem 0 0.3rem; font-size: 0.75rem; font-weight: 600; padding: 0.15rem 0.55rem; border-radius: 6px;
+        background: rgba(247, 144, 9, 0.15); color: #FDB022; }
+    .ao-pay--confirmed { background: rgba(18, 183, 106, 0.16); color: #4ADE80; }
+    .ao-pay--rejected, .ao-pay--cancelled { background: rgba(229, 72, 77, 0.16); color: #FCA5A5; }
+    .ao-pay--refunded { background: rgba(148, 170, 220, 0.14); color: var(--text-secondary); }
+    .admin-order-map summary { cursor: pointer; font-size: 0.82rem; color: var(--primary-light); }
+
+    .ao-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem; margin-top: 0.9rem; }
+    .ao-foot-info { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; font-size: 0.82rem; color: var(--text-secondary); }
+    .ao-foot-info i { color: var(--text-muted); margin-right: 0.2rem; }
+    .ao-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+    .ao-actions form { display: flex; gap: 0.4rem; align-items: center; margin: 0; }
+    .ao-actions select { background: var(--dark-input); color: var(--text-primary); border: 1px solid var(--dark-border-light); border-radius: var(--radius-sm); padding: 0.3rem 0.5rem; }
+
+    .ao-empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-muted); background: var(--dark-card); border: 1px dashed var(--dark-border-light); border-radius: var(--radius-lg); }
+    .ao-empty i { font-size: 2rem; opacity: 0.5; display: block; margin-bottom: 0.5rem; }
+    .ao-empty[hidden], .ao-card[hidden] { display: none; }
+
+    @media (max-width: 1100px) { .ao-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 600px) {
+        .ao-grid { grid-template-columns: minmax(0, 1fr); }
+        .ao-rail li { font-size: 0.68rem; }
+        .ao-total { width: 100%; }
+    }
+</style>
+<script>
+(function () {
+    'use strict';
+    const search = document.getElementById('aoSearch');
+    const cards = [...document.querySelectorAll('.ao-card')];
+    const none = document.getElementById('aoNoMatch');
+    search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        let shown = 0;
+        cards.forEach(c => { const on = !q || c.dataset.search.includes(q); c.hidden = !on; shown += on; });
+        none.hidden = !cards.length || shown > 0;
+    });
+})();
+</script>
+
 {% endblock %}

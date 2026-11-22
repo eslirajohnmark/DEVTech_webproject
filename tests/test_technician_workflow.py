@@ -1,4 +1,4 @@
-from app import db
+from app import db, Booking
 
 
 INTAKE = {
@@ -48,11 +48,17 @@ def test_full_workflow_auto_advances(tech_logged_in, assigned_booking):
     r = tech_logged_in.post(_api(jid, '/advance'), json={})
     assert r.get_json()['job']['repairStatus'] == 'completed'
 
-    # Releasing needs the payment settled: C.A.R cash must be confirmed as collected.
+    # Releasing needs the customer's "I received my device" first...
     from app import Transaction
+    from datetime import datetime
     db.session.add(Transaction(transaction_number='TRX-W1', booking_id=jid, user_id=assigned_booking.user_id,
                                amount=1000, payment_method='C.A.R', payment_status='pending'))
     db.session.commit()
+    r = tech_logged_in.post(_api(jid, '/advance'), json={'cashReceived': True})
+    assert r.status_code == 400 and 'received the device' in r.get_json()['reason']
+    db.session.get(Booking, jid).customer_received_at = datetime.utcnow()
+    db.session.commit()
+    # ...and the payment settled: C.A.R cash must be confirmed as collected.
     r = tech_logged_in.post(_api(jid, '/advance'), json={})
     assert r.status_code == 400 and 'cash' in r.get_json()['reason']
     r = tech_logged_in.post(_api(jid, '/advance'), json={'cashReceived': True})

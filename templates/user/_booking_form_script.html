@@ -324,16 +324,16 @@
     // ============================================
 
     function updatePaymentInfo() {
-        const qrRadio = document.getElementById('payment-qr');
+        const gcash = document.getElementById('payment-gcash');
         const paymentInfoText = document.getElementById('paymentInfoText');
         const paymentSummary = document.getElementById('summaryPayment');
-        
-        if (qrRadio && qrRadio.checked) {             // no QR option while online payments are off
-            paymentInfoText.textContent = "After booking, open Transactions and choose Pay by QR. Scan the code with GCash, Maya or your bank's app; the payment is confirmed automatically.";
-            paymentSummary.textContent = 'QR Ph';
+
+        if (gcash && gcash.checked) {
+            paymentInfoText.textContent = "GCash / online: when the repair is done, scan the shop's QR code on your Transactions page and send a screenshot of the payment. The technician checks it before releasing your device.";
+            paymentSummary.textContent = 'GCash / online, after the repair';
         } else {
-            paymentInfoText.textContent = 'C.A.R (Cash After Repair) - You pay after the repair is completed and you are satisfied with the service.';
-            paymentSummary.textContent = 'C.A.R';
+            paymentInfoText.textContent = 'C.A.R (Cash After Repair): you pay in cash at the shop when the repair is done. The technician confirms the cash before releasing your device.';
+            paymentSummary.textContent = 'C.A.R, cash after the repair';
         }
     }
 
@@ -544,6 +544,15 @@
     // ============================================
 
     // Starting price minus the booking fee paid now (the fee is deducted from the final bill).
+// The service's own service fee, added on top of its starting price.
+function setFee(fee) {
+    const row = document.getElementById('summaryFeeRow');
+    if (!row) return;
+    row.hidden = !(fee > 0);
+    document.getElementById('summaryFee').textContent =
+        `₱${fee.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+}
+
 function setBalance(price) {
     const box = document.querySelector('.bk-fee');
     const out = document.getElementById('summaryBalance');
@@ -576,14 +585,17 @@ function updateSummary() {
         if (selectedOption && selectedOption.value) {
             let serviceName = selectedOption.text;
             const price = selectedOption.dataset.price || '0';
-            document.getElementById('summaryService').textContent = serviceName.split(' - ')[0];
+            const fee = parseFloat(selectedOption.dataset.serviceFee || '0') || 0;
+            document.getElementById('summaryService').textContent = serviceName.split(' (from ')[0].split(' - ')[0];
             document.getElementById('summaryPrice').textContent = parseFloat(price) > 0
                 ? `₱${parseFloat(price).toLocaleString(undefined, {minimumFractionDigits: 2})}`
                 : 'Price upon diagnosis';
-            setBalance(parseFloat(price) || 0);
+            setFee(fee);
+            setBalance((parseFloat(price) || 0) + fee);
         } else {
             document.getElementById('summaryService').textContent = 'Not selected';
             document.getElementById('summaryPrice').textContent = '₱0.00';
+            setFee(0);
             setBalance(0);
         }
 
@@ -659,9 +671,11 @@ function updateSummary() {
             if (!box || !opt || !opt.value || opt.value === 'other') { if (box) box.hidden = true; return; }
             const price = parseFloat(opt.dataset.price || '0'), hours = parseInt(opt.dataset.hours || '1', 10);
             document.getElementById('serviceInfoText').textContent = opt.dataset.description || '';
-            document.getElementById('serviceInfoPrice').textContent = price > 0
+            const fee = parseFloat(opt.dataset.serviceFee || '0') || 0;
+            document.getElementById('serviceInfoPrice').textContent = (price > 0
                 ? `Starts at ₱${price.toLocaleString(undefined, {minimumFractionDigits: 2})}`
-                : 'Price upon diagnosis';
+                : 'Price upon diagnosis') +
+                (fee > 0 ? ` + ₱${fee.toLocaleString(undefined, {minimumFractionDigits: 2})} service fee` : '');
             document.getElementById('serviceInfoHours').textContent =
                 `Typically about ${hours} hour${hours === 1 ? '' : 's'} of work`;
             box.hidden = false;
@@ -845,8 +859,8 @@ function updateSummary() {
     // RESET FORM
     // ============================================
 
-    function resetForm() {
-        if (!confirm('Are you sure you want to clear all form fields?')) return;
+    async function resetForm() {
+        if (!(await devtechAsk('Clear all form fields?', {ok: 'Clear form', tone: 'danger'}))) return;
         
         document.getElementById('bookingForm').reset();
         document.getElementById('customServiceGroup').style.display = 'none';
@@ -872,6 +886,8 @@ function updateSummary() {
         
         updateSubmitButtons();
         updateSummary();
+        if (window.DevtechBookingDraft) DevtechBookingDraft.clear();
+        document.querySelector('.bk-draft-note')?.remove();
         showUserToast('🗑️ Form has been cleared', 'info');
     }
 
@@ -879,7 +895,7 @@ function updateSummary() {
     // SUBMIT BOOKING
     // ============================================
 
-    function submitBooking() {
+    async function submitBooking() {
         const form = document.getElementById('bookingForm');
         const date = document.getElementById('bookingDate').value;
         const time = document.getElementById('bookingTime').value;
@@ -945,20 +961,126 @@ function updateSummary() {
             return;
         }
 
-        // Submit once: a double click must not create two bookings.
-        ['submitBtn', 'summarySubmitBtn'].forEach(id => {
+        // A booking fee is paid first: scan the QR, attach the screenshot, then send.
+        if (Number(form.dataset.bookingFee || 0) > 0 && feeModal) {
+            if (form.dataset.feeOnline) {
+                if (window.devtechAsk && !(await devtechAsk(form.dataset.askTitle,
+                        {message: form.dataset.ask, ok: 'Pay the booking fee'}))) {
+                    return;
+                }
+                payFeeOnline();
+            } else {
+                openFeeModal();
+            }
+            return;
+        }
+        if (window.devtechAsk && !(await devtechAsk(form.dataset.askTitle,
+                {message: form.dataset.ask, ok: form.dataset.askOk}))) {
+            return;
+        }
+        sendBooking();
+    }
+
+    // Submit once: a double click must not create two bookings.
+    function sendBooking() {
+        ['submitBtn', 'summarySubmitBtn', 'feeSendBtn'].forEach(id => {
             const b = document.getElementById(id);
             if (b) b.disabled = true;
         });
-        form.submit();
+        const send = document.getElementById('feeSendBtn');
+        if (send) send.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+        document.getElementById('bookingForm').submit();
     }
 
-    // The form's own Submit button skips submitBooking(); guard it the same way.
-    document.getElementById('bookingForm')?.addEventListener('submit', function () {
-        ['submitBtn', 'summarySubmitBtn'].forEach(id => {
-            const b = document.getElementById(id);
-            if (b) setTimeout(() => { b.disabled = true; }, 0);
+    // ============================================
+    // BOOKING FEE: QR + payment screenshot
+    // ============================================
+    const feeModal = document.getElementById('feePayModal');
+    const FEE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (feeModal) {
+        document.body.appendChild(feeModal);      // out of the glass panel, so it covers the page
+        const input = document.getElementById('feeReceipt');
+        const send = document.getElementById('feeSendBtn');
+        const error = document.getElementById('feeError');
+        const thumb = document.getElementById('feeThumb');
+        const name = document.getElementById('feeFileName');
+        const showError = msg => { error.textContent = msg; error.hidden = !msg; };
+
+        input.addEventListener('change', () => {
+            const file = input.files[0];
+            thumb.innerHTML = '<i class="fas fa-image"></i>';
+            name.textContent = 'Attach your payment screenshot';
+            send.disabled = true;
+            if (!file) { showError(''); return; }
+            if (!FEE_TYPES.includes(file.type)) { input.value = ''; showError('Choose an image: JPG, PNG, WEBP or GIF.'); return; }
+            if (file.size > 5 * 1024 * 1024) { input.value = ''; showError('That image is larger than 5 MB. Crop it or take a smaller screenshot.'); return; }
+            showError('');
+            const reader = new FileReader();
+            reader.onload = () => {
+                if (input.files[0] !== file) return;
+                const img = document.createElement('img');
+                img.src = reader.result;
+                img.alt = '';
+                thumb.replaceChildren(img);
+            };
+            reader.readAsDataURL(file);
+            name.textContent = file.name;
+            send.disabled = false;
         });
+        send.addEventListener('click', () => {
+            if (!input.files[0]) { showError('Attach the screenshot of your payment first.'); return; }
+            sendBooking();
+        });
+        feeModal.querySelectorAll('[data-fee-close]').forEach(b => b.addEventListener('click', closeFeeModal));
+        feeModal.addEventListener('click', e => { if (e.target === feeModal) closeFeeModal(); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && feeModal.classList.contains('active')) closeFeeModal(); });
+    }
+    // PayMongo: the QR Ph code for the fee (static/js/qr-pay.js); once it is paid, the receipt step.
+    async function payFeeOnline() {
+        const form = document.getElementById('bookingForm');
+        const btns = ['submitBtn', 'summarySubmitBtn'].map(id => document.getElementById(id)).filter(Boolean);
+        btns.forEach(b => { b.disabled = true; });
+        try {
+            const csrf = document.querySelector('meta[name="csrf-token"]');
+            const res = await fetch(form.dataset.feeStart, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'Accept': 'application/json',
+                          'X-CSRFToken': csrf ? csrf.content : ''},
+                body: JSON.stringify({service_id: document.getElementById('service_id').value})
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok || !d.transaction_id) throw new Error(d.message || 'The payment could not be started. Please try again.');
+            document.getElementById('feeTransactionId').value = d.transaction_id;
+            document.getElementById('feeAmount').textContent = '₱' + d.amount;
+            if (d.status === 'paid') { openFeeModal(); return; }
+            if (!window.DevtechPay) throw new Error('The QR payment could not be loaded. Refresh the page and try again.');
+            DevtechPay.open({
+                transactionId: d.transaction_id, title: 'Pay the booking fee', amount: d.amount,
+                onPaid: () => { DevtechPay.close(); openFeeModal(); }
+            });
+        } catch (err) {
+            showUserToast(err.message, 'error');
+        } finally {
+            btns.forEach(b => { b.disabled = false; });
+        }
+    }
+
+    function openFeeModal() {
+        feeModal.classList.add('active');
+        feeModal.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+        setTimeout(() => document.getElementById('feeReceipt').focus(), 50);
+    }
+    function closeFeeModal() {
+        feeModal.classList.remove('active');
+        feeModal.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+    }
+
+    // Enter in a field must not skip the checks and the booking-fee step.
+    document.getElementById('bookingForm')?.addEventListener('submit', function (e) {
+        e.preventDefault();
+        submitBooking();
     });
 
     // ============================================
@@ -982,6 +1104,127 @@ function updateSummary() {
         });
     }, 5000);
 
+
+    // ============================================
+    // DRAFT: what was typed survives a failed or expired fee payment,
+    // a refused request, a reload or a trip to PayMongo's page and back.
+    // Kept in this browser tab only; cleared once the booking is made.
+    // ============================================
+    const DRAFT_KEY = 'devtech.bookingDraft';
+    const DRAFT_MAX_AGE = 6 * 60 * 60 * 1000;
+    const SKIP = new Set(['csrf_token', 'fee_receipt', 'fee_transaction_id', 'preselected_category']);
+    let restoring = false;
+
+    function draftFields() {
+        const form = document.getElementById('bookingForm');
+        return form ? Array.from(form.elements).filter(el => el.name && !SKIP.has(el.name) && el.type !== 'file'
+                                                          && el.type !== 'button' && el.type !== 'submit') : [];
+    }
+
+    function saveDraft() {
+        if (restoring) return;
+        const values = {};
+        draftFields().forEach(el => {
+            if (el.type === 'radio') { if (el.checked) values[el.name] = el.value; }
+            else if (el.type === 'checkbox') values[el.name] = el.checked;
+            else values[el.name] = el.value;
+        });
+        try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({at: Date.now(), values})); } catch (e) { /* storage off */ }
+    }
+
+    function readDraft() {
+        try {
+            const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null');
+            return d && d.values && Date.now() - d.at < DRAFT_MAX_AGE ? d.values : null;
+        } catch (e) { return null; }
+    }
+
+    function clearDraft() {
+        try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) { /* storage off */ }
+    }
+
+    function setField(name, value) {
+        const form = document.getElementById('bookingForm');
+        const el = form.elements[name];
+        if (!el || value === undefined || value === null) return;
+        if (el instanceof RadioNodeList || (el.length && el[0] && el[0].type === 'radio')) {
+            const radio = Array.from(el).find(r => r.value === value);
+            if (radio && !radio.checked) { radio.checked = true; radio.dispatchEvent(new Event('change', {bubbles: true})); }
+            return;
+        }
+        if (el.type === 'checkbox') {
+            if (el.checked !== !!value) { el.checked = !!value; el.dispatchEvent(new Event('change', {bubbles: true})); }
+            return;
+        }
+        if (el.value === value) return;
+        el.value = value;
+        el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', {bubbles: true}));
+    }
+
+    function restoreDraft(v) {
+        restoring = true;
+        // device first: it decides which services can be chosen
+        setField('device_type', v.device_type);
+        ['custom_device', 'device_brand', 'device_model'].forEach(n => setField(n, v[n]));
+        setField('service_id', v.service_id);
+        ['custom_service', 'problem_description', 'fee_reference'].forEach(n => setField(n, v[n]));
+        setField('payment_method', v.payment_method);
+        if (v.accept_terms !== undefined) document.getElementById('acceptTerms').checked = !!v.accept_terms;
+
+        // home service: the map pin and address
+        if (v.in_shop === false && document.getElementById('inShopCheck').checked) {
+            document.getElementById('inShopCheck').checked = false;
+            toggleAddress();
+            const lat = parseFloat(v.pinned_lat), lng = parseFloat(v.pinned_lng);
+            setTimeout(() => {
+                if (!isNaN(lat) && !isNaN(lng) && map) { map.setView([lat, lng], 15); placeMarker(lat, lng); }
+                setTimeout(() => { if (v.service_address) setField('service_address', v.service_address); saveDraft(); }, 1500);
+            }, 900);
+        }
+
+        // the date, then its time slot once the slots are loaded
+        if (v.booking_date) {
+            const dateEl = document.getElementById('bookingDate');
+            dateEl.value = v.booking_date;
+            updateSummary();
+            fetchBookedSlots(v.booking_date).then(() => {
+                updateTimeSlots(v.booking_date);
+                const slot = v.booking_time && document.querySelector(`.user-time-slot[data-time="${CSS.escape(v.booking_time)}"]`);
+                if (slot && !slot.matches('.booked, .past, .lunch')) slot.click();
+                restoring = false;
+                saveDraft();
+            }).catch(() => { restoring = false; });
+        } else {
+            restoring = false;
+        }
+        updateSummary();
+        updateSubmitButtons();
+
+        const note = document.createElement('div');
+        note.className = 'bk-draft-note';
+        note.setAttribute('role', 'status');
+        note.innerHTML = '<i class="fas fa-rotate-left" aria-hidden="true"></i><span>We kept what you entered, so you can try ' +
+            'paying again. Attach the payment screenshot again when you send it.</span>';
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.textContent = 'Start over';
+        clear.addEventListener('click', () => { clearDraft(); location.reload(); });
+        note.appendChild(clear);
+        document.getElementById('bookingForm').prepend(note);
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const form = document.getElementById('bookingForm');
+        if (!form) return;
+        const draft = readDraft();
+        if (draft) restoreDraft(draft);
+        form.addEventListener('input', saveDraft);
+        form.addEventListener('change', saveDraft);
+        form.addEventListener('click', () => setTimeout(saveDraft, 0));   // time slots, the map pin
+        document.getElementById('feeReference')?.addEventListener('input', saveDraft);
+        window.addEventListener('pagehide', saveDraft);
+    });
+    window.DevtechBookingDraft = {save: saveDraft, clear: clearDraft};
 
     console.log('✅ Booking system initialized with Tacloban City geofencing');
 

@@ -29,39 +29,55 @@ def test_behind_proxy_trusts_the_hosts_forwarded_headers(tmp_path):
     assert _wsgi_class({}, tmp_path) != 'ProxyFix'                    # off unless asked for
 
 
-def test_https_links_behind_a_proxy(app):
+def test_https_links_behind_a_proxy(app, monkeypatch):
     from werkzeug.middleware.proxy_fix import ProxyFix
+    from app import db, Customer
+    from services import email_service
+    customer = Customer(username='ana', email='ana@example.com', full_name='Ana Reyes', is_active=True)
+    customer.set_password('Secret#123')
+    db.session.add(customer)
+    db.session.commit()
+    sent = []
+    monkeypatch.setenv('RESEND_API_KEY', 're_test_key')
+    monkeypatch.delenv('APP_BASE_URL', raising=False)
+    app.config['EMAIL_IN_TESTS'] = True
+    monkeypatch.setattr(email_service, 'queue_email', lambda to, subject, html, text, app=None: sent.append(text) or True)
     original = app.wsgi_app
     app.wsgi_app = ProxyFix(original, x_for=1, x_proto=1, x_host=1)
     try:
-        client = app.test_client()
-        r = client.get('/login/google', headers={'X-Forwarded-Proto': 'https', 'X-Forwarded-Host': 'devtech.onrender.com'})
-        assert r.status_code == 302
-        assert 'redirect_uri=https%3A%2F%2Fdevtech.onrender.com%2Flogin%2Fgoogle%2Fcallback' in r.headers['Location']
+        app.test_client().post('/forgot-password', data={'email': 'ana@example.com'},
+                               headers={'X-Forwarded-Proto': 'https', 'X-Forwarded-Host': 'devtech.onrender.com'})
+        assert 'https://devtech.onrender.com/reset-password/' in sent[0]   # the emailed link uses the public address
     finally:
         app.wsgi_app = original
+        app.config['EMAIL_IN_TESTS'] = False
 
 
-def test_without_online_payments_bookings_use_cash_after_repair_and_no_fee(customer_logged_in):
+def test_the_booking_fee_is_paid_with_the_shop_qr_and_a_screenshot(customer_logged_in):
     from datetime import date, timedelta
     from decimal import Decimal
-    from app import db, Booking, Transaction
+    from app import db, Booking, Transaction, booking_fee_transaction
+    from tests.conftest import payment_proof
     cat = ServiceCategory(name='Repair', slug='repair', is_active=True)
     db.session.add(cat)
     db.session.flush()
     service = Service(category_id=cat.id, name='Screen Fix', price=1500, is_active=True, device_types='laptop')
     db.session.add(service)
     db.session.commit()
-    page = customer_logged_in.get('/user/book').get_data(as_text=True)      # PayMongo is off in tests
-    assert 'id="payment-qr"' not in page and 'value="C.A.R" checked' in page and 'data-fee=' not in page
+    page = customer_logged_in.get('/user/book').get_data(as_text=True)      # no PayMongo needed
+    assert 'value="GCash" checked' in page and 'value="C.A.R"' in page and 'data-fee="100"' in page
+    assert 'id="feePayModal"' in page and 'name="fee_receipt"' in page and 'enctype="multipart/form-data"' in page
     data = {'service_id': str(service.id), 'device_type': 'Laptop', 'booking_date': (date.today() + timedelta(days=1)).isoformat(),
             'problem_description': 'The laptop screen is cracked after it fell off the table', 'booking_time': '10:00',
-            'in_shop': 'on', 'accept_terms': 'on'}
-    customer_logged_in.post('/user/service-request', data=dict(data, payment_method='QR Ph'))
-    assert Booking.query.count() == 0                                        # QR cannot be paid right now
-    customer_logged_in.post('/user/service-request', data=dict(data, payment_method='C.A.R'))
+            'in_shop': 'on', 'accept_terms': 'on', 'payment_method': 'C.A.R'}
+    customer_logged_in.post('/user/service-request', data=data)
+    assert Booking.query.count() == 0                                        # no screenshot of the booking fee
+    customer_logged_in.post('/user/service-request', data=dict(data, fee_receipt=payment_proof(), fee_reference='1012 345'))
     b = Booking.query.one()
-    assert b.booking_fee is None and Transaction.query.one().amount == Decimal('1500.00')
+    assert b.booking_fee == Decimal('100.00') and b.transaction.amount == Decimal('1400.00')
+    fee = booking_fee_transaction(b)
+    assert (fee.payment_status, fee.payment_method, fee.gcash_reference) == ('pending', 'GCash', '1012 345')
+    assert fee.receipt_image and b.transaction.payment_method == 'C.A.R'
 
 
 def test_on_vercel_the_app_writes_only_to_the_temp_folder(tmp_path):

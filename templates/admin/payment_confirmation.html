@@ -220,8 +220,8 @@
 <script>
     // Search, status filter and paging are done by the server (?q=&status=&page=).
 
-    function rejectPayment(transactionId, userName) {
-        if (confirm(`Reject payment from ${userName}?`)) {
+    async function rejectPayment(transactionId, userName) {
+        if (await devtechAsk(`Reject payment from ${userName}?`, {ok: 'Reject payment', tone: 'danger'})) {
             const reason = prompt('Please provide a reason for rejecting this payment:');
             if (reason !== null && reason.trim() !== '') {
                 const form = document.createElement('form');

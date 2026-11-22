@@ -1,8 +1,10 @@
 """Troubleshooting assistant (services/troubleshooter.py + /api/troubleshoot) and the
 booking rules that come with it: a specific description and a service that fits the device."""
+import pytest
 from datetime import date, timedelta
 
 from app import db, Booking, Service, ServiceCategory
+from tests.conftest import payment_proof
 from services import troubleshooter
 from services.service_catalog import sync_service_catalog
 
@@ -50,7 +52,7 @@ def _book(client, service, device='Laptop', text='The laptop screen is cracked a
     return client.post('/user/service-request', data={
         'service_id': str(service.id), 'device_type': device, 'problem_description': text,
         'booking_date': TOMORROW, 'booking_time': '10:00', 'in_shop': 'on', 'payment_method': 'C.A.R',
-        'accept_terms': 'on'})
+        'accept_terms': 'on', 'fee_receipt': payment_proof()})
 
 
 def test_booking_needs_a_specific_description_and_a_matching_device(customer_logged_in):
@@ -84,3 +86,30 @@ def test_every_problem_points_at_a_listed_service_that_fits_the_device():
             assert device in fits.get(name, ()), (problem['id'], device, name)
     for device, name in troubleshooter.DIAGNOSIS_SERVICE.items():
         assert device in fits.get(name, ()), (device, name)
+
+
+@pytest.mark.parametrize('device, wanted, unwanted', [
+    ('laptop', 'charging light', ['power supply', 'Force restart', 'Desktop', 'phone']),
+    ('desktop', 'switch on the back of the power supply', ['charging light', 'Force restart', 'battery is removable']),
+    ('smartphone', 'Force restart', ['power supply', 'battery is removable', 'USB drives, docks']),
+])
+def test_the_advice_fits_the_device_that_was_chosen(device, wanted, unwanted):
+    r = troubleshooter.diagnose(device, 'startup', "My device won't turn on at all, no lights when I press the power button")
+    text = ' '.join(r['steps'])
+    assert wanted in text and r['device'] == device
+    for other in unwanted:
+        assert other not in text, (device, other)
+    assert ('power supply' in r['cause']) == (device == 'desktop')        # the likely cause fits the device too
+
+
+def test_every_problem_has_steps_for_every_device_it_covers():
+    for p in troubleshooter.PROBLEMS:
+        for device in p['devices']:
+            assert troubleshooter.for_device(p['steps'], device), (p['id'], device)
+
+
+def test_the_page_names_the_device_in_the_steps_heading(customer_logged_in):
+    r = customer_logged_in.post('/api/troubleshoot', json={
+        'device': 'laptop', 'category': 'startup', 'description': "My laptop won't turn on, no lights at all"}).get_json()
+    assert r['device_label'] == 'Laptop'
+    assert "' on your ' + d.device_label.toLowerCase()" in customer_logged_in.get('/user/troubleshooting').get_data(as_text=True)

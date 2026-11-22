@@ -174,6 +174,7 @@
                     </td>
                     <td>
                         <span class="user-amount">₱{{ "%.2f"|format(booking.service.price) }}</span>
+                        {% if booking.service.service_fee and booking.service.service_fee > 0 %}<small class="user-amount-fee">+ ₱{{ "%.2f"|format(booking.service.service_fee) }} fee</small>{% endif %}
                     </td>
                     <td>
                         <div class="user-action-buttons">
@@ -186,9 +187,17 @@
                                 </a>
                             {% endif %}
                             {% if booking.status == 'pending' %}
-                                <a href="{{ url_for('user_transactions') }}" class="user-action-btn-sm pay-btn" title="Pay Now">
+                                {% set fee_txn = booking_fee_transaction(booking) %}
+                                {% if fee_txn and can_pay_online(fee_txn) %}
+                                <button type="button" class="user-action-btn-sm pay-btn" data-pay-fee="{{ fee_txn.id }}"
+                                        data-title="Booking fee for {{ booking.booking_number }}" title="Pay the booking fee">
+                                    <i class="fas fa-qrcode"></i>
+                                </button>
+                                {% else %}
+                                <a href="{{ url_for('user_transactions') }}" class="user-action-btn-sm pay-btn" title="Payments">
                                     <i class="fas fa-credit-card"></i>
                                 </a>
+                                {% endif %}
                             {% endif %}
                             {% if booking.status in ['pending', 'confirmed'] %}
                                 <button class="user-action-btn-sm cancel-btn" onclick="confirmCancel('{{ booking.id }}', '{{ booking.booking_number }}')" title="Cancel Booking">
@@ -283,6 +292,7 @@
             booking_number: {{ (booking.booking_number)|js_html }},
             service_name: {{ (booking.service.name)|js_html }},
             service_price: {{ ("%.2f"|format(booking.service.price))|js_html }},
+            service_fee: {{ ("%.2f"|format(booking.service.service_fee or 0))|js_html }},
             device_type: {{ (booking.device_type)|js_html }},
             description: {{ (booking.description)|js_html }},
             address: {{ (booking.address or 'In-shop repair')|js_html }},
@@ -539,6 +549,11 @@
                         <span class="booking-detail-label">Price:</span>
                         <span class="booking-detail-value" style="color:var(--primary); font-weight:700;">₱${booking.service_price}</span>
                     </div>
+                    ${parseFloat(booking.service_fee) > 0 ? `
+                    <div class="booking-detail-row">
+                        <span class="booking-detail-label">Service fee:</span>
+                        <span class="booking-detail-value">₱${booking.service_fee}</span>
+                    </div>` : ''}
                     ${booking.description ? `
                     <div class="booking-detail-row">
                         <span class="booking-detail-label">Description:</span>
@@ -725,5 +740,31 @@
         }
     });
 
+</script>
+<script>
+(function () {
+    'use strict';
+    // The booking fee: PayMongo's QR Ph dialog, confirmed by itself (static/js/qr-pay.js).
+    function payFee(id, title) {
+        if (!window.DevtechPay) { location.href = '{{ url_for('user_transactions') }}'; return; }
+        DevtechPay.open({transactionId: id, title: title || 'Pay the booking fee',
+                         onPaid: () => { location.href = '{{ url_for('total_bookings') }}'; }});
+    }
+    document.querySelectorAll('[data-pay-fee]').forEach(btn => btn.addEventListener('click', () =>
+        payFee(btn.dataset.payFee, btn.dataset.title)));
+    // Just booked: the form's saved draft is no longer needed.
+    const params = new URLSearchParams(location.search);
+    if (params.get('booked')) {
+        try { sessionStorage.removeItem('devtech.bookingDraft'); } catch (e) { /* storage off */ }
+        if (!params.get('pay')) history.replaceState(null, '', location.pathname);
+    }
+    // Just booked: open the fee payment straight away.
+    const id = params.get('pay');
+    if (id) {
+        history.replaceState(null, '', location.pathname);
+        const go = () => payFee(id, 'Pay the booking fee');
+        if (window.DevtechPay) go(); else window.addEventListener('load', go);
+    }
+})();
 </script>
 {% endblock %}

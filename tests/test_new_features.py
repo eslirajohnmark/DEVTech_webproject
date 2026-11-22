@@ -176,7 +176,7 @@ def test_extra_cost_on_paid_booking_is_billed_separately(client, technician, cus
     extra = Transaction.query.filter(Transaction.transaction_number.like('EXTRA-%')).one()
     assert extra.amount == Decimal('1200.00') and extra.payment_status == 'pending'
     assert assigned_booking.booking_number in extra.transaction_number
-    assert 'Approved Extra Work' in client.get('/user/transactions').get_data(as_text=True)
+    assert 'Approved extra work' in client.get('/user/transactions').get_data(as_text=True)
 
 
 def test_customer_declines(client, technician, customer, assigned_booking):

@@ -45,6 +45,26 @@
             <iframe class="tv-doc-pdf" title="ID document (PDF) uploaded by {{ tech.full_name }}"
                     src="{{ url_for('admin_tech_verification_document', tech_id=tech.id) }}"></iframe>
             {% endif %}
+            <h3 class="tv-doc-side">Back of the ID</h3>
+            {% if tech.id_back_file %}
+                {% set back_url = url_for('admin_tech_verification_document', tech_id=tech.id, side='back') %}
+                {% if (tech.id_back_mime or '').startswith('image/') %}
+                <div class="tv-doc-frame"><img src="{{ back_url }}" alt="Back of the ID uploaded by {{ tech.full_name }}"></div>
+                {% else %}
+                <iframe class="tv-doc-pdf" title="Back of the ID (PDF) uploaded by {{ tech.full_name }}" src="{{ back_url }}"></iframe>
+                {% endif %}
+                <p class="tv-small"><a href="{{ back_url }}" target="_blank" rel="noopener"><i class="fas fa-up-right-from-square"></i> Open the back full size</a></p>
+            {% else %}
+                <p class="admin-muted tv-small"><i class="fas fa-circle-info"></i> No photo of the back was sent{% if tech.id_type in ('PhilSys National ID', "Driver's License", 'UMID', 'PRC ID', 'Postal ID') %}, although a {{ tech.id_type }} has details on the back. Ask for a correction if you need it{% endif %}.</p>
+            {% endif %}
+            {% set er = tech.employee_record %}
+            {% if er and (er.id_front_file or er.id_back_file) %}
+            <p class="tv-small">Photos the admin recorded when hiring:
+                {% if er.id_front_file %}<a href="{{ url_for('admin_tech_roster_id_photo', record_id=er.id, side='front') }}" target="_blank" rel="noopener">front</a>{% endif %}
+                {% if er.id_front_file and er.id_back_file %} · {% endif %}
+                {% if er.id_back_file %}<a href="{{ url_for('admin_tech_roster_id_photo', record_id=er.id, side='back') }}" target="_blank" rel="noopener">back</a>{% endif %}
+            </p>
+            {% endif %}
             <p class="admin-muted tv-small"><i class="fas fa-lock"></i> Private. Each time this document is opened it is recorded in the activity log.</p>
         {% else %}
             <div class="admin-empty-state">
@@ -63,6 +83,7 @@
             <dt>Tech ID</dt><dd><code>{{ tech.username }}</code></dd>
             <dt>Email</dt><dd>{{ tech.email }}</dd>
             <dt>Mobile</dt><dd>{{ tech.phone or '—' }}</dd>
+            <dt>Home address</dt><dd>{{ tech.address or '—' }}</dd>
             <dt>Gender</dt><dd>{{ tech.gender or '—' }}</dd>
             <dt>Date of birth</dt><dd>{% if tech.birth_date %}{{ tech.birth_date.strftime('%b %d, %Y') }} (age {{ age }}){% else %}—{% endif %}</dd>
             <dt>ID type</dt><dd>{{ tech.id_type or '—' }}</dd>
@@ -70,6 +91,7 @@
             <dt>Employee record</dt>
             <dd>{% if tech.employee_record %}<span class="ta-ok"><i class="fas fa-circle-check"></i> Matches roster entry {{ tech.employee_record.tech_id }}</span>
                 {% if tech.employee_record.hired_on %}· hired {{ tech.employee_record.hired_on.strftime('%b %d, %Y') }}{% endif %}
+                {% if tech.employee_record.address %}<br><small class="admin-muted">Roster address: {{ tech.employee_record.address }}</small>{% endif %}
                 {% else %}<span class="ta-warn">Not on the Technician Roster</span>{% endif %}</dd>
             <dt>Registered</dt><dd>{{ tech.created_at.strftime('%b %d, %Y %I:%M %p') if tech.created_at else '—' }}</dd>
             <dt>ID sent</dt><dd>{{ tech.verification_submitted_at.strftime('%b %d, %Y %I:%M %p') if tech.verification_submitted_at else '—' }}</dd>
@@ -82,6 +104,60 @@
         </dl>
         {% if tech.verification_reason %}
         <p class="tv-card-reason"><strong>Reason given:</strong> {{ tech.verification_reason }}</p>
+        {% endif %}
+
+        {# Verified technicians must add a photo of themselves (services/profile_photo_rule.py). #}
+        {% set photo_required = photo_rule.applies(tech) %}
+        {% set photo_overdue = photo_rule.overdue(tech) %}
+        {% set photo_due = photo_rule.due_text(tech) %}
+        {% if tech.verification_status == 'verified' or tech.avatar_file %}
+        {% from 'partials/avatar.html' import avatar %}
+        <h3 class="tv-subhead">Profile photo</h3>
+        <div class="tv-photo {{ 'is-overdue' if photo_overdue }}">
+            {% if tech.avatar_file %}
+            <a href="{{ tech.avatar_url }}" target="_blank" rel="noopener" title="Open the full photo">{{ avatar(tech, 'lg') }}</a>
+            {% else %}
+            {{ avatar(tech, 'lg') }}
+            {% endif %}
+            <div class="tv-photo-text">
+                {% if tech.avatar_file %}
+                <p><span class="ta-ok"><i class="fas fa-circle-check"></i> Added.</span> Check that it is a clear photo of {{ tech.full_name }} and matches the ID.</p>
+                {% elif photo_overdue %}
+                <p><span class="ta-warn"><i class="fas fa-triangle-exclamation"></i> Overdue.</span>
+                    No photo {{ photo_rule.DAYS }} days after the notice. It was due {{ photo_due }}.</p>
+                {% elif photo_due %}
+                <p><span class="ta-warn">Missing.</span> They were told to add one by {{ photo_due }}.</p>
+                {% else %}
+                <p><span class="ta-warn">Missing.</span> They are told to add one the next time they open the technician portal.</p>
+                {% endif %}
+                {% if tech.photo_notice_count %}
+                <p class="admin-muted tv-small">{{ tech.photo_notice_count }} {{ 'notice' if tech.photo_notice_count == 1 else 'notices' }} sent so far.</p>
+                {% endif %}
+                {% if photo_required %}
+                <div class="tv-photo-actions">
+                    <form method="POST" action="{{ url_for('admin_tech_photo_notice', tech_id=tech.id) }}"
+                          data-confirm-title="Send {{ tech.full_name }} {{ 'another' if photo_due else 'a' }} notice?"
+                          data-confirm="They get a notification and a new {{ photo_rule.DAYS }}-day deadline to add a photo of themselves."
+                          data-confirm-ok="Send notice">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-secondary"><i class="fas fa-bell"></i> {{ 'Send another notice' if photo_due else 'Send notice now' }}</button>
+                    </form>
+                    {% if photo_overdue %}
+                    <form method="POST" action="{{ url_for('admin_tech_verification_decide', tech_id=tech.id) }}"
+                          data-confirm-title="Suspend {{ tech.full_name }}?"
+                          data-confirm="They can't be assigned new jobs until you reinstate them. They see the reason: no profile photo was added in time."
+                          data-confirm-ok="Suspend" data-confirm-tone="danger">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="suspend">
+                        <input type="hidden" name="expected" value="verified">
+                        <input type="hidden" name="reason" value="No profile photo of yourself was added within {{ photo_rule.DAYS }} days of the notice. Add one, then ask the admin to reinstate you.">
+                        <button type="submit" class="admin-btn admin-btn-sm admin-btn-reject"><i class="fas fa-pause"></i> Suspend</button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
         {% endif %}
 
         <h3 class="tv-subhead">Decision</h3>
@@ -160,4 +236,5 @@
     });
 })();
 </script>
+<style>.tv-doc-side { margin: 1rem 0 0.5rem; font-size: 0.95rem; }</style>
 {% endblock %}

@@ -24,9 +24,7 @@
         <a href="{{ url_for('user_shop') }}" class="user-icon-btn" title="Back to Shop">
             <i class="fas fa-store"></i>
         </a>
-        <button class="user-icon-btn" onclick="window.location.reload()">
-            <i class="fas fa-sync-alt"></i>
-        </button>
+        <span class="user-live-badge" title="New notifications appear by themselves"><span aria-hidden="true"></span> Live</span>
     </div>
 </div>
 
@@ -374,8 +372,8 @@
         });
     }
 
-    function markAllAsRead() {
-        if (!confirm('Mark all notifications as read?')) return;
+    async function markAllAsRead() {
+        if (!(await devtechAsk('Mark all notifications as read?', {ok: 'Mark all as read'}))) return;
 
         fetch('/notification/mark-all-read', {
             method: 'POST',
@@ -404,8 +402,8 @@
         });
     }
 
-    function deleteNotification(notificationId) {
-        if (!confirm('Delete this notification?')) return;
+    async function deleteNotification(notificationId) {
+        if (!(await devtechAsk('Delete this notification?', {ok: 'Delete', tone: 'danger'}))) return;
 
         fetch(`/notification/${notificationId}/delete`, {
             method: 'DELETE',

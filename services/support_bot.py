@@ -17,7 +17,8 @@ FAQS = [
      'words': ['book', 'booking', 'schedule', 'appointment', 'repair', 'pa-repair', 'paayos', 'magpaayos', 'reserve', 'slot'],
      'phrases': ['how to book', 'how do i book', 'paano mag book', 'paano magpa', 'make a booking', 'book a repair'],
      'answer': 'Open Service Request, pick your device and the service, describe the problem, choose a date and an '
-               'hourly slot (8 AM to 5 PM), then confirm. You pay the {fee_text} by QR to confirm the slot. '
+               'hourly slot (8 AM to 5 PM), then press Book Now. Pay the {fee_text} by scanning the QR code with GCash, '
+               'Maya or your bank app; your booking is approved once the fee is paid. '
                'Not sure which service you need? Try the Troubleshooting assistant first.',
      'links': [('Book a repair', 'book_appointment'), ('Troubleshooting assistant', 'user_troubleshooting')]},
     {'id': 'fee', 'q': 'What is the booking fee?',
@@ -25,26 +26,33 @@ FAQS = [
      'phrases': ['booking fee', 'why do i pay', 'reservation fee', 'down payment'],
      'answer': '{fee_answer}',
      'links': [('My transactions', 'user_transactions')]},
+    {'id': 'service_fee', 'q': 'What is the service fee?',
+     'words': ['singil', 'servicefee'],
+     'phrases': ['service fee', 'what is the service fee', 'why is there a service fee', 'how much is the service fee',
+                 'magkano ang service fee'],
+     'answer': '{service_fee_answer}',
+     'links': [('Services and prices', 'service_catalog')]},
     {'id': 'pay', 'q': 'How can I pay?',
      'words': ['pay', 'payment', 'gcash', 'maya', 'card', 'cash', 'bayad', 'magbayad', 'qr', 'qrph', 'bank', 'cod', 'method'],
      'phrases': ['how can i pay', 'how to pay', 'paano magbayad', 'payment method', 'pay by qr', 'cash after repair'],
-     'answer': 'Repairs: pay by QR Ph (scan with GCash, Maya or your bank app, confirmed automatically) or by card. '
-               'You can also choose C.A.R, Cash After Repair, and pay the balance at the shop when your device is '
-               'ready. Shop orders can be paid by QR or cash on delivery.',
+     'answer': 'Repairs are paid after the repair. Choose GCash / online: when your device is ready, open My '
+               'Transactions, scan the shop\'s QR code and send a screenshot of the payment. Or choose C.A.R, Cash '
+               'After Repair, and pay at the shop. Either way the technician checks the payment before releasing '
+               'your device. Shop orders can be paid by QR or cash on delivery.',
      'links': [('My transactions', 'user_transactions')]},
     {'id': 'qr', 'q': 'How do I pay with the QR code?',
      'words': ['scan', 'qr', 'code', 'expired', 'expire', 'new', 'generate'],
      'phrases': ['scan the qr', 'qr code', 'qr expired', 'new code', 'how to scan'],
-     'answer': 'Press "Pay by QR" on the payment, then scan the code with GCash, Maya or your bank app and pay the '
-               'exact amount. The page confirms it by itself within a few seconds. A code expires after a while; '
-               'press "Get a new code" if it does. You can also pay by card from the same window.',
+     'answer': 'Press "Pay with GCash" on the payment in My Transactions. Scan the shop\'s QR code with GCash, '
+               'Maya or your bank app, pay the exact amount, then attach a screenshot of the receipt and send it. '
+               'The shop checks it against its account. A repair bill can be paid once the repair is done.',
      'links': [('My transactions', 'user_transactions')]},
     {'id': 'paid_pending', 'q': 'I paid but it still says pending',
      'words': ['pending', 'paid', 'nabayaran', 'nagbayad', 'deducted', 'charged', 'unconfirmed', 'stuck'],
      'phrases': ['already paid', 'still pending', 'nagbayad na', 'paid but', 'not confirmed', 'money was deducted'],
-     'answer': 'QR payments usually confirm within a minute. Open My Transactions and refresh the page. If it still '
-               'shows pending after 15 minutes, message our team with the transaction number and a screenshot of '
-               'your receipt, and we will check it with PayMongo. Please do not pay twice.',
+     'answer': 'A payment stays pending until the shop has checked your screenshot against its account, usually '
+               'within the day. For a repair, the technician checks it when you collect your device. If it is still '
+               'pending after a day, message our team with the transaction number. Please do not pay twice.',
      'links': [('My transactions', 'user_transactions')], 'human': True},
     {'id': 'cancel', 'q': 'Can I cancel a booking or order?',
      'words': ['cancel', 'cancellation', 'icancel', 'kansel', 'stop', 'withdraw', 'ayaw'],
@@ -153,6 +161,7 @@ def _words(text):
 KEY_WORDS = {
     'book': ['book', 'appointment', 'schedule', 'magpaayos', 'paayos'],
     'fee': ['fee', 'deposit', 'downpayment', 'reservation'],
+    'service_fee': ['singil'],
     'pay': ['pay', 'payment', 'gcash', 'maya', 'bayad', 'magbayad', 'card', 'cod'],
     'qr': ['qr', 'scan', 'expired'],
     'paid_pending': ['pending', 'nabayaran', 'nagbayad'],
@@ -191,17 +200,26 @@ def _fill(template, shop):
     return template.format(**shop)
 
 
-def shop_details(site, booking_fee):
-    """The live values answers use: the booking fee and the shop's details."""
+def shop_details(site, booking_fee, service_fees=None):
+    """The live values answers use: the booking fee, the range of service fees
+    (lowest, highest) and the shop's details."""
     fee = int(booking_fee or 0)
+    lo, hi = (int(v or 0) for v in (service_fees or (0, 0)))
     contact = [f'Call or text {site.get("phone")}.' if site.get('phone') else '',
                f'Email {site.get("email")}.' if site.get('email') else '']
     return {
         'fee_text': f'PHP {fee} booking fee' if fee else 'booking',
-        'fee_answer': (f'The booking fee is PHP {fee}. You pay it by QR when you book to confirm your slot, and it is '
-                       f'deducted from your final bill, so it is not an extra charge. If the booking is cancelled, a '
-                       f'paid fee is refunded to the card or e-wallet you used.') if fee else
+        'fee_answer': (f'The booking fee is PHP {fee}. You pay it when you book by scanning the QR code with GCash, '
+                       f'Maya or your bank app, and it is deducted from your final bill, so it is not an extra '
+                       f'charge. If the booking is cancelled, a paid fee is refunded.') if fee else
                       'There is no booking fee at the moment; you pay the service after it is confirmed.',
+        'service_fee_answer': (
+            (f'Each service has a service fee on top of its starting price, from PHP {lo} to PHP {hi} depending on '
+             if lo != hi else f'Each service has a service fee of PHP {lo} on top of its starting price, depending on ')
+            + 'the service. Both are shown before you book (in Services and on the booking form), and the fee is '
+              'part of your bill.' + (' The booking fee you pay when booking is deducted from that bill.' if fee else '')
+        ) if hi else 'There is no service fee at the moment: you pay the starting price of the service and any '
+                     'extra work you approve.',
         'shop_answer': ' '.join(x for x in [
             f'We are at {site.get("address") or "Tacloban City, Leyte"}.',
             f'Open {site.get("hours")}.' if site.get('hours') else '',

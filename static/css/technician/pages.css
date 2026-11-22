@@ -725,3 +725,34 @@
     color: var(--t-text-muted);
     margin: 1.3rem 0 0.75rem;
 }
+/* Job page: the customer's profile photo, to recognise them at drop-off, pickup or a home visit */
+.tech-customer-id { display: flex; align-items: center; gap: 0.8rem; margin: 0 0 0.9rem; }
+.tech-customer-id a { flex: none; border-radius: 50%; }
+.tech-customer-id small { font-size: 0.8rem; color: var(--t-text-muted); line-height: 1.4; }
+.tech-customer-id small i { color: var(--t-yellow); margin-right: 0.25rem; }
+
+/* "Add a photo of yourself" notice for verified technicians (services/profile_photo_rule.py) */
+.tech-photo-notice {
+    display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; margin: 0 0 1.1rem; padding: 0.85rem 1rem;
+    background: var(--t-yellow-soft); border: 1px solid rgba(250, 204, 21, 0.4); border-radius: 12px;
+}
+.tech-photo-notice.is-overdue { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.45); }
+.tech-photo-notice-icon {
+    flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
+    background: rgba(250, 204, 21, 0.18); color: var(--t-yellow);
+}
+.tech-photo-notice.is-overdue .tech-photo-notice-icon { background: rgba(239, 68, 68, 0.18); color: #F87171; }
+.tech-photo-notice-text { flex: 1 1 260px; display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.86rem; color: var(--t-text-muted); }
+.tech-photo-notice-text strong { color: var(--t-text, #F1F5F9); font-size: 0.92rem; }
+
+/* Job page: photos taken at device intake */
+.tech-intake-photos { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 0.5rem; }
+.tech-intake-photos li { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.tech-intake-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; display: block;
+    border: 1px solid var(--t-border, rgba(255,255,255,0.1)); }
+.tech-intake-photos small { font-size: 0.72rem; color: var(--t-text-muted); overflow-wrap: anywhere; }
+
+/* Release: the customer's GCash screenshot, checked by hand before the device goes out */
+.tech-proof { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0 0 0.55rem; }
+.tech-proof small { opacity: 0.75; font-variant-numeric: tabular-nums; }

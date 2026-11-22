@@ -110,13 +110,38 @@
         if (state && state.clock) clearInterval(state.clock);
     }
 
+    const QR_TIMEOUT_MS = 45000;
+
+    // The answer as JSON, or a clear message: a signed-out session, a server error page
+    // or a request that takes too long never leaves the spinner turning forever.
+    function askForQr(id) {
+        const ctl = window.AbortController ? new AbortController() : null;
+        const timer = ctl ? setTimeout(() => ctl.abort(), QR_TIMEOUT_MS) : null;
+        return fetch(`/api/payments/${id}/qr`, {
+            method: 'POST', credentials: 'same-origin', signal: ctl ? ctl.signal : undefined,
+            headers: {'Accept': 'application/json', 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest'}
+        }).then(r => {
+            const type = r.headers.get('Content-Type') || '';
+            if (r.redirected && /\/login/.test(r.url)) throw new Error('Your session has ended. Sign in again, then pay.');
+            if (type.indexOf('json') === -1) {
+                throw new Error(r.status === 400 ? 'The page has expired. Refresh the page, then try again.'
+                    : 'The QR code could not be created (server error ' + r.status + '). Please try again.');
+            }
+            return r.json().then(d => ({ok: r.ok, d}));
+        }, err => {
+            throw new Error(err && err.name === 'AbortError'
+                ? 'PayMongo is taking too long to answer. Check your internet connection and try again.'
+                : 'Could not reach the server. Check your connection and try again.');
+        }).finally(() => { if (timer) clearTimeout(timer); });
+    }
+
     function load(fresh) {
         show('qrpayLoading');
         $('qrpayStatus').textContent = '';
-        fetch(`/api/payments/${state.id}/qr`, {method: 'POST', headers: {'Accept': 'application/json'}})
-            .then(r => r.json().then(d => ({ok: r.ok, d})))
+        const id = state.id;
+        askForQr(id)
             .then(({ok, d}) => {
-                if (!state) return;
+                if (!state || state.id !== id) return;       // closed or another payment opened meanwhile
                 if (d.status === 'paid') return paid();
                 if (!ok) throw new Error(d.message || 'The QR code could not be created.');
                 $('qrpayImg').src = d.qr;
@@ -133,6 +158,7 @@
                 state.timer = setInterval(poll, POLL_MS);
             })
             .catch(err => {
+                if (!state || state.id !== id) return;
                 show('qrpayExpired');
                 $('qrpayExpired').querySelector('p').textContent = err.message;
                 $('qrpayRenew').textContent = 'Try again';
@@ -146,6 +172,8 @@
         $('qrpayAmount').textContent = opts.amount ? '₱' + opts.amount : '';
         $('qrpayLater').textContent = "I'll pay later";
         $('qrpayCard').hidden = false;
+        // Set now, not after the QR loads: otherwise this button posts to the page itself (405).
+        $('qrpayCard').action = `/user/payments/${encodeURIComponent(opts.transactionId)}/paymongo`;
         $('qrpayCard').querySelector('[name="csrf_token"]').value = csrf();
         $('qrpayRenew').textContent = 'Get a new code';
         $('qrpayExpired').querySelector('p').textContent = 'This code has expired.';

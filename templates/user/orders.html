@@ -43,10 +43,19 @@
     {% endfor %}
 </div>
 
+{% set active = status_counts.get('pending', 0) + status_counts.get('processing', 0) %}
+<div class="ordm-strip" role="list">
+    <div class="ordm-stat" role="listitem"><strong>{{ active }}</strong><span>being prepared</span></div>
+    <div class="ordm-stat" role="listitem"><strong>{{ status_counts.get('out_for_delivery', 0) }}</strong><span>on the way</span></div>
+    <div class="ordm-stat" role="listitem"><strong>{{ status_counts.get('completed', 0) }}</strong><span>delivered</span></div>
+</div>
+
 {% if orders %}
 <div class="ord-grid">
     {% for order in orders %}
-    <article class="user-product-card ord-card" data-order-id="{{ order.id }}" data-order-number="{{ order.order_number }}">
+    {% set rank = {'pending': 0, 'processing': 1, 'out_for_delivery': 2, 'completed': 3}.get(order.status, -1) %}
+    {% set txn = order.transactions[0] if order.transactions else None %}
+    <article class="user-product-card ord-card ordm-card ordm-card--{{ order.status }}" data-order-id="{{ order.id }}" data-order-number="{{ order.order_number }}">
         <div class="ord-card-head">
             <div>
                 <h4>{{ order.order_number }}</h4>
@@ -55,27 +64,43 @@
             <span class="ord-status ord-status--{{ order.status }}">{{ status_labels.get(order.status, order.status|title) }}</span>
         </div>
 
+        {% if order.status == 'cancelled' %}
+        <p class="ordm-cancelled"><i class="fas fa-ban" aria-hidden="true"></i> This order was cancelled.{% if order.transactions and order.transactions[0].refunds %} See its refund in the details.{% endif %}</p>
+        {% else %}
+        <ol class="ordm-track" aria-label="Order progress: {{ status_labels.get(order.status, order.status) }}">
+            {% for label in ['Placed', 'Preparing', 'On the way', 'Delivered'] %}
+            <li class="{{ 'is-done' if loop.index0 <= rank }} {{ 'is-now' if loop.index0 == rank }}"><span>{{ label }}</span></li>
+            {% endfor %}
+        </ol>
+        {% endif %}
+
+        <ul class="ordm-items">
+            {% for item in order.items[:2] %}
+            <li><span>{{ item.quantity }}×</span> {{ item.product.name if item.product else 'Removed product' }}</li>
+            {% endfor %}
+            {% if order.items|length > 2 %}<li class="ord-muted">and {{ order.items|length - 2 }} more</li>{% endif %}
+        </ul>
+
         <div class="ord-card-total">
             <span class="ord-amount">₱{{ "{:,.2f}".format(order.total_amount) }}</span>
-            <span class="ord-muted">{{ order.items|length }} item{{ 's' if order.items|length != 1 else '' }}</span>
-        </div>
-
-        <div class="ord-card-tags">
             <span class="user-payment-badge {{ order.payment_status }}">
-                {% if order.payment_method == 'gcash' %}<i class="fas fa-mobile-alt"></i> GCash{% elif order.payment_method == 'cod' %}<i class="fas fa-money-bill-wave"></i> COD{% else %}No Payment{% endif %}
-                &middot; {{ order.payment_status|title }}
+                {% if order.payment_method == 'gcash' %}<i class="fas fa-mobile-alt"></i> GCash{% elif order.payment_method == 'cod' %}<i class="fas fa-money-bill-wave"></i> Cash on delivery{% elif order.payment_method == 'paymongo' %}<i class="fas fa-qrcode"></i> QR Ph{% else %}No payment{% endif %}
+                &middot; {{ {'confirmed': 'Paid', 'pending': ('Pay on delivery' if order.payment_method == 'cod' else 'Waiting'), 'rejected': 'Screenshot rejected'}.get(order.payment_status, order.payment_status|title) }}
             </span>
         </div>
 
         {% if etas.get(order.id) %}
-        <p class="ord-eta"><i class="fas fa-truck-fast" aria-hidden="true"></i> <span>Arrives <strong>{{ etas[order.id] }}</strong></span></p>
+        <p class="ord-eta"><i class="fas fa-truck-fast" aria-hidden="true"></i> <span>Arrives <strong>{{ etas[order.id] }}</strong>{% if order.rider and order.status == 'out_for_delivery' %} · Rider {{ order.rider.name }}{% endif %}</span></p>
         {% elif order.status == 'completed' and order.delivered_at %}
         <p class="ord-eta ord-eta--done"><i class="fas fa-circle-check" aria-hidden="true"></i> <span>Delivered {{ order.delivered_at.strftime('%b %d') }}</span></p>
+        {% endif %}
+        {% if txn and txn.payment_status == 'rejected' %}
+        <p class="ordm-warn"><i class="fas fa-triangle-exclamation" aria-hidden="true"></i> Your payment screenshot was rejected. <a href="{{ url_for('user_transactions') }}">Send a new one</a>.</p>
         {% endif %}
 
         <div class="ord-card-actions">
             <button type="button" class="user-action-btn-sm view-btn" onclick="viewOrderDetails({{ order.id }})">
-                <i class="fas fa-location-crosshairs"></i> View details &amp; track
+                <i class="fas fa-location-crosshairs"></i> Track order
             </button>
         </div>
     </article>
@@ -216,7 +241,7 @@
 
     function render(o) {
         const a = o.address || {};
-        const payLabel = o.payment_method === 'gcash' ? 'GCash' : (o.payment_method === 'cod' ? 'Cash on delivery' : 'Not set');
+        const payLabel = {gcash: 'GCash', cod: 'Cash on delivery', paymongo: 'QR Ph (online)'}[o.payment_method] || 'Not set';
         const steps = (o.tracking || []).map((st, i, all) => {
             const current = !st.done && (i === 0 || all[i - 1].done) && o.status !== 'cancelled';
             const cls = st.problem ? 'is-problem' : (st.done ? 'is-done' : (current ? 'is-current' : ''));
@@ -409,4 +434,32 @@
     }
 })();
 </script>
+<style>
+    .ordm-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; margin: 0 0 1.2rem; }
+    .ordm-stat { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.75rem 1rem; border-radius: 14px;
+        background: var(--g-panel); border: 1px solid var(--g-edge); box-shadow: var(--g-shadow); }
+    .ordm-stat strong { font: 700 1.5rem/1 var(--g-font-head); color: var(--g-ink); font-variant-numeric: tabular-nums; }
+    .ordm-stat span { font-size: 0.85rem; color: var(--g-ink-2); }
+    .ordm-card { border-top: 3px solid var(--g-amber); }
+    .ordm-card--processing { border-top-color: var(--g-blue); }
+    .ordm-card--out_for_delivery { border-top-color: #0EA5E9; }
+    .ordm-card--completed { border-top-color: var(--g-green); }
+    .ordm-card--cancelled { border-top-color: var(--g-red); }
+    .ordm-track { list-style: none; margin: 0.2rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .ordm-track li { position: relative; padding-top: 1rem; text-align: center; font-size: 0.72rem; color: var(--g-muted); }
+    .ordm-track li::before { content: ""; position: absolute; top: 0.28rem; left: -50%; right: 50%; height: 3px; background: var(--g-line); }
+    .ordm-track li:first-child::before { display: none; }
+    .ordm-track li::after { content: ""; position: absolute; top: 0; left: 50%; width: 0.7rem; height: 0.7rem; margin-left: -0.35rem;
+        border-radius: 50%; background: var(--g-panel-strong); border: 2px solid var(--g-line); }
+    .ordm-track li.is-done { color: var(--g-ink-2); }
+    .ordm-track li.is-done::before, .ordm-track li.is-done::after { background: var(--g-green); border-color: var(--g-green); }
+    .ordm-track li.is-now { color: var(--g-ink); font-weight: 600; }
+    .ordm-track li.is-now::after { box-shadow: 0 0 0 4px rgba(18, 183, 106, 0.22); }
+    .ordm-items { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.15rem; font-size: 0.86rem; color: var(--g-ink-2); }
+    .ordm-items span { display: inline-block; min-width: 1.6rem; font-weight: 600; color: var(--g-ink); font-variant-numeric: tabular-nums; }
+    .ordm-cancelled, .ordm-warn { margin: 0; font-size: 0.84rem; color: var(--g-red); }
+    .ordm-warn a { color: inherit; font-weight: 600; }
+    .ord-card-total { flex-wrap: wrap; gap: 0.4rem; }
+    @media (max-width: 520px) { .ordm-strip { grid-template-columns: minmax(0, 1fr); } }
+</style>
 {% endblock %}

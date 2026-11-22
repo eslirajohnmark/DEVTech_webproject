@@ -51,20 +51,27 @@ def technician_required(fn):
 # ---------------------------------------------------------------------------
 
 @technician_bp.route('/login', methods=['GET', 'POST'])
-@limiter.limit('5 per minute', methods=['POST'])
+@limiter.limit('20 per minute', methods=['POST'])
 def login():
     if session.get('role') == 'technician' and current_account():
         return redirect(url_for('technician.dashboard'))
 
+    from app import _back_to_sign_in, _sign_in_page_state
+    from services import login_guard
     if request.method == 'POST':
         tech_id  = (request.form.get('technician_id') or '').strip().upper()
         password = request.form.get('password') or ''
 
+        # Every outcome redirects (Post/Redirect/Get): Back never offers to resubmit.
+        wait = login_guard.seconds_left('technician', tech_id)
+        if wait:
+            return _back_to_sign_in('technician.login', tech_id, login_guard.locked_message(wait))
         user = Technician.query.filter(db.func.upper(Technician.username) == tech_id).first()
         if not user or not user.check_password(password):
-            flash('Incorrect Tech ID or password.', 'danger')
-            return render_template('technician/login.html',
-                                   prefill_id=tech_id), 401
+            left, locked = login_guard.record_failure('technician', tech_id)
+            return _back_to_sign_in('technician.login', tech_id,
+                                    login_guard.failure_message('Incorrect Tech ID or password.', left, locked))
+        login_guard.clear('technician', tech_id)
 
         if not user.is_active:
             # The password was right, so it is safe to say where the registration stands.
@@ -78,23 +85,26 @@ def login():
                             + (f' Reason: {reason}' if reason else ''),
             }.get(user.verification_status,
                   'This technician account has been deactivated by an administrator.'), 'danger')
-            return render_template('technician/login.html',
-                                   prefill_id=tech_id), 403
+            return _back_to_sign_in('technician.login', tech_id)
 
         from app import login_account
         login_account(user, remember=bool(request.form.get('remember_me')))
-        user.last_active = datetime.utcnow()
+        # Signing in is not a profile change: updated_at (watched by live updates) stays.
+        Technician.query.filter_by(id=user.id).update(
+            {'last_active': datetime.utcnow(), 'updated_at': user.updated_at}, synchronize_session=False)
         db.session.commit()
         return redirect(url_for('technician.dashboard'))
 
+    typed, lock = _sign_in_page_state('technician')
     return render_template('technician/login.html',
-                           prefill_id=request.args.get('registered', ''))
+                           prefill_id=typed or request.args.get('registered', ''), lock_seconds=lock)
 
 
 def _registration_page(mode, form, errors=None, tech=None, status=200):
-    from services.technician_service import ID_TYPES, GENDERS, ID_DOC_MAX_BYTES
+    from services.technician_service import ID_TYPES, GENDERS, ID_DOC_MAX_BYTES, IDS_WITH_BACK
     return render_template('technician/registration.html', mode=mode, form=form,
                            errors=errors or {}, tech=tech, id_types=ID_TYPES, genders=GENDERS,
+                           ids_with_back=IDS_WITH_BACK,
                            max_mb=ID_DOC_MAX_BYTES // (1024 * 1024)), status
 
 
@@ -187,7 +197,7 @@ def registration_document():
     tech = _status_technician()
     if not tech:
         abort(403)
-    return send_id_document(tech)
+    return send_id_document(tech, 'back' if request.args.get('side') == 'back' else 'front')
 
 
 @technician_bp.route('/register/status/done')
@@ -263,9 +273,10 @@ def job_detail(job_id):
     approvals = ApprovalRequest.query.filter_by(booking_id=booking.id)\
         .order_by(ApprovalRequest.id.desc()).all()
     pending_approval = next((a for a in approvals if a.status == 'pending'), None)
-    from blueprints.technician_api import stage_requirements
+    from blueprints.technician_api import stage_requirements, intake_files
     return render_template('technician/job_detail.html',
                            job=booking, intake=intake, report=report, logs=logs,
+                           intake_photos=[f for f in intake_files(booking.id) if intake and f.owner_id == intake.id],
                            approvals=approvals, pending_approval=pending_approval,
                            reqs=stage_requirements(booking))
 
@@ -301,9 +312,11 @@ def intake_form(job_id):
     record = IntakeRecord.query.filter_by(booking_id=job_id).first()
     jobs = Booking.query.filter_by(technician_id=session['user_id'])\
         .filter(Booking.status.notin_(['cancelled'])).all()
+    from blueprints.technician_api import intake_files, INTAKE_MAX_FILES, INTAKE_STATUSES
     return render_template('technician/device_intake.html',
                            current=job_id, job=booking, record=record,
-                           jobs=jobs, recorded_ids=set())
+                           jobs=jobs, recorded_ids=set(), files=intake_files(job_id),
+                           max_files=INTAKE_MAX_FILES, can_edit_photos=booking.status in INTAKE_STATUSES)
 
 
 @technician_bp.route('/reports')
@@ -539,8 +552,8 @@ def _tech_notif_count():
     uid = session.get('user_id')
     if session.get('role') != 'technician' or not uid:
         return {}
-    return {'tech_unread': Notification.query.filter_by(user_role='technician', user_id=uid,
-                                                        is_read=False).count()}
+    from app import unseen_notifications
+    return {'tech_unread': unseen_notifications('technician', uid).count()}
 
 @technician_bp.route('/notifications')
 @technician_required

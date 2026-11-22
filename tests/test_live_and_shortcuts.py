@@ -99,7 +99,7 @@ def _cfg(monkeypatch, app, **values):
 
 def _wait_url(state):
     return (f"/api/live?wait=1&n={state['n']}&m={state['m']}&nu={state['nu']}&mu={state['mu']}"
-            f"&s={state['s']}")
+            f"&s={state['s']}&b={state['b']}")
 
 
 def test_wait_returns_at_once_when_the_page_is_out_of_date(client, customer):

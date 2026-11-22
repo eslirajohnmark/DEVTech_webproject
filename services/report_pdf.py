@@ -143,6 +143,54 @@ def _photos(pdf, files):
             pdf.set_y(y)
 
 
+def _money(n):
+    return f'PHP {n:,.2f}'
+
+
+def _bill(pdf, booking, charges):
+    """Amount to be paid: the starting price, the service fee and only the extra work the
+    customer approved, then the total (less a booking fee already paid when booking)."""
+    if pdf.get_y() > pdf.h - 75:
+        pdf.add_page()
+    pdf.ln(3)
+    pdf.set_font('Helvetica', 'B', 11)
+    pdf.set_text_color(*BLUE)
+    pdf.cell(0, 7, 'Amount to be paid', new_x='LMARGIN', new_y='NEXT')
+    width = pdf.w - 30
+    pdf.set_draw_color(*LINE)
+
+    def row(label, amount, bold=False, sub=False):
+        pdf.set_font('Helvetica', 'B' if bold else '', 10 if not sub else 9)
+        pdf.set_text_color(*(INK if not sub else MUTED))
+        y = pdf.get_y()
+        pdf.set_x(15 + (6 if sub else 0))
+        pdf.multi_cell(width - 45 - (6 if sub else 0), 6, clean(label), new_x='RIGHT', new_y='TOP')
+        height = pdf.get_y() - y
+        pdf.set_xy(15 + width - 40, y)
+        pdf.cell(40, 6, clean(amount), align='R')
+        pdf.set_y(max(y + 6, y + height))
+
+    service = booking.service.name if booking.service else 'Service'
+    row(service, 'Set on diagnosis' if charges['price_on_diagnosis'] else _money(charges['service_price']))
+    row('Service fee', _money(charges['service_fee']) if charges['service_fee'] > 0 else 'None')
+    if charges['additional']:
+        row('Additional work fee', _money(charges['additional_total']))
+        for item in charges['additional']:
+            row(f"- {item['work']}", _money(item['cost']), sub=True)
+    pdf.line(15, pdf.get_y() + 1, 15 + width, pdf.get_y() + 1)
+    pdf.ln(2)
+    row('Total amount to be paid by the customer', _money(charges['total']), bold=True)
+    fee = float(booking.booking_fee or 0)
+    if fee > 0:
+        row('Less the booking fee paid when booking', f'- {_money(fee)}', sub=True)
+        row('Balance due at the shop', _money(max(charges['total'] - fee, 0)), bold=True)
+    if charges['price_on_diagnosis']:
+        pdf.set_font('Helvetica', 'I', 8)
+        pdf.set_text_color(*MUTED)
+        pdf.multi_cell(0, 4.5, 'The price of this service is set on diagnosis, so it is not counted in the total yet.',
+                       new_x='LMARGIN', new_y='NEXT')
+
+
 def build(report, booking, technician_name, shop_name, approvals=(), attachments=()):
     """The report as PDF bytes. attachments: [(data, mime, caption, original name)]."""
     pdf = _Doc(format='A4')
@@ -188,6 +236,7 @@ def build(report, booking, technician_name, shop_name, approvals=(), attachments
             f'- {a.proposed_work or a.findings}: PHP {float(a.additional_cost or 0):,.2f}'
             + (f', about {a.extra_days} more day(s)' if a.extra_days else '') for a in approved))
     _section(pdf, 'Recommendations for the customer', report.recommendations)
+    _bill(pdf, booking, booking.charges())
     if report.photos_note:
         _section(pdf, 'Notes on the photos', report.photos_note)
     if report.admin_note:

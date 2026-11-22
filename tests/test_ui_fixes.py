@@ -61,9 +61,22 @@ def test_technician_dashboard_counts(tech_logged_in, assigned_booking):
     assert '>confirmed<' not in html          # raw status codes are not shown
 
 
-def test_home_page_has_repair_animation(client):
+def test_home_page_has_repair_readout(client):
     html = client.get('/').get_data(as_text=True)
-    assert 'id="repairScene"' in html and 'href="#how-it-works"' in html
+    assert 'id="readout"' in html and 'href="#how"' in html and 'id="readStages"' in html
+
+
+def test_home_picker_links_to_real_services(client):
+    from app import db, Service, ServiceCategory
+    cat = ServiceCategory(name='Smartphone and Tablet Repair', slug='phones', is_active=True)
+    db.session.add(cat); db.session.flush()
+    svc = Service(category_id=cat.id, name='Smartphone Battery Replacement', price=500, is_active=True)
+    db.session.add(svc); db.session.commit()
+    html = client.get('/').get_data(as_text=True)
+    assert 'data-device="smartphone"' in html and 'Battery drains fast' in html
+    assert f'/user/book/phones?service={svc.id}' in html
+    assert 'data-device="monitor"' not in html            # no monitor services: device hidden
+    assert 'The price board' in html and '1 service<' in html
 
 
 def test_background_polls_are_not_rate_limited(app, customer_logged_in):

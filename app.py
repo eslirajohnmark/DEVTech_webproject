@@ -4,11 +4,12 @@ import sys
 # and the blueprint imports fail circularly).
 sys.modules.setdefault('app', sys.modules[__name__])
 from flask import (Flask, render_template, request, redirect, url_for, session,
-                   flash, jsonify, g, abort, json)
+                   flash, jsonify, g, abort, json, make_response)
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from functools import wraps
 import os
+import collections
 import hashlib
 import hmac
 import logging
@@ -17,6 +18,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 import re
+import random
 import secrets
 import tempfile
 import shutil
@@ -30,7 +32,6 @@ import time
 from markupsafe import escape as escape_markupsafe
 from jinja2.utils import htmlsafe_json_dumps
 from dotenv import load_dotenv
-from authlib.integrations.flask_client import OAuth
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
 from flask_limiter import Limiter
@@ -124,6 +125,10 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = IS_PRODUCTION
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+# A session without "Remember me" ends after this many minutes with no activity.
+app.config['SESSION_IDLE_MINUTES'] = int(os.environ.get('SESSION_IDLE_MINUTES') or 30)
+# Requests a page makes by itself; they do not keep an idle session alive.
+BACKGROUND_PATHS = {'/api/live', '/api/ping', '/api/notifications/unread-count', '/api/admin/session-check'}
  
 # ==================== LOGGING ====================
 if not app.debug:
@@ -192,33 +197,82 @@ def _inject_technician_globals():
 def _inject_job_status():
     return {'job_stages': STAGES, 'status_labels': STATUS_LABELS}
 
+# Sidebar sections and the page that "views" them: opening the page clears its badge.
+SEEN_PAGES = {
+    'admin_notifications': ('admin', 'notifications'), 'admin_support': ('admin', 'support'),
+    'admin_requests': ('admin', 'requests'), 'admin_technician_activity': ('admin', 'activity'),
+    'admin_tech_verification': ('admin', 'verifications'), 'admin_payments': ('admin', 'payments'),
+    'admin_refunds': ('admin', 'refunds'),
+    'technician.notifications': ('technician', 'notifications'), 'technician.my_jobs': ('technician', 'jobs'),
+    'notifications': ('customer', 'notifications'), 'monitor_device': ('customer', 'approvals'),
+}
+NEVER_SEEN = datetime(2000, 1, 1)
+
+def seen_times(role, uid):
+    """{section: when it was last opened}; a section never opened counts everything."""
+    times = collections.defaultdict(lambda: NEVER_SEEN)
+    times.update({r.section: r.seen_at for r in NavSeen.query.filter_by(user_role=role, user_id=uid)})
+    return times
+
+def mark_seen(role, uid, section, when=None):
+    """This account just opened that section. Commits."""
+    when = when or datetime.utcnow()
+    updated = NavSeen.query.filter_by(user_role=role, user_id=uid, section=section)\
+        .update({'seen_at': when}, synchronize_session=False)
+    if not updated:
+        db.session.add(NavSeen(user_role=role, user_id=uid, section=section, seen_at=when))
+    try:
+        db.session.commit()
+    except IntegrityError:                 # the same page opened in two tabs at once
+        db.session.rollback()
+
+def unseen_notifications(role, uid, since=None):
+    """Unread notifications that arrived after the Notifications page was last opened."""
+    since = since or seen_times(role, uid)['notifications']
+    return _notifications_for(role, uid).filter(Notification.is_read.is_(False), Notification.created_at > since)
+
 def nav_count_values(role, uid):
-    """Sidebar badge numbers: what is waiting for this account. Rendered with the
-    page and sent with every live update (see api_live), so the badges stay current."""
+    """Sidebar badge numbers: what is new for this account since it last opened each
+    section (messages: unread, since opening a conversation reads it). Rendered with
+    the page and sent with every live update (see api_live), so the badges stay current."""
     from models.technician_models import ApprovalRequest, IncidentReport
+    seen = seen_times(role, uid)
+    text = lambda section: seen[section].strftime('%Y-%m-%d %H:%M:%S')   # columns stored as text (UTC)
     counts = {
-        'notifications': Notification.query.filter_by(user_role=role, user_id=uid, is_read=False).count(),
+        'notifications': unseen_notifications(role, uid, seen['notifications']).count(),
         'messages': Message.query.filter_by(recipient_role=role, recipient_id=uid, is_read=False).count(),
     }
     if role == 'admin':
-        counts['tickets'] = SupportTicket.query.filter(SupportTicket.status == 'open').count()
-        counts['inquiries'] = ContactInquiry.query.filter_by(status='new').count()
+        counts['tickets'] = SupportTicket.query.filter(
+            SupportTicket.status == 'open',
+            func.coalesce(SupportTicket.last_customer_message_at, SupportTicket.created_at) > seen['support']).count()
+        counts['inquiries'] = ContactInquiry.query.filter(ContactInquiry.status == 'new',
+                                                          ContactInquiry.created_at > seen['support']).count()
         counts['support'] = counts['tickets'] + counts['inquiries']
-        counts['refunds'] = Refund.query.filter_by(status='pending').count()
+        counts['refunds'] = Refund.query.filter(Refund.status == 'pending', Refund.created_at > seen['refunds']).count()
         counts['verifications'] = Technician.query.filter(
             Technician.verification_status == 'pending',
-            Technician.verification_submitted_at.isnot(None)).count()
-        counts['requests'] = Booking.query.filter_by(status='pending').count()
-        counts['payments'] = Transaction.query.filter_by(payment_status='pending').count()
-        counts['activity'] = IncidentReport.query.filter(IncidentReport.status != 'resolved').count()
+            Technician.verification_submitted_at > seen['verifications']).count()
+        counts['requests'] = Booking.query.filter(Booking.status == 'pending',
+                                                  Booking.created_at > seen['requests']).count()
+        counts['payments'] = Transaction.query.filter(Transaction.payment_status == 'pending',
+                                                      Transaction.updated_at > seen['payments'])\
+            .filter(not_an_unpaid_fee_hold()).count()
+        counts['activity'] = IncidentReport.query.filter(IncidentReport.status != 'resolved',
+                                                         IncidentReport.reported_at > text('activity')).count()
     elif role == 'technician':
-        # New jobs: assigned to them, intake not recorded yet.
-        counts['jobs'] = Booking.query.filter_by(technician_id=uid, status='confirmed').count()
+        # New jobs assigned to them since they last opened My Jobs (intake not recorded yet).
+        counts['jobs'] = Booking.query.filter(Booking.technician_id == uid, Booking.status == 'confirmed',
+                                              func.coalesce(Booking.assigned_at, Booking.created_at) > seen['jobs']).count()
     else:
-        # Extra work / cost the technician is waiting for them to answer.
+        # Extra work / cost the technician asked them about since they last opened Monitor Device.
         counts['approvals'] = ApprovalRequest.query.join(Booking, ApprovalRequest.booking_id == Booking.id)\
-            .filter(Booking.customer_id == uid, ApprovalRequest.status == 'pending').count()
+            .filter(Booking.customer_id == uid, ApprovalRequest.status == 'pending',
+                    ApprovalRequest.requested_at > text('approvals')).count()
     return counts
+
+def _badge_key(counts):
+    return ','.join(f'{k}{counts[k]}' for k in sorted(counts))
 
 @app.context_processor
 def _inject_nav_counts():
@@ -266,15 +320,57 @@ def _inject_site_details():
                 'shop_lat': shop['lat'], 'shop_lng': shop['lng'],
                 'cod_enabled': values.get('enable_cod', 'true') == 'true',
                 'online_payments': paymongo_service.is_enabled(app),
-                # shown only when it can be paid (it is paid by QR)
-                'booking_fee': ((int(values['booking_fee']) if values.get('booking_fee', '').isdigit() else DEFAULT_BOOKING_FEE)
-                                if paymongo_service.is_enabled(app) else 0),
+                # Paid when booking by scanning the shop's QR code (screenshot as proof).
+                'booking_fee': (int(values['booking_fee']) if values.get('booking_fee', '').isdigit()
+                                else DEFAULT_BOOKING_FEE),
+                'pay_qr': url_for('payment_qr_image') if payment_qr_file(values) else '',
+                'pay_name': values.get('payment_account_name', ''),
+                'pay_number': values.get('payment_account_number', ''),
             }
         return g.site_details
     return {'site': site, 'current_year': datetime.utcnow().year}
 
-MONITOR_STAGES = STAGES  
+@app.context_processor
+def _inject_photo_notice():
+    """Technician portal: the "add a profile photo of yourself" notice (2 days) for
+    verified technicians. Admin pages: tell the admins once when a deadline passed."""
+    role = session.get('role')
+    if role not in ('technician', 'admin') or not session.get('user_id') or request.endpoint in (None, 'static'):
+        return {}
+    from services import profile_photo_rule
+    try:
+        if role == 'admin':
+            if request.path.startswith('/admin'):
+                profile_photo_rule.report_overdue()
+            return {}
+        tech = current_account()
+        if not isinstance(tech, Technician) or not (request.blueprint or '').startswith('technician'):
+            return {}
+        profile_photo_rule.ensure_notice(tech)
+        if profile_photo_rule.applies(tech) and tech.photo_notice_at:
+            return {'photo_notice': {'due': profile_photo_rule.due_text(tech),
+                                     'overdue': profile_photo_rule.overdue(tech)}}
+    except Exception:
+        db.session.rollback()
+    return {}
+
+MONITOR_STAGES = STAGES
  
+SIGN_IN_ENDPOINTS = {'login', 'admin_login', 'technician.login', 'register', 'technician.register',
+                     'forgot_password', 'reset_password', 'logout'}
+
+@app.after_request
+def _no_store_for_signed_in_pages(resp):
+    """Pages shown to a signed-in person, and the sign-in pages, are never kept in the
+    browser's cache: after signing out, Back asks the server again (and lands on the
+    sign-in page) instead of showing a stored copy of someone's account."""
+    if resp.mimetype == 'text/html' and (session.get('user_id') or request.endpoint in SIGN_IN_ENDPOINTS):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        resp.vary.add('Cookie')
+    return resp
+
 @app.after_request
 def _technician_csp(resp):
     if request.path.startswith('/technician'):
@@ -285,6 +381,19 @@ def _technician_csp(resp):
             "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
             "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
             "img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'")
+    elif request.path == '/admin/technician-roster':
+        # Reading the printed text off a valid ID runs Tesseract.js in the admin's browser:
+        # its script, WebAssembly engine and English language data come from jsDelivr, and it
+        # works in a blob: worker. Only this page gets these; the photo itself is never uploaded.
+        resp.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net blob:; "
+            "worker-src 'self' blob:; "
+            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+            "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
+            "img-src 'self' data: blob: https:; "
+            "connect-src 'self' https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; "
+            "frame-ancestors 'none'")
     return resp
  
 # ==================== SECURITY HEADERS ====================
@@ -333,20 +442,6 @@ def favicon():
     # Browsers ask for /favicon.ico on pages without a <link rel="icon">.
     return redirect(url_for('static', filename='images/favicon.svg'), code=301)
 
-# ==================== OAUTH(google/facebook) ====================
-oauth = OAuth(app)
-oauth.register(name='google',
-               client_id=os.environ.get('GOOGLE_CLIENT_ID'),
-               client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
-               server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-               client_kwargs={'scope': 'openid email profile'})
-oauth.register(name='facebook',
-               client_id=os.environ.get('FACEBOOK_CLIENT_ID'),
-               client_secret=os.environ.get('FACEBOOK_CLIENT_SECRET'),
-               access_token_url='https://graph.facebook.com/v19.0/oauth/access_token',
-               authorize_url='https://www.facebook.com/v19.0/dialog/oauth',
-               api_base_url='https://graph.facebook.com/v19.0/',
-               client_kwargs={'scope': 'email public_profile'})
  
 # HTML-safe: escapes < > & ' so the output can't break out of a <script> block
 # or a single-quoted attribute. Never replace this with a plain json.dumps.
@@ -549,8 +644,15 @@ class Technician(AccountMixin, db.Model):
     verification_decided_at = db.Column(db.DateTime)
     verified_by_admin_id = db.Column(db.Integer, db.ForeignKey('admins.id', ondelete='SET NULL'))
     # Stored file name in ID_UPLOAD_FOLDER (random; never the uploaded name).
-    id_document_file = db.Column(db.String(64))
+    id_document_file = db.Column(db.String(64))      # front of the ID
     id_document_mime = db.Column(db.String(40))
+    id_back_file = db.Column(db.String(64))          # back of the ID, when it has one
+    id_back_mime = db.Column(db.String(40))
+    # Profile photo rule (services/profile_photo_rule.py): a verified technician
+    # without a photo of themselves gets a 2-day notice.
+    photo_notice_at = db.Column(db.DateTime)                     # when the current notice started
+    photo_notice_count = db.Column(db.Integer, nullable=False, default=0)   # notices sent so far
+    photo_overdue_reported_at = db.Column(db.DateTime)           # admins told the deadline passed
 
     jobs = db.relationship('Booking', back_populates='technician', lazy=True)
     verified_by = db.relationship('Admin', foreign_keys=[verified_by_admin_id])
@@ -645,6 +747,12 @@ class TechnicianEmployee(db.Model):
     id_number = db.Column(db.String(50), nullable=False, index=True)
     hired_on = db.Column(db.Date)
     note = db.Column(db.String(255))
+    address = db.Column(db.String(255))
+    # Photos of the valid ID the admin checked when hiring (ID_UPLOAD_FOLDER, random names).
+    id_front_file = db.Column(db.String(64))
+    id_front_mime = db.Column(db.String(40))
+    id_back_file = db.Column(db.String(64))
+    id_back_mime = db.Column(db.String(40))
     created_by = db.Column(db.String(120))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id', ondelete='SET NULL'),
@@ -716,6 +824,7 @@ def login_account(account, remember=False):
     session['user_id'] = account.id
     session['role'] = account.ROLE
     session['username'] = getattr(account, 'username', None) or account.full_name
+    session['seen'] = int(time.time())          # last activity, for the idle timeout
     g.pop('current_account', None)
 
 
@@ -748,12 +857,19 @@ class Service(db.Model):
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
     price = db.Column(db.Numeric(10, 2), nullable=False)
+    # Charged on top of the starting price (0 = no fee). See suggested_service_fee().
+    service_fee = db.Column(db.Numeric(10, 2), nullable=False, default=0)
     estimated_hours = db.Column(db.Integer, default=1)
     is_active = db.Column(db.Boolean, default=True)
     device_types = db.Column(db.String(120))      # e.g. "laptop,desktop"; empty = any device
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     bookings = db.relationship('Booking', backref='service', lazy=True)
+
+    @property
+    def starting_total(self):
+        """Starting price plus service fee: the least a customer pays for this service."""
+        return float(self.price or 0) + float(self.service_fee or 0)
 
     @property
     def device_list(self):
@@ -796,6 +912,9 @@ class Booking(db.Model):
     # Paid by QR when booking and deducted from the final bill: the booking's own
     # transaction is the balance (service price + approved extras - this fee).
     booking_fee = db.Column(db.Numeric(10, 2), nullable=True)
+    # Ready for Collection: the customer presses "I received my device"; only then
+    # can the technician release the job.
+    customer_received_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -805,6 +924,23 @@ class Booking(db.Model):
     # Older code says booking.user / booking.user_id for the customer.
     user_id = db.synonym('customer_id')
     user = db.synonym('customer')
+
+    def charges(self):
+        """What the customer pays for the repair: the service's starting price, its
+        service fee, and every extra-work request the customer approved (pending,
+        declined and withdrawn requests are not charged). A price of 0 means the
+        price is set on diagnosis, so it is not counted yet."""
+        from models.technician_models import ApprovalRequest
+        price = round(float(self.service.price or 0), 2) if self.service else 0.0
+        fee = round(float(self.service.service_fee or 0), 2) if self.service else 0.0
+        additional = [{'work': ((a.proposed_work or a.findings or '').strip() or 'Additional work'),
+                       'cost': round(float(a.additional_cost or 0), 2)}
+                      for a in ApprovalRequest.query.filter_by(booking_id=self.id, status='approved')
+                                                    .order_by(ApprovalRequest.id).all()]
+        additional_total = round(sum(a['cost'] for a in additional), 2)
+        return {'service_price': price, 'price_on_diagnosis': price <= 0, 'service_fee': fee,
+                'additional': additional, 'additional_total': additional_total,
+                'total': round(price + fee + additional_total, 2)}
 
 class Transaction(db.Model):
     __tablename__ = 'transactions'
@@ -1033,6 +1169,30 @@ class SystemSetting(db.Model):
     description = db.Column(db.String(200))
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+class NavSeen(db.Model):
+    """When an account last opened a sidebar section (Notifications, Service Requests,
+    Payments...). Its badge counts only what is new since then, so opening the page
+    clears it and anything new makes it appear again."""
+    __tablename__ = 'nav_seen'
+    __table_args__ = (db.UniqueConstraint('user_role', 'user_id', 'section', name='uq_nav_seen'),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_role = db.Column(db.String(20), nullable=False)
+    user_id = db.Column(db.Integer, nullable=False)
+    section = db.Column(db.String(30), nullable=False)
+    seen_at = db.Column(db.DateTime, nullable=False)
+
+class LoginAttempt(db.Model):
+    """Failed sign-ins per portal and email / Tech ID (services/login_guard.py). Kept in
+    the database, so the lockout holds on every server instance (Vercel runs several)."""
+    __tablename__ = 'login_attempts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(190), unique=True, nullable=False)   # '<portal>:<email or Tech ID>'
+    failures = db.Column(db.Integer, nullable=False, default=0)    # wrong passwords since the last lockout
+    lockouts = db.Column(db.Integer, nullable=False, default=0)    # lockouts in a row: each one lasts twice as long
+    locked_until = db.Column(db.DateTime)
+    last_failed_at = db.Column(db.DateTime)
+
 class ShoppingCart(db.Model):
     __tablename__ = 'shopping_carts'
 
@@ -1178,34 +1338,69 @@ def admin_required(f):
 
 PRESENCE_WRITE_INTERVAL_SECONDS = 30
 
+def _end_session(message):
+    """Sign out and send the person to their portal's sign-in page (JSON for API calls)."""
+    session.clear()
+    g.pop('current_account', None)
+    if request.path.startswith(('/api/', '/technician/api/')) or request.is_json:
+        return jsonify({'ok': False, 'success': False, 'reason': message, 'message': message}), 401
+    flash(message, 'warning')
+    if request.path.startswith('/technician'):
+        return redirect(url_for('technician.login'))
+    if request.path.startswith('/admin'):
+        return redirect(url_for('admin_login'))
+    return redirect(url_for('login'))
+
+def _is_background_request():
+    """Not activity: polling a page does by itself (live updates, pings, counters) and
+    any data a page fetches on its own (a GET from script, not a page the person opened).
+    Only opening a page or sending something (a form, a save) counts. Fewer session
+    writes also means a fetch finishing just after sign-out can't put the old session back."""
+    if request.path in BACKGROUND_PATHS or request.path.endswith('/monitor'):
+        return True
+    return request.method == 'GET' and request.headers.get('Sec-Fetch-Mode', 'navigate') != 'navigate'
+
 @app.before_request
 def check_session_user():
-    """Ends the session of any account that was deleted or deactivated
-    since it signed in, and records presence (throttled, not every request)."""
+    """Ends the session of any account that was deleted or deactivated since it
+    signed in, or that sat idle too long (sessions without "Remember me"), and
+    records presence (throttled, not every request)."""
     if request.endpoint == 'static':
         return
     if not session.get('user_id'):
         return
     user = current_account()
     if not user or not user.is_active:
-        session.clear()
-        g.pop('current_account', None)
-        if request.path.startswith(('/api/', '/technician/api/')) or request.is_json:
-            msg = 'Your session has ended. Please sign in again.'
-            return jsonify({'ok': False, 'success': False, 'reason': msg, 'message': msg}), 401
-        flash('Your session has ended. Please sign in again.', 'warning')
-        if request.path.startswith('/technician'):
-            return redirect(url_for('technician.login'))
-        if request.path.startswith('/admin'):
-            return redirect(url_for('admin_login'))
-        return redirect(url_for('login'))
+        return _end_session('Your session has ended. Please sign in again.')
+    if not session.permanent:
+        now_ts, seen = int(time.time()), session.get('seen')
+        idle = app.config['SESSION_IDLE_MINUTES'] * 60
+        if seen and now_ts - seen > idle:
+            return _end_session(f'You were signed out after {app.config["SESSION_IDLE_MINUTES"]} minutes '
+                                'of inactivity. Please sign in again.')
+        if not _is_background_request() and (not seen or now_ts - seen >= 30):
+            session['seen'] = now_ts
     now = datetime.utcnow()
     if not user.last_active or (now - user.last_active).total_seconds() >= PRESENCE_WRITE_INTERVAL_SECONDS:
         try:
-            user.last_active = now
+            # Being online is not a profile change: keep updated_at as it is, because the
+            # live updates watch it to refresh other people's pages when a profile is edited.
+            type(user).query.filter_by(id=user.id).update(
+                {'last_active': now, 'updated_at': user.updated_at}, synchronize_session=False)
+            from sqlalchemy.orm.attributes import set_committed_value
+            set_committed_value(user, 'last_active', now)     # in memory too, without another UPDATE
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+@app.before_request
+def _mark_section_seen():
+    if request.method != 'GET' or _is_background_request():
+        return
+    page = SEEN_PAGES.get(request.endpoint or '')
+    uid, role = session.get('user_id'), session.get('role')
+    if page and uid and role == page[0]:
+        mark_seen(role, uid, page[1])
 
 @app.route('/api/ping', methods=['POST'])
 @limiter.exempt
@@ -1244,12 +1439,38 @@ def extra_work_booking(transaction):
 FEE_TXN_PREFIX = 'FEE-'       # FEE-<booking number>-<id>: the booking fee, paid when booking
 DEFAULT_BOOKING_FEE = 100
 
+# FEE-NEW-<id>: a booking fee paid through PayMongo before the booking is sent
+# (the form can only be submitted once it is paid). It becomes FEE-<booking number>-<id>
+# when the booking is made; a paid one that was never used is used for the next booking.
+FEE_HOLD_PREFIX = 'FEE-NEW-'
+
+
+def is_fee_hold(transaction):
+    return (transaction.transaction_number or '').startswith(FEE_HOLD_PREFIX)
+
+
+def not_an_unpaid_fee_hold():
+    """Filter: leaves out fee payments a customer started but never paid (no booking yet)."""
+    return ~and_(Transaction.payment_status == 'pending', Transaction.transaction_number.like(f'{FEE_HOLD_PREFIX}%'))
+
+
 def booking_fee_booking(transaction):
     """Booking number a booking-fee charge belongs to, or None."""
     number = transaction.transaction_number or ''
-    if not number.startswith(FEE_TXN_PREFIX):
+    if not number.startswith(FEE_TXN_PREFIX) or number.startswith(FEE_HOLD_PREFIX):
         return None
     return number[len(FEE_TXN_PREFIX):].rsplit('-', 1)[0]
+
+# Suggested service fee: 10% of the starting price, rounded to the nearest ₱50,
+# kept between ₱50 and ₱500. Admins can set any fee from 0 to SERVICE_FEE_LIMIT.
+SERVICE_FEE_MIN, SERVICE_FEE_MAX = 50, 500
+SERVICE_FEE_LIMIT = 100000
+
+
+def suggested_service_fee(price):
+    from services.service_catalog import suggested_fee
+    return suggested_fee(price)
+
 
 def current_booking_fee():
     """The booking fee set in Admin > Settings (whole pesos), or the default."""
@@ -1265,6 +1486,8 @@ def payment_label(transaction):
         return f'Shop order {transaction.order.order_number}'
     if booking_fee_booking(transaction):
         return f'Booking fee for {booking_fee_booking(transaction)}'
+    if is_fee_hold(transaction):
+        return 'DEVTech booking fee'
     if extra_work_booking(transaction):
         return f'Extra work on {extra_work_booking(transaction)}'
     if transaction.booking and transaction.booking.service:
@@ -1477,6 +1700,32 @@ def support_messages_from_ticket(t):
     db.session.refresh(t)
     return True
 
+def add_service_fee_and_receipt_columns():
+    """Per-service fee, the customer's "I received my device" time, and the
+    technician profile-photo notice. Safe to repeat. Services that get the fee
+    column now start with the suggested fee for their price."""
+    with app.app_context():
+        when = 'TIMESTAMP' if db.engine.dialect.name == 'postgresql' else 'DATETIME'
+        if _try_sql("ALTER TABLE services ADD COLUMN service_fee DECIMAL(10,2) NOT NULL DEFAULT 0"):
+            for svc in Service.query.all():
+                svc.service_fee = suggested_service_fee(svc.price)
+            db.session.commit()
+        _try_sql(f"ALTER TABLE bookings ADD COLUMN customer_received_at {when} NULL")
+        _try_sql(f"ALTER TABLE technicians ADD COLUMN photo_notice_at {when} NULL")
+        _try_sql("ALTER TABLE technicians ADD COLUMN photo_notice_count INT NOT NULL DEFAULT 0")
+        _try_sql(f"ALTER TABLE technicians ADD COLUMN photo_overdue_reported_at {when} NULL")
+
+def add_id_back_and_address_columns():
+    """Front and back photos of a technician's ID (roster and registration) and the
+    roster address. Safe to repeat."""
+    with app.app_context():
+        for col, kind in (('id_back_file', 'VARCHAR(64)'), ('id_back_mime', 'VARCHAR(40)')):
+            _try_sql(f"ALTER TABLE technicians ADD COLUMN {col} {kind} NULL")
+        for col, kind in (('address', 'VARCHAR(255)'), ('id_front_file', 'VARCHAR(64)'),
+                          ('id_front_mime', 'VARCHAR(40)'), ('id_back_file', 'VARCHAR(64)'),
+                          ('id_back_mime', 'VARCHAR(40)')):
+            _try_sql(f"ALTER TABLE technician_employees ADD COLUMN {col} {kind} NULL")
+
 def add_support_chat_columns():
     """Support tickets become conversations: their columns, and each old ticket's
     message and reply carried over as the first chat messages. Safe to repeat."""
@@ -1553,11 +1802,70 @@ def get_user_presence(user):
                 format_time_ago(user.last_active) if user.last_active else 'Never logged in')}
   
 # ==================== AUTH ROUTES ====================
+# Hero picker on the home page: common problems per device, each tied to a real
+# catalog service by name. A renamed or hidden service drops out; a device with
+# no problems left is hidden.
+HOME_PICKER = [
+    ('smartphone', 'Phone', 'fa-mobile-screen', [
+        ('Cracked screen', 'Smartphone LCD / OLED Screen Replacement'),
+        ('Battery drains fast', 'Smartphone Battery Replacement'),
+        ("Won't charge", 'Smartphone Not Charging Repair'),
+        ('Got wet', 'Smartphone Water Damage Cleaning')]),
+    ('laptop', 'Laptop', 'fa-laptop', [
+        ('Broken screen', 'Laptop LCD / LED Screen Replacement'),
+        ('Runs hot, shuts off', 'Laptop Overheating Repair'),
+        ('Keys not working', 'Laptop Keyboard Replacement'),
+        ('Virus or pop-ups', 'Virus and Malware Removal')]),
+    ('desktop', 'Desktop PC', 'fa-desktop', [
+        ("Won't power on", 'Desktop No Power Repair'),
+        ('Blue screen errors', 'Blue Screen Error Troubleshooting'),
+        ('Slow to start', 'Desktop SSD Upgrade'),
+        ('Loud and dusty', 'Desktop Full Internal Cleaning')]),
+    ('tablet', 'Tablet', 'fa-tablet-screen-button', [
+        ('Touch not responding', 'Tablet Touchscreen / Digitizer Replacement'),
+        ('Battery drains fast', 'Tablet Battery Replacement'),
+        ("Won't charge", 'Tablet Not Charging Repair'),
+        ('Apps keep crashing', 'Tablet Software Problem Repair')]),
+    ('monitor', 'Monitor', 'fa-tv', [
+        ('No display', 'Monitor No Display Repair'),
+        ('Screen flickers', 'Monitor Flickering Repair'),
+        ('Picture too dark', 'Monitor Backlight Repair'),
+        ('HDMI port loose', 'Monitor HDMI Port Replacement')]),
+    ('storage', 'Drive', 'fa-hard-drive', [
+        ('Files lost on a hard drive', 'HDD Data Recovery'),
+        ('Flash drive unreadable', 'USB Flash Drive Data Recovery'),
+        ('Memory card corrupted', 'Memory Card Data Recovery'),
+        ('Move files to a new drive', 'Data Transfer to New Storage Device')]),
+]
+
+
+def _category_slug(category):
+    return (category.slug or f'cat-{category.id}') if category else None
+
+
+def home_device_picker():
+    wanted = [svc for *_, problems in HOME_PICKER for _, svc in problems]
+    found = {s.name: s for s in Service.query.filter(Service.is_active.is_(True), Service.name.in_(wanted)).all()}
+    picker = {}
+    for key, label, icon, problems in HOME_PICKER:
+        rows = []
+        for problem, name in problems:
+            svc = found.get(name)
+            if not svc:
+                continue
+            slug = _category_slug(svc.category)
+            rows.append({'problem': problem, 'service': svc.name, 'price': float(svc.price or 0),
+                         'fee': float(svc.service_fee or 0),
+                         'url': url_for('book_appointment', category_slug=slug, service=svc.id) if slug
+                         else url_for('book_appointment')})
+        if rows:
+            picker[key] = {'label': label, 'icon': icon, 'problems': rows}
+    return picker
+
+
 @app.route('/')
 def home():
     from models.technician_models import ServiceRating
-    services = Service.query.filter_by(is_active=True).limit(6).all()
-    categories = ServiceCategory.query.filter_by(is_active=True).all()
     avg, count = db.session.query(func.avg(ServiceRating.stars), func.count(ServiceRating.id)).one()
     # Real figures from the database; the template hides any that are still zero.
     stats = {
@@ -1566,7 +1874,23 @@ def home():
         'rating_count': count,
         'technicians': Technician.query.filter_by(is_active=True, id_verified=True).count(),
     }
-    return render_template('home.html', services=services, categories=categories, stats=stats)
+    # Price board: every category that has bookable services, with its count and lowest price.
+    categories = []
+    for cat in ServiceCategory.query.filter_by(is_active=True)\
+            .order_by(ServiceCategory.display_order, ServiceCategory.name).all():
+        active = [s for s in cat.services if s.is_active]
+        if active:
+            priced = [float(s.price) for s in active if s.price and s.price > 0]
+            categories.append({'name': cat.name, 'description': cat.description or cat.tagline or '',
+                               'icon': cat.icon or 'fa-screwdriver-wrench', 'slug': _category_slug(cat),
+                               'count': len(active), 'min_price': min(priced) if priced else None})
+    # 16 random priced services for the scrolling strip (shuffled here: MySQL has no random()).
+    priced_services = Service.query.filter(Service.is_active.is_(True), Service.price > 0).all()
+    ticker = random.sample(priced_services, min(16, len(priced_services)))
+    role = session.get('role')
+    dashboard_url = url_for(home_endpoint_for(role)) if session.get('user_id') and role else None
+    return render_template('home.html', stats=stats, categories=categories, ticker=ticker,
+                           picker=home_device_picker(), dashboard_url=dashboard_url)
 
 @app.route('/contact', methods=['POST'])
 @limiter.limit('5 per hour')
@@ -1590,27 +1914,56 @@ def contact():
     notify_admins('New Website Inquiry', f'{name}: {subject}')
     return jsonify({'success': True, 'message': "Thank you for your message! We'll get back to you soon."})
 
+# ---- sign-in pages: Post/Redirect/Get + lockout (services/login_guard.py) ----
+# A sign-in form never answers its POST with a page: every outcome redirects, so the
+# browser's Back and Reload never offer to "resubmit the form". What the person typed
+# (never the password) rides along in the session for the next GET.
+
+def _back_to_sign_in(endpoint, identifier, message=None, category='danger'):
+    if message:
+        flash(message, category)
+    session['login_prefill'] = (identifier or '')[:120]
+    return redirect(url_for(endpoint))
+
+def _sign_in_page_state(portal):
+    """(what was typed last time, seconds this sign-in is still locked for)."""
+    from services import login_guard
+    typed = session.pop('login_prefill', '')
+    return typed, login_guard.seconds_left(portal, typed) if typed else 0
+
+def _signed_in_as(role):
+    """Already signed in as this role: its sign-in page sends them home instead."""
+    return session.get('role') == role and current_account() is not None
+
 @app.route('/login', methods=['GET', 'POST'])
-@limiter.limit('10 per minute')
+@limiter.limit('20 per minute')
 def login():
     """Customer sign-in only. Technician and admin accounts are not looked up
     here at all, so staff credentials get the same "Invalid email or password"
     as anything else and the page never hints that the staff portals exist."""
+    from services import login_guard
+    if _signed_in_as('customer'):
+        return redirect(url_for('user_dashboard'))
     if request.method == 'POST':
         email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password') or ''
+        wait = login_guard.seconds_left('customer', email)
+        if wait:
+            return _back_to_sign_in('login', email, login_guard.locked_message(wait))
         user = Customer.query.filter(func.lower(Customer.email) == email).first()
         if user and user.check_password(password):
+            login_guard.clear('customer', email)
             if not user.is_active:
-                flash('Your account has been deactivated. Please contact support.', 'danger')
-                return render_template('auth/login.html')
+                return _back_to_sign_in('login', email, 'Your account has been deactivated. Please contact support.')
             # "Remember me" keeps the session for PERMANENT_SESSION_LIFETIME (7 days);
-            # otherwise it ends when the browser closes.
+            # otherwise it ends when the browser closes, or after SESSION_IDLE_MINUTES idle.
             login_account(user, remember=request.form.get('remember'))
             log_activity(user.id, 'login', f'Logged in from {request.remote_addr}')
             return redirect(url_for(home_endpoint_for(user.role)))
-        flash('Invalid email or password.', 'danger')
-    return render_template('auth/login.html')
+        left, locked = login_guard.record_failure('customer', email)
+        return _back_to_sign_in('login', email, login_guard.failure_message('Invalid email or password.', left, locked))
+    typed, lock = _sign_in_page_state('customer')
+    return render_template('auth/login.html', prefill_email=typed, lock_seconds=lock)
 
 # ==================== PASSWORD RESET BY EMAIL ====================
 # The token carries the account (role + id) plus a fingerprint of the current
@@ -1642,6 +1995,9 @@ def user_from_reset_token(token):
 @limiter.limit('5 per hour', methods=['POST'])
 def forgot_password():
     enabled = email_service.is_enabled(app)
+    portal = request.args.get('portal') if request.args.get('portal') in ('technician', 'admin') else None
+    back_url = {'technician': url_for('technician.login'), 'admin': url_for('admin_login')}.get(portal, url_for('login'))
+    page = dict(email_enabled=enabled, portal=portal, back_url=back_url)
     if request.method == 'POST' and enabled:
         email = (request.form.get('email') or '').strip().lower()
         user = find_account_by_email(email)
@@ -1654,11 +2010,11 @@ def forgot_password():
                 f'Hi {user.full_name},\n\nWe received a request to reset the password for your '
                 f'{site_name} account. The link below works once and expires in 1 hour.\n\n'
                 'If you did not ask for this, you can ignore this email; your password stays the same.',
-                link, 'Choose a new password', site_name)
+                link, 'Choose a new password', site_name, footer=email_service.SECURITY_FOOTER)
             email_service.queue_email(user.email, f'Reset your {site_name} password', html_body, text_body, app)
             log_activity(user.id, 'password_reset_requested', 'Password reset link emailed', role=user.role)
-        return render_template('auth/forgot_password.html', sent=True, email_enabled=enabled)
-    return render_template('auth/forgot_password.html', sent=False, email_enabled=enabled)
+        return render_template('auth/forgot_password.html', sent=True, **page)
+    return render_template('auth/forgot_password.html', sent=False, **page)
 
 @app.route('/reset-password/<token>', methods=['GET', 'POST'])
 @limiter.limit('10 per hour', methods=['POST'])
@@ -1669,11 +2025,12 @@ def reset_password(token):
     if request.method == 'POST':
         password = request.form.get('password') or ''
         confirm = request.form.get('confirm') or ''
-        error = None
-        if len(password) < 8 or not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
-            error = 'Use at least 8 characters, including a letter and a number.'
-        elif password != confirm:
+        from services.password_rules import password_problem as strong_password_problem
+        error = strong_password_problem(password)       # the same rule as registration
+        if not error and password != confirm:
             error = 'The two passwords do not match.'
+        if not error and user.check_password(password):
+            error = 'Choose a password different from your current one.'
         if error:
             flash(error, 'danger')
             return render_template('auth/reset_password.html', valid=True, email=user.email), 400
@@ -1683,6 +2040,15 @@ def reset_password(token):
         create_notification(user.id, 'Your password was changed',
                             'Your password was just reset using a link sent to this email. '
                             'If this was not you, contact us right away.', 'warning', role=user.role)
+        if email_service.is_enabled(app) and email_service.deliverable(user.email):
+            site_name = _site_name()
+            html_body, text_body = email_service.render(
+                'Your password was changed',
+                f'Hi {user.full_name},\n\nThe password for your {site_name} account was just changed with a '
+                'reset link sent to this email.\n\nIf this was you, there is nothing else to do. If it was not, '
+                'reset your password again right away and contact us.',
+                _external_url('forgot_password'), 'Reset it again', site_name, footer=email_service.SECURITY_FOOTER)
+            email_service.queue_email(user.email, f'Your {site_name} password was changed', html_body, text_body, app)
         session.clear()
         flash('Password updated. Sign in with your new password.', 'success')
         if user.role == 'technician':
@@ -1723,9 +2089,16 @@ def register():
         re_password = form.get('rePassword')
         phone = ph_mobile_number(form.get('phone'))
 
-        def again(message):
+        def again(message, keep=True):
+            # Back to the form (Post/Redirect/Get: Back or Reload never re-sends it). What was
+            # typed comes back, except passwords; never anything when the email is taken.
             flash(message, 'danger')
-            return render_template('auth/register.html', form=form)
+            if keep:
+                session['register_prefill'] = {'fullName': full_name[:100], 'email': email[:120],
+                                               'phone': (form.get('phone') or '')[:20]}
+            else:
+                session.pop('register_prefill', None)
+            return redirect(url_for('register'))
 
         if not email or not password:
             return again('Please enter your email and a password.')
@@ -1739,7 +2112,8 @@ def register():
         if password != re_password:
             return again('Passwords do not match.')
         if email_in_use(email):
-            return again('Email already registered.')
+            # Nothing about the existing account, and nothing typed, is shown back.
+            return again('This email is already registered. Sign in, or use another email.', keep=False)
         full_name = full_name or name_from_email(email)       # optional: change it later in Profile
 
         user = Customer(username=_unique_customer_username(email), email=email,
@@ -1750,9 +2124,10 @@ def register():
         create_notification(user.id, 'Welcome to DEVTech!',
                             'Thank you for registering. Start booking your repair services today!',
                             'success', role='customer')
+        session.pop('register_prefill', None)
         flash('Registration successful! Please log in.', 'success')
         return redirect(url_for('login'))
-    return render_template('auth/register.html')
+    return render_template('auth/register.html', form=session.pop('register_prefill', None))
 
 @app.route('/logout')
 def logout():
@@ -1762,94 +2137,30 @@ def logout():
     flash('You have been logged out.', 'info')
     return redirect(url_for('home'))
 
-# ---- Social login (customers only) ----
-def _login_or_create_oauth_user(provider, provider_id, email, full_name, email_verified):
-    if not email:
-        flash('We could not get an email address from your account. Please try a different sign-in method.', 'danger')
-        return redirect(url_for('login'))
-    # Linking by email is only safe when the provider vouches for the address;
-    # otherwise anyone could claim an existing account's email.
-    if not email_verified:
-        flash(f'Your {provider.title()} email address is not verified. Please verify it or sign in with your password.', 'danger')
-        return redirect(url_for('login'))
-    email = email.strip().lower()
-    user = Customer.query.filter_by(oauth_provider=provider, oauth_id=provider_id).first()
-    is_new_user = False
-    if not user:
-        existing = find_account_by_email(email)
-        if existing and existing.role != 'customer':
-            # A technician's or admin's Google/Facebook email: plain failure, no hint
-            # that it belongs to a staff account (and no customer account is made).
-            flash('Invalid login.', 'danger')
-            return redirect(url_for('login'))
-        user = existing
-        if user:
-            user.oauth_provider = user.oauth_provider or provider
-            user.oauth_id = user.oauth_id or provider_id
-        else:
-            user = Customer(username=_unique_customer_username(email), email=email,
-                            full_name=full_name or email.split('@')[0],
-                            oauth_provider=provider, oauth_id=provider_id)
-            user.password_hash = bcrypt.generate_password_hash(secrets.token_urlsafe(32)).decode('utf-8')
-            db.session.add(user)
-            is_new_user = True
-        db.session.commit()
-        if is_new_user:
-            create_notification(user.id, 'Welcome to DEVTech!',
-                                'Thank you for registering. Start booking your repair services today!',
-                                'success', role='customer')
-    if not user.is_active:
-        flash('Your account has been deactivated. Please contact support.', 'danger')
-        return redirect(url_for('login'))
-    login_account(user)
-    log_activity(user.id, 'login', f'Logged in via {provider} from {request.remote_addr}')
-    flash(f'Logged in with {provider.title()}.', 'success')
-    return redirect(url_for('user_dashboard'))
-
-@app.route('/login/google')
-def google_login():
-    return oauth.google.authorize_redirect(url_for('google_callback', _external=True))
-
-@app.route('/login/google/callback')
-def google_callback():
-    try:
-        token = oauth.google.authorize_access_token()
-    except Exception:
-        flash('Google sign-in was cancelled or failed. Please try again.', 'danger')
-        return redirect(url_for('login'))
-    userinfo = token.get('userinfo') or oauth.google.parse_id_token(token, nonce=None)
-    return _login_or_create_oauth_user('google', userinfo['sub'], userinfo.get('email'), userinfo.get('name'),
-                                       userinfo.get('email_verified') is True)
-
-@app.route('/login/facebook')
-def facebook_login():
-    return oauth.facebook.authorize_redirect(url_for('facebook_callback', _external=True))
-
-@app.route('/login/facebook/callback')
-def facebook_callback():
-    try:
-        token = oauth.facebook.authorize_access_token()
-        profile = oauth.facebook.get('me?fields=id,name,email', token=token).json()
-    except Exception:
-        flash('Facebook sign-in was cancelled or failed. Please try again.', 'danger')
-        return redirect(url_for('login'))
-    # Facebook's Graph API only returns an email the user has confirmed.
-    return _login_or_create_oauth_user('facebook', profile['id'], profile.get('email'), profile.get('name'), True)
-
 @app.route('/admin/login', methods=['GET', 'POST'])
-@limiter.limit('5 per minute')
+@limiter.limit('20 per minute')
 def admin_login():
+    from services import login_guard
+    if _signed_in_as('admin'):
+        return redirect(url_for('admin_dashboard'))
     if request.method == 'POST':
         email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password') or ''
+        wait = login_guard.seconds_left('admin', email)
+        if wait:
+            return _back_to_sign_in('admin_login', email, login_guard.locked_message(wait))
         user = Admin.query.filter(func.lower(Admin.email) == email).first()
         if user and user.check_password(password) and user.is_active:
-            login_account(user)
+            login_guard.clear('admin', email)
+            login_account(user, remember=request.form.get('remember'))
             log_activity(user.id, 'admin_login', f'Admin logged in from {request.remote_addr}')
             flash('Welcome to Admin Dashboard!', 'success')
             return redirect(url_for('admin_dashboard'))
-        flash('Invalid admin credentials or unauthorized access.', 'danger')
-    return render_template('auth/admin_login.html')
+        left, locked = login_guard.record_failure('admin', email)
+        return _back_to_sign_in('admin_login', email, login_guard.failure_message(
+            'Invalid admin credentials or unauthorized access.', left, locked))
+    typed, lock = _sign_in_page_state('admin')
+    return render_template('auth/admin_login.html', prefill_email=typed, lock_seconds=lock)
 
 def _unique_admin_username(email):
     base = email.split('@')[0][:60] or 'admin'
@@ -1927,6 +2238,16 @@ def _live_stamp(account):
         add(func.max(JobLog.id), where=[JobLog.booking_id.in_(mine)])
         add(func.count(ServiceReport.id), func.max(ServiceReport.updated_at), where=[ServiceReport.booking_id.in_(mine)])
         add(func.count(Refund.id), func.max(Refund.processed_at), where=[Refund.customer_id == aid])
+        # Profile edits (name, photo, phone...) of the technicians on their repairs, and of the admins.
+        techs = q(Booking.technician_id).filter(Booking.customer_id == aid, Booking.technician_id.isnot(None))
+        add(func.count(Technician.id), func.max(Technician.updated_at), where=[Technician.id.in_(techs)])
+        add(func.max(Admin.updated_at))
+        # What the shop shows every customer: products, services and prices, the booking fee.
+        add(func.count(Product.id), func.max(Product.updated_at))
+        add(func.count(Service.id), func.sum(Service.price), func.sum(Service.service_fee),
+            _count_where(Service.is_active.is_(True)))
+        add(func.count(ServiceCategory.id), _count_where(ServiceCategory.is_active.is_(True)))
+        add(func.max(SystemSetting.updated_at))
     elif role == 'technician':
         jobs = q(Booking.id).filter(Booking.technician_id == aid)
         add(func.count(Booking.id), func.max(Booking.updated_at), func.max(Booking.assigned_at),
@@ -1940,7 +2261,12 @@ def _live_stamp(account):
         add(func.count(IntakeRecord.id), func.max(IntakeRecord.id), where=[IntakeRecord.booking_id.in_(jobs)])
         add(func.count(ServiceRating.id), where=[ServiceRating.technician_id == aid])
         add(func.count(Technician.id), _count_where(Technician.id_verified.is_(True)),
-            func.max(Technician.verification_decided_at), where=[Technician.id == aid])
+            func.max(Technician.verification_decided_at), func.max(Technician.photo_notice_at),
+            func.max(Technician.avatar_file), where=[Technician.id == aid])
+        # Profile edits of the customers on their jobs, and of the admins.
+        customers = q(Booking.customer_id).filter(Booking.technician_id == aid)
+        add(func.count(Customer.id), func.max(Customer.updated_at), where=[Customer.id.in_(customers)])
+        add(func.max(Admin.updated_at))
     else:   # admin sees everything
         add(func.count(Booking.id), func.max(Booking.updated_at), func.max(Booking.assigned_at))
         add(func.count(Order.id), func.max(Order.updated_at))
@@ -1953,9 +2279,11 @@ def _live_stamp(account):
         add(func.count(IncidentReport.id), func.max(IncidentReport.reviewed_at), _count_where(IncidentReport.status == 'open'))
         add(func.count(ServiceRating.id))
         add(func.count(Refund.id), func.max(Refund.processed_at), _count_where(Refund.status == 'pending'))
-        # accounts: not updated_at, which every presence ping touches
+        # accounts; MAX(updated_at): a profile edit shows on the admin's pages too
+        # (presence pings leave updated_at alone, see the before_request presence write)
         for model in (Customer, Technician, Admin):
-            add(func.count(model.id), func.max(model.id), _count_where(model.is_active.is_(True)))
+            add(func.count(model.id), func.max(model.id), _count_where(model.is_active.is_(True)),
+                func.max(model.updated_at))
         add(_count_where(Technician.id_verified.is_(True)), _count_where(Technician.verification_status == 'pending'),
             func.max(Technician.verification_submitted_at), func.max(Technician.verification_decided_at))
     # shared catalogue and settings (shop, services, prices)
@@ -1969,13 +2297,16 @@ def live_state(account):
     role, aid = account.role, account.id
     mine = or_(and_(Message.recipient_role == role, Message.recipient_id == aid),
                and_(Message.sender_role == role, Message.sender_id == aid))
+    counts = nav_count_values(role, aid)
     return {
         'n': db.session.query(func.max(Notification.id))
                .filter(Notification.user_role == role, Notification.user_id == aid).scalar() or 0,
-        'nu': _notifications_for(role, aid).filter_by(is_read=False).count(),
+        'nu': counts['notifications'],
         'm': db.session.query(func.max(Message.id)).filter(mine).scalar() or 0,
         'mu': _unread_messages_for(role, aid),
         's': _live_stamp(account),
+        'c': counts,                     # sidebar badges
+        'b': _badge_key(counts),         # changes when any badge changes (another tab opened a page)
     }
 
 # ---- Waiting ("long polling") so updates arrive at once -------------------
@@ -2000,16 +2331,36 @@ def _live_bump(_session):
 
 sa_event.listen(SASession, 'after_commit', _live_bump)
 
+# Account columns that are bookkeeping, not profile edits: changing only these keeps
+# updated_at as it is, because the live updates watch updated_at to refresh other
+# people's pages when a profile (name, photo, phone...) is edited.
+NOT_PROFILE_EDITS = {'last_active', 'updated_at', 'photo_notice_at', 'photo_notice_count', 'photo_overdue_reported_at'}
+
+def _keep_updated_at_for_bookkeeping(session, _ctx, _instances):
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy.orm.attributes import flag_modified
+    for obj in list(session.dirty):
+        if not isinstance(obj, AccountMixin):
+            continue
+        state = sa_inspect(obj)
+        changed = {a.key for a in state.attrs if a.history.has_changes()}
+        if changed and changed <= NOT_PROFILE_EDITS and 'updated_at' not in changed:
+            with session.no_autoflush:
+                obj.updated_at = obj.updated_at   # loads it if it was expired
+            flag_modified(obj, 'updated_at')      # written back unchanged, so onupdate does not bump it
+
+sa_event.listen(SASession, 'before_flush', _keep_updated_at_for_bookkeeping)
+
 def _live_client_state():
     """What the page says it already shows (None for a plain, non-waiting poll)."""
     if request.args.get('wait') != '1':
         return None
     return {'n': request.args.get('n', type=int), 'm': request.args.get('m', type=int),
             'nu': request.args.get('nu', type=int), 'mu': request.args.get('mu', type=int),
-            's': request.args.get('s', '')}
+            's': request.args.get('s', ''), 'b': request.args.get('b', '')}
 
 def _live_differs(state, client):
-    return any(state[k] != client[k] for k in ('n', 'm', 'nu', 'mu', 's'))
+    return any(state[k] != client[k] for k in ('n', 'm', 'nu', 'mu', 's', 'b'))
 
 def _live_wait(account, state, client):
     """Block until state differs from client's view or the wait ends. Returns
@@ -2081,7 +2432,6 @@ def api_live():
         state['new_messages'] = new_messages
     state['ok'] = True
     state['waited'] = waited
-    state['c'] = nav_count_values(account.role, account.id)     # sidebar badges
     resp = jsonify(state)
     resp.headers['Cache-Control'] = 'no-store'
     return resp
@@ -2094,7 +2444,7 @@ def _inject_live_boot():
             account = current_account()
             if not account or not account.is_active:
                 return None
-            return dict(live_state(account), c=nav_count_values(account.role, account.id))
+            return live_state(account)
         except Exception:
             db.session.rollback()
             app.logger.exception('live_boot failed')
@@ -2118,8 +2468,7 @@ def user_dashboard():
 
 # ==================== BOOKING STATUS ROUTES ====================
 def _unread_notifs(user_id):
-    return _notifications_for('customer', user_id).filter_by(is_read=False)\
-        .order_by(Notification.created_at.desc()).limit(5).all()
+    return unseen_notifications('customer', user_id).order_by(Notification.created_at.desc()).limit(5).all()
 
 @app.route('/total-bookings')
 @login_required
@@ -2275,7 +2624,7 @@ def notifications():
 @limiter.exempt
 @login_required
 def api_notification_unread_count():
-    count = _notifications_for('customer', session.get('user_id')).filter_by(is_read=False).count()
+    count = unseen_notifications('customer', session.get('user_id')).count()
     return jsonify({'count': count})
 
 def _own_customer_notification(notification_id):
@@ -2658,7 +3007,8 @@ def api_service_categories():
         services = Service.query.filter_by(category_id=cat.id, is_active=True).all()
         result.append({'id': cat.id, 'name': cat.name, 'icon': cat.icon or 'fa-tools',
                        'services': [{'id': s.id, 'name': s.name, 'description': s.description,
-                                     'price': float(s.price), 'estimated_hours': s.estimated_hours}
+                                     'price': float(s.price), 'service_fee': float(s.service_fee or 0),
+                                     'estimated_hours': s.estimated_hours}
                                     for s in services]})
     return jsonify(result)
  
@@ -2666,6 +3016,7 @@ def api_service_categories():
 def api_service_detail(service_id):
     s = Service.query.get_or_404(service_id)
     return jsonify({'id': s.id, 'name': s.name, 'description': s.description, 'price': float(s.price),
+                    'service_fee': float(s.service_fee or 0), 'starting_total': s.starting_total,
                     'estimated_hours': s.estimated_hours, 'category': s.category.name if s.category else None})
  
 @app.route('/api/check-availability', methods=['POST'])
@@ -2713,11 +3064,15 @@ def api_booked_slots():
 @app.route('/api/services')
 def api_services():
     return jsonify([{'id': s.id, 'name': s.name, 'description': s.description, 'price': float(s.price),
+                     'service_fee': float(s.service_fee or 0), 'starting_total': s.starting_total,
                      'category': s.category.name if s.category else None, 'estimated_hours': s.estimated_hours}
                     for s in Service.query.filter_by(is_active=True).all()])
  
 # ==================== SERVICE REQUEST / CATALOG / BOOKING ====================
-BOOKING_PAYMENT_METHODS = ('QR Ph', 'C.A.R')       # values of the booking form's radio buttons
+# How the repair bill is paid, both after the repair (values of the booking form's radio
+# buttons): GCash / online with a screenshot, or C.A.R (Cash After Repair) at the shop.
+BOOKING_PAYMENT_METHODS = ('GCash', 'C.A.R')
+LEGACY_BOOKING_METHODS = {'QR Ph': 'GCash'}         # older forms still in a browser tab
 BOOKING_SLOT_HOURS = range(8, 18)                  # 08:00 ... 17:00, on the hour
 SLOT_CAPACITY = 5
 BOOKING_MAX_DAYS_AHEAD = 90
@@ -2735,6 +3090,7 @@ def request_service():
         booking_time = request.form.get('booking_time')
         is_in_shop = request.form.get('in_shop') == 'on'
         payment_method = request.form.get('payment_method', '')
+        payment_method = LEGACY_BOOKING_METHODS.get(payment_method, payment_method)
 
         if request.form.get('accept_terms') != 'on':
             flash('Please read and accept the Terms of Service to book a repair.', 'danger')
@@ -2742,8 +3098,26 @@ def request_service():
         if payment_method not in BOOKING_PAYMENT_METHODS:
             flash('Please choose a payment method.', 'danger')
             return redirect(url_for('request_service'))
-        if payment_method == 'QR Ph' and not paymongo_service.is_enabled(app):
-            flash('Paying by QR is not available right now. Choose C.A.R (Cash After Repair).', 'danger')
+        fee_setting = current_booking_fee()
+        # With PayMongo set up, the booking fee is paid by QR Ph right after booking and
+        # confirmed by PayMongo itself. Without it: the shop's own QR and a screenshot.
+        fee_online = paymongo_service.is_enabled(app)
+        fee_proof = request.files.get('fee_receipt')
+        fee_reference = ' '.join((request.form.get('fee_reference') or '').split())
+        fee_hold = None
+        if fee_setting > 0 and fee_online:
+            # The fee must already be paid through PayMongo (scanned before submitting).
+            fee_hold = db.session.get(Transaction, request.form.get('fee_transaction_id', type=int) or 0)
+            if not fee_hold or fee_hold.customer_id != session.get('user_id') or not is_fee_hold(fee_hold) \
+                    or fee_hold.payment_status != 'confirmed':
+                flash(f'Pay the ₱{fee_setting:,.2f} booking fee first: scan the QR code, then attach a screenshot '
+                      'of the payment.', 'danger')
+                return redirect(url_for('request_service'))
+        if fee_setting > 0 and not (fee_proof and fee_proof.filename):
+            flash(f'Attach a screenshot of your ₱{fee_setting:,.2f} booking fee payment as proof.', 'danger')
+            return redirect(url_for('request_service'))
+        if len(fee_reference) > 50:
+            flash('The reference number is too long (50 characters at most).', 'danger')
             return redirect(url_for('request_service'))
  
         chosen = None
@@ -2842,6 +3216,26 @@ def request_service():
             flash(f'Bookings can be made up to {BOOKING_MAX_DAYS_AHEAD} days ahead.', 'danger')
             return redirect(url_for('request_service'))
 
+        # The booking fee screenshot is stored before the slot is locked (storing it can
+        # mean an upload), and removed again if the booking can't be made.
+        service_obj = db.session.get(Service, service_id_for_booking)
+        # Starting price plus the service's own service fee. The booking fee is paid now
+        # and deducted from the final bill; it never exceeds a listed price.
+        price = Decimal(service_obj.price or 0) + Decimal(service_obj.service_fee or 0)
+        fee = min(fee_setting, price) if price > 0 else fee_setting
+        if fee_hold:
+            fee = Decimal(fee_hold.amount)          # what was actually paid
+        receipt_name = None
+        if fee > 0:
+            receipt_name, problem = save_payment_proof(fee_proof, 'fee')
+            if problem:
+                flash(problem, 'danger')
+                return redirect(url_for('request_service'))
+
+        def drop_receipt():
+            if receipt_name:
+                file_store.removed(os.path.join(app.config['RECEIPT_UPLOAD_FOLDER'], receipt_name))
+
         # Lock this slot's bookings so two requests can't both take the last place
         # (MySQL row/gap locks on ix_bookings_slot; a no-op on SQLite).
         in_slot = Booking.query.filter(Booking.booking_date == booking_date_obj,
@@ -2850,14 +3244,15 @@ def request_service():
         mine = next((b for b in in_slot if b.customer_id == user_id), None)
         if mine:
             db.session.rollback()
+            drop_receipt()
             flash(f'You already have booking #{mine.booking_number} at that time.', 'info')
             return redirect(url_for('total_bookings'))
         if len(in_slot) >= SLOT_CAPACITY:
             db.session.rollback()
+            drop_receipt()
             flash('This time slot is fully booked. Please choose another time.', 'danger')
             return redirect(url_for('request_service'))
  
-        service_obj = Service.query.get(service_id_for_booking)
         booking = Booking(booking_number=placeholder_number(), user_id=user_id, service_id=service_id_for_booking,
                           device_type=device_type, device_brand=device_brand or None,
                           device_model=device_model or None,
@@ -2870,44 +3265,120 @@ def request_service():
         db.session.flush()
         assign_booking_number(booking)
         booking_number = booking.booking_number
-        # The booking fee is paid now and deducted from the final bill, so the
-        # booking's own charge is the balance.
-        price = Decimal(service_obj.price or 0)
-        # The fee can only be paid by QR, so there is none while online payments are off.
-        fee = min(current_booking_fee(), price) if paymongo_service.is_enabled(app) else Decimal(0)
         booking.booking_fee = fee or None
+        # The booking's own charge is the balance, paid after the repair.
         transaction = Transaction(transaction_number=placeholder_number(), booking_id=booking.id,
-                                  user_id=user_id, amount=price - fee,
-                                  payment_method='paymongo' if payment_method == 'QR Ph' else payment_method,
-                                  payment_status='pending')
+                                  user_id=user_id, amount=max(price - fee, Decimal('0')),
+                                  payment_method=payment_method, payment_status='pending')
         db.session.add(transaction)
         db.session.flush()
         assign_transaction_number(transaction)
         fee_txn = None
-        if fee > 0:
+        if fee_hold:
+            # Attach the paid fee to this booking, once (two tabs can't both use it).
+            claimed = Transaction.query.filter(
+                Transaction.id == fee_hold.id, Transaction.payment_status == 'confirmed',
+                Transaction.transaction_number.like(f'{FEE_HOLD_PREFIX}%')).update(
+                {'transaction_number': f'{FEE_TXN_PREFIX}{booking_number}-{fee_hold.id}',
+                 'receipt_image': receipt_name, 'gcash_reference': fee_reference or None,
+                 'reference_number': fee_reference or None, 'updated_at': datetime.utcnow()},
+                synchronize_session=False)
+            if claimed != 1:
+                db.session.rollback()
+                drop_receipt()
+                flash('That booking fee payment was already used for another booking. Please try again.', 'danger')
+                return redirect(url_for('request_service'))
+        elif fee > 0 and fee_online:
             fee_txn = Transaction(transaction_number=placeholder_number(), user_id=user_id, amount=fee,
                                   payment_method='paymongo', payment_status='pending')
+        elif fee > 0:
+            fee_txn = Transaction(transaction_number=placeholder_number(), user_id=user_id, amount=fee,
+                                  payment_method='GCash', payment_status='pending', receipt_image=receipt_name,
+                                  gcash_reference=fee_reference or None, reference_number=fee_reference or None)
+        if fee_txn:
             db.session.add(fee_txn)
             db.session.flush()
             fee_txn.transaction_number = f'{FEE_TXN_PREFIX}{booking_number}-{fee_txn.id}'
         db.session.commit()
-        if fee_txn:
+        later = ('pay the balance by GCash with a screenshot' if payment_method == 'GCash'
+                 else 'pay the balance in cash at the shop')
+        if fee_hold:
+            create_notification(user_id, 'Booking Created',
+                                f'Your booking #{booking_number} has been sent with your ₱{fee:,.2f} booking fee '
+                                f'paid; it is deducted from your final bill. After the repair, {later}.',
+                                'info', role='customer')
+            notify_admins('New Booking: Fee Paid',
+                          f'{booking_number}: the ₱{fee:,.2f} booking fee was paid through PayMongo (receipt '
+                          'screenshot attached). It can be approved.', 'info')
+            flash(f'Booking #{booking_number} sent. Your ₱{fee:,.2f} booking fee is paid and will be deducted '
+                  f'from your final bill.', 'success')
+            return redirect(url_for('total_bookings', booked=booking_number))
+        if fee_txn and fee_online:
             create_notification(user_id, 'Booking Created',
                                 f'Your booking #{booking_number} has been created. Pay the ₱{fee:,.2f} booking fee '
-                                f'to confirm it; it is deducted from your final bill.', 'info', role='customer')
-            flash(f'Booking #{booking_number} created. Pay the ₱{fee:,.2f} booking fee by QR to confirm it; '
+                                f'by QR to confirm it; it is deducted from your final bill. After the repair, '
+                                f'{later}.', 'info', role='customer')
+            flash(f'Booking #{booking_number} created. Scan the QR code to pay the ₱{fee:,.2f} booking fee; '
+                  f'it is confirmed automatically and deducted from your final bill.', 'success')
+            return redirect(url_for('total_bookings', pay=fee_txn.id, booked=booking_number))
+        if fee_txn:
+            create_notification(user_id, 'Booking Created',
+                                f'Your booking #{booking_number} has been sent. We are checking your ₱{fee:,.2f} '
+                                f'booking fee payment; it is deducted from your final bill. After the repair, '
+                                f'{later}.', 'info', role='customer')
+            notify_admins('Booking Fee Awaiting Confirmation',
+                          f'{booking_number}: the customer sent a ₱{fee:,.2f} booking fee screenshot. '
+                          'Check it under Payments before approving the booking.', 'info')
+            flash(f'Booking #{booking_number} sent. We are checking your ₱{fee:,.2f} booking fee payment; '
                   f'it is deducted from your final bill.', 'success')
-            if paymongo_service.is_enabled(app):
-                return redirect(url_for('user_transactions', pay=fee_txn.id))
-            return redirect(url_for('user_transactions'))
+            return redirect(url_for('total_bookings', booked=booking_number))
         create_notification(user_id, 'Booking Created',
-                            f'Your booking #{booking_number} has been created. Please complete the payment.', 'info',
+                            f'Your booking #{booking_number} has been sent. After the repair, {later}.', 'info',
                             role='customer')
         flash(f'Booking created successfully! Booking #: {booking_number}', 'success')
-        return redirect(url_for('user_transactions'))
+        return redirect(url_for('total_bookings', booked=booking_number))
  
     # One booking page for everyone: /user/book (its form posts back here).
     return redirect(url_for('book_appointment'))
+
+@app.route('/api/booking-fee', methods=['POST'])
+@login_required
+def api_booking_fee():
+    """The booking form's fee payment, paid by PayMongo QR before the booking is sent.
+    A paid fee not used yet is used first; otherwise the open one is reused (or a new one
+    started when the amount changed). Returns {status: paid|pending|none, transaction_id, amount}."""
+    if not paymongo_service.is_enabled(app):
+        return jsonify({'status': 'unavailable', 'message': 'Paying by QR is not available right now.'}), 400
+    fee_setting = current_booking_fee()
+    if fee_setting <= 0:
+        return jsonify({'status': 'none'})
+    uid = session.get('user_id')
+    sid = str((request.get_json(silent=True) or {}).get('service_id') or '')
+    if sid == 'other':
+        price = Decimal(0)
+    else:
+        svc = db.session.get(Service, int(sid)) if sid.isdigit() else None
+        if not svc or not svc.is_active:
+            return jsonify({'status': 'error', 'message': 'Choose a service first.'}), 400
+        price = Decimal(svc.price or 0) + Decimal(svc.service_fee or 0)
+    fee = (min(fee_setting, price) if price > 0 else fee_setting).quantize(Decimal('0.01'))
+    holds = Transaction.query.filter(Transaction.customer_id == uid,
+                                     Transaction.transaction_number.like(f'{FEE_HOLD_PREFIX}%'))
+    paid = holds.filter(Transaction.payment_status == 'confirmed').order_by(Transaction.id).first()
+    if paid:
+        return jsonify({'status': 'paid', 'transaction_id': paid.id, 'amount': f'{paid.amount:,.2f}'})
+    hold = holds.filter(Transaction.payment_status == 'pending').order_by(Transaction.id.desc()).first()
+    if hold and Decimal(hold.amount) != fee:
+        hold.payment_status = 'cancelled'          # a payment made on it later is refunded automatically
+        hold = None
+    if not hold:
+        hold = Transaction(transaction_number=placeholder_number(), user_id=uid, amount=fee,
+                           payment_method='paymongo', payment_status='pending')
+        db.session.add(hold)
+        db.session.flush()
+        hold.transaction_number = f'{FEE_HOLD_PREFIX}{hold.id}'
+    db.session.commit()
+    return jsonify({'status': 'pending', 'transaction_id': hold.id, 'amount': f'{hold.amount:,.2f}'})
 
 @app.route('/user/services')
 @login_required
@@ -3028,6 +3499,11 @@ def api_booking_monitor(booking_id):
         'technician': tech,
         'repair': repair,
         'approval': approval_dict(ApprovalRequest.query.filter_by(booking_id=b.id, status='pending').first()),
+        # Ready for Collection: the customer confirms they have the device before it can be released.
+        'receipt': {'canConfirm': b.status == 'completed' and not b.customer_received_at,
+                    'confirmedAt': fmt(b.customer_received_at, '%b %d, %Y %I:%M %p'),
+                    'released': b.status == 'released'}
+                   if b.technician_id and b.status in ('completed', 'released') else None,
         'canRate': bool(b.status in FINISHED_STATUSES and b.technician_id and not rating),
         'rateLater': bool(b.technician_id and not rating and b.status not in FINISHED_STATUSES
                           and b.status != 'cancelled'),
@@ -3036,8 +3512,39 @@ def api_booking_monitor(booking_id):
                    'submittedAt': fmt(rating.submitted_at, '%b %d, %Y')} if rating else None,
         'timeline': [{'action': l.action, 'text': l.text, 'by': l.by_name, 'at': l.at}
                      for l in logs
-                     if l.action in ('assign', 'status', 'intake', 'diagnosis', 'approval', 'release')],
+                     if l.action in ('assign', 'status', 'intake', 'diagnosis', 'approval', 'received', 'release')],
     })
+
+@app.route('/api/booking/<int:booking_id>/received', methods=['POST'])
+@login_required
+def api_booking_received(booking_id):
+    """The customer confirms they have their device back (Ready for Collection).
+    Only then can the technician release the job."""
+    from models.technician_models import JobLog
+    b = db.session.get(Booking, booking_id)
+    if not b or b.user_id != session['user_id'] or session.get('role') != 'customer':
+        return jsonify({'ok': False, 'reason': 'Not found.'}), 404
+    if b.customer_received_at:
+        return jsonify({'ok': True, 'already': True})
+    if b.status != 'completed':
+        return jsonify({'ok': False, 'reason': 'You can confirm this once your device is ready for collection.'}), 400
+    now = datetime.utcnow()
+    # One UPDATE, so a double click (or two tabs) records it once.
+    claimed = Booking.query.filter(Booking.id == b.id, Booking.status == 'completed',
+                                   Booking.customer_received_at.is_(None))        .update({'customer_received_at': now, 'updated_at': now}, synchronize_session=False)
+    if not claimed:
+        db.session.rollback()
+        return jsonify({'ok': True, 'already': True})
+    name = b.user.full_name if b.user else 'Customer'
+    db.session.add(JobLog(booking_id=b.id, at=now.strftime('%Y-%m-%d %H:%M:%S'), by_name=name,
+                          action='received', text='Customer confirmed they received the device.'))
+    db.session.commit()
+    if b.technician_id:
+        create_notification(b.technician_id, 'Customer received the device',
+                            f'{name} confirmed they received the device for {b.booking_number}. '
+                            'You can now mark it as released.', 'success', role='technician')
+    log_activity(b.user_id, 'booking_received', f'Confirmed receiving the device for {b.booking_number}')
+    return jsonify({'ok': True})
     
 @app.route('/api/booking/<int:booking_id>/rate', methods=['POST'])
 @login_required
@@ -3112,7 +3619,7 @@ def api_booking_approval_respond(booking_id, approval_id):
     if decision == 'approve' and extra > 0:
         txn = b.transaction
         if txn and txn.payment_status in ('pending', 'rejected'):
-            txn.amount = Decimal(txn.amount) + extra   # still unpaid: bill it together
+            txn.amount = booking_balance(b)            # still unpaid: bill it together
         else:
             # Already paid: bill the extra separately. The booking number is kept
             # in the (never-edited) transaction number so it stays traceable.
@@ -3133,15 +3640,167 @@ def api_booking_approval_respond(booking_id, approval_id):
     if decision == 'approve' and extra > 0:
         create_notification(b.user_id, 'Extra Charge Added',
                             f'₱{extra:,.2f} for the approved work on {b.booking_number} was added to your '
-                            f'payments. See Transactions.', 'info', role='customer')
+                            f'bill. See Transactions for the new total.', 'info', role='customer')
     return jsonify({'ok': True, 'approval': approval_dict(a), 'status': b.status})
+
+# ==================== PAYMENT PROOF AND THE SHOP'S PAYMENT QR ====================
+# Customers pay by scanning the shop's own GCash / QR Ph code (uploaded by an admin
+# in Settings) and send a screenshot of the payment. An admin (or, at release, the
+# technician) checks the screenshot against the shop's account before confirming.
+PROOF_TYPES = ('image/jpeg', 'image/png', 'image/webp', 'image/gif')
+PROOF_MAX_BYTES = 5 * 1024 * 1024
+PAYMENT_QR_SETTING = 'payment_qr_file'
+PAYMENT_QR_NAME_RE = re.compile(r'^qr_[0-9a-f]{16}\.(jpg|png|webp)$')
+app.config.setdefault('PAYMENT_QR_FOLDER', os.path.join(app.instance_path, 'uploads', 'payment_qr'))
+
+
+def save_payment_proof(file_storage, label):
+    """Store a payment screenshot the customer sent. Returns (stored name, None) or (None, reason)."""
+    from services.upload_service import check_file, strip_jpeg_metadata
+    if not file_storage or not file_storage.filename:
+        return None, 'Attach a screenshot of your payment.'
+    if (file_storage.mimetype or '') not in PROOF_TYPES:
+        return None, 'The payment screenshot must be a JPG, PNG, WEBP or GIF image.'
+    ok, checked = check_file(file_storage, max_bytes=PROOF_MAX_BYTES)
+    if not ok:
+        return None, ('The screenshot is larger than 5 MB.' if 'larger' in checked else checked)
+    data, mime, ext, _ = checked
+    if mime == 'image/jpeg':
+        data = strip_jpeg_metadata(data)
+    folder = app.config['RECEIPT_UPLOAD_FOLDER']
+    os.makedirs(folder, exist_ok=True)
+    name = secure_filename(f'receipt_{label}_{datetime.utcnow():%Y%m%d_%H%M%S}_{secrets.token_hex(4)}{ext}')
+    with open(os.path.join(folder, name), 'wb') as fh:
+        fh.write(data)
+    file_store.saved(os.path.join(folder, name))
+    return name, None
+
+
+def payment_qr_file(values=None):
+    """Stored name of the shop's payment QR image, or ''."""
+    if values is None:
+        row = SystemSetting.query.filter_by(setting_key=PAYMENT_QR_SETTING).first()
+        name = (row.value or '').strip() if row else ''
+    else:
+        name = (values.get(PAYMENT_QR_SETTING) or '').strip()
+    return name if PAYMENT_QR_NAME_RE.match(name) else ''
+
+
+@app.route('/payment-qr')
+@account_required
+def payment_qr_image():
+    """The shop's payment QR code, for signed-in customers paying a fee or a bill."""
+    name = payment_qr_file()
+    path = os.path.join(app.config['PAYMENT_QR_FOLDER'], name) if name else ''
+    if not path or not file_store.exists(path):
+        abort(404)
+    resp = send_file(path, max_age=0)
+    resp.headers['Cache-Control'] = 'private, no-cache'
+    return resp
+
+
+@app.route('/admin/settings/payment-qr', methods=['POST'])
+@admin_required
+def admin_payment_qr():
+    """Upload (or remove) the QR code customers scan to pay the shop."""
+    from services.upload_service import check_file, strip_jpeg_metadata
+    row = SystemSetting.query.filter_by(setting_key=PAYMENT_QR_SETTING).first()
+    old = payment_qr_file()
+    back = url_for('admin_settings') + '#payments'
+    if request.form.get('remove'):
+        if row:
+            row.value = ''
+            db.session.commit()
+        if old:
+            file_store.removed(os.path.join(app.config['PAYMENT_QR_FOLDER'], old))
+        log_activity(session.get('user_id'), 'settings_update', 'Removed the payment QR code')
+        flash('Payment QR code removed. Customers see the account name and number only.', 'success')
+        return redirect(back)
+    upload = request.files.get('payment_qr')
+    if not upload or not upload.filename or (upload.mimetype or '') not in ('image/jpeg', 'image/png', 'image/webp'):
+        flash('Choose the QR code as a JPG, PNG or WEBP image.', 'danger')
+        return redirect(back)
+    ok, checked = check_file(upload, max_bytes=PROOF_MAX_BYTES)
+    if not ok:
+        flash(checked, 'danger')
+        return redirect(back)
+    data, mime, ext, _ = checked
+    if mime == 'image/jpeg':
+        data = strip_jpeg_metadata(data)
+    folder = app.config['PAYMENT_QR_FOLDER']
+    os.makedirs(folder, exist_ok=True)
+    name = f'qr_{secrets.token_hex(8)}{ext}'
+    with open(os.path.join(folder, name), 'wb') as fh:
+        fh.write(data)
+    file_store.saved(os.path.join(folder, name))
+    if row:
+        row.value = name
+        row.updated_at = datetime.utcnow()
+    else:
+        db.session.add(SystemSetting(setting_key=PAYMENT_QR_SETTING, value=name,
+                                     description="The shop's GCash / QR Ph code customers scan to pay"))
+    db.session.commit()
+    if old:
+        file_store.removed(os.path.join(folder, old))
+    log_activity(session.get('user_id'), 'settings_update', 'Uploaded a new payment QR code')
+    flash('Payment QR code saved. Customers see it when they pay a booking fee or a bill.', 'success')
+    return redirect(back)
+
+
+def booking_fee_transaction(booking):
+    """The booking-fee charge of a booking (the latest one), or None."""
+    return Transaction.query.filter(
+        Transaction.transaction_number.like(f'{FEE_TXN_PREFIX}{booking.booking_number}-%'))\
+        .order_by(Transaction.id.desc()).first()
+
+
+def booking_balance(booking):
+    """What is left to pay for a repair: its charges (price, service fee, approved
+    extra work) minus the booking fee paid when booking. Never below zero."""
+    total = Decimal(str(booking.charges()['total']))
+    return max(total - Decimal(booking.booking_fee or 0), Decimal('0')).quantize(Decimal('0.01'))
+
+
+def bill_for(transaction):
+    """The bill behind a repair's balance transaction, line by line, for the
+    customer's Transactions page. None for any other kind of payment."""
+    b = transaction.booking
+    if not b:
+        return None
+    return dict(b.charges(), booking_fee=float(b.booking_fee or 0), balance=float(booking_balance(b)))
+
+
+def booking_of(transaction):
+    """The booking a payment belongs to: its balance, its extra work or its booking fee."""
+    if transaction.booking:
+        return transaction.booking
+    number = extra_work_booking(transaction) or booking_fee_booking(transaction)
+    return Booking.query.filter_by(booking_number=number).first() if number else None
+
+
+def pay_after_repair_block(transaction):
+    """Why this payment can't be sent yet, or None. A repair's bill (and any extra
+    work on it) is paid once the repair is done: Ready for Collection."""
+    if transaction.order or booking_fee_booking(transaction):
+        return None
+    booking = booking_of(transaction)
+    if not booking or booking.status in ('completed', 'released'):
+        return None
+    if booking.status == 'cancelled':
+        return 'This booking was cancelled.'
+    return 'You can pay once the repair is done and your device is ready for collection.'
+
+
+app.jinja_env.globals.update(bill_for=bill_for, pay_after_repair_block=pay_after_repair_block,
+                             booking_of=booking_of, booking_fee_transaction=booking_fee_transaction)
 
 # ==================== TRANSACTION ROUTES ====================
 @app.route('/user/transactions')
 @login_required
 def user_transactions():
     uid = session.get('user_id')
-    transactions = Transaction.query.filter_by(user_id=uid).order_by(Transaction.transaction_date.desc()).all()
+    transactions = Transaction.query.filter_by(user_id=uid).filter(not_an_unpaid_fee_hold())\
+        .order_by(Transaction.transaction_date.desc()).all()
     return render_template('user/transactions.html', transactions=transactions, notifications=_unread_notifs(uid))
  
 @app.route('/user/payments/<int:transaction_id>', methods=['POST'])
@@ -3159,8 +3818,17 @@ def user_payment(transaction_id):
         flash('This payment belongs to a cancelled order.', 'info')
         return redirect(url_for('user_transactions'))
 
+    if nothing_due(transaction):
+        flash('Nothing to pay: your booking fee already covers this bill.', 'info')
+        return redirect(url_for('user_transactions'))
+    blocked = pay_after_repair_block(transaction)
+    if blocked:
+        flash(blocked, 'info')
+        return redirect(url_for('user_transactions'))
+
     payment_method = request.form.get('payment_method') or ''
-    reference = (request.form.get('reference_number') or '').strip()
+    payment_method = LEGACY_BOOKING_METHODS.get(payment_method, payment_method)
+    reference = ' '.join((request.form.get('reference_number') or '').split())
     receipt_file = request.files.get('receipt_image')
 
     # Orders are paid by GCash (or cash on delivery, which needs no submission);
@@ -3172,9 +3840,20 @@ def user_payment(transaction_id):
     if len(reference) > 50:
         flash('The reference number is too long (50 characters at most).', 'danger')
         return redirect(url_for('user_transactions'))
-    if payment_method == 'GCash' and not reference and not (receipt_file and receipt_file.filename):
-        flash('Enter your GCash reference number or upload the receipt.', 'danger')
+    # A GCash / online payment is only checked against a screenshot of it.
+    if payment_method == 'GCash' and not (receipt_file and receipt_file.filename):
+        flash('Attach a screenshot of your GCash payment so we can check it.', 'danger')
         return redirect(url_for('user_transactions'))
+    if payment_method == 'C.A.R' and transaction.order:
+        flash('Please choose a valid payment method.', 'danger')
+        return redirect(url_for('user_transactions'))
+
+    stored = None
+    if receipt_file and receipt_file.filename:
+        stored, problem = save_payment_proof(receipt_file, transaction.transaction_number)
+        if problem:
+            flash(problem, 'danger')
+            return redirect(url_for('user_transactions'))
 
     if payment_method:
         if transaction.order:                    # keep the order and its payment in step
@@ -3186,25 +3865,17 @@ def user_payment(transaction_id):
         if payment_method == 'GCash':
             transaction.gcash_reference = reference
         transaction.reference_number = reference
- 
-    if receipt_file and receipt_file.filename:
-        if not allowed_file(receipt_file.filename):
-            flash('Invalid file format. Please upload JPG, PNG, GIF, or PDF.', 'danger')
-            return redirect(url_for('user_transactions'))
-        extension = receipt_file.filename.rsplit('.', 1)[1].lower()
-        ok, err = validate_uploaded_file(receipt_file, extension)
-        if not ok:
-            flash(err, 'danger')
-            return redirect(url_for('user_transactions'))
-        receipts_dir = app.config['RECEIPT_UPLOAD_FOLDER']
-        os.makedirs(receipts_dir, exist_ok=True)
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        filename = secure_filename(f"receipt_{transaction.transaction_number}_{timestamp}_{secrets.token_hex(4)}.{extension}")
-        receipt_file.save(os.path.join(receipts_dir, filename))
-        file_store.saved(os.path.join(receipts_dir, filename))
-        transaction.receipt_image = filename
-        flash('Receipt uploaded successfully.', 'success')
- 
+    if stored:
+        transaction.receipt_image = stored
+    if payment_method == 'C.A.R':
+        # Cash after repair: nothing to check now, the technician collects it at release.
+        transaction.payment_status = 'pending'
+        transaction.rejection_reason = None
+        transaction.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash('Noted: you will pay in cash at the shop when you collect your device.', 'success')
+        return redirect(url_for('user_transactions'))
+
     transaction.payment_status = 'pending'
     transaction.rejection_reason = None
     transaction.updated_at = datetime.utcnow()
@@ -3218,6 +3889,43 @@ def user_payment(transaction_id):
                   f'{transaction.transaction_number} (₱{float(transaction.amount):,.2f}) was submitted for '
                   f'verification.', 'info')
     flash('Payment submitted. Please wait for admin confirmation.', 'success')
+    return redirect(url_for('user_transactions'))
+
+def needs_receipt(transaction):
+    """A repair payment (bill, extra work or booking fee) paid through PayMongo that has
+    no receipt screenshot yet. Shop orders don't ask for one."""
+    return bool(transaction.payment_method == 'paymongo' and transaction.payment_status == 'confirmed'
+                and not transaction.order and not transaction.receipt_image)
+
+app.jinja_env.globals['needs_receipt'] = needs_receipt
+
+@app.route('/user/payments/<int:transaction_id>/receipt', methods=['POST'])
+@login_required
+def user_payment_receipt(transaction_id):
+    """After paying a repair bill by QR through PayMongo: the screenshot of the receipt
+    from the customer's GCash, Maya or bank app, kept as their proof with the payment."""
+    transaction = Transaction.query.get_or_404(transaction_id)
+    if transaction.user_id != session.get('user_id'):
+        abort(404)
+    if transaction.payment_method != 'paymongo' or transaction.payment_status != 'confirmed' or transaction.order:
+        flash('Pay by QR first; the receipt screenshot is added after the payment goes through.', 'info')
+        return redirect(url_for('user_transactions'))
+    reference = ' '.join((request.form.get('reference_number') or '').split())
+    if len(reference) > 50:
+        flash('The reference number is too long (50 characters at most).', 'danger')
+        return redirect(url_for('user_transactions'))
+    stored, problem = save_payment_proof(request.files.get('receipt_image'), transaction.transaction_number)
+    if problem:
+        flash(problem, 'danger')
+        return redirect(url_for('user_transactions'))
+    old = transaction.receipt_image
+    transaction.receipt_image = stored
+    if reference:
+        transaction.reference_number = reference
+    db.session.commit()
+    if old and old != stored:
+        file_store.removed(os.path.join(app.config['RECEIPT_UPLOAD_FOLDER'], old))
+    flash('Payment received and your receipt screenshot is saved with it. Thank you!', 'success')
     return redirect(url_for('user_transactions'))
 
 LEGACY_RECEIPT_FOLDER = os.path.join('static', 'uploads', 'receipts')
@@ -3236,14 +3944,30 @@ def _paymongo_absolute(endpoint, **values):
 def _paymongo_back_page(transaction, **extra):
     if transaction.order:
         return url_for('user_orders', **extra)
+    if is_fee_hold(transaction):
+        # a booking fee paid before the booking: back to the form (kept in the tab) to finish it
+        return url_for('book_appointment')
     return url_for('user_transactions')
+
+def nothing_due(transaction):
+    """An unpaid repair bill of ₱0: the booking fee already covers the whole repair
+    (for example a ₱150 fee on a ₱150 job). There is nothing to pay, by QR or
+    otherwise; PayMongo can't even make a ₱0 code. The technician's release settles it."""
+    return bool(transaction.payment_status in ('pending', 'rejected') and not transaction.order
+                and Decimal(str(transaction.amount or 0)) <= 0)
+
+app.jinja_env.globals['nothing_due'] = nothing_due
 
 def can_pay_online(transaction):
     """True when this payment may be paid now through PayMongo."""
     if not paymongo_service.is_enabled(app) or transaction.payment_status not in PAYMONGO_PAYABLE:
         return False
+    if nothing_due(transaction):
+        return False
     if (transaction.order and transaction.order.status in ('cancelled', 'completed')) or \
             (transaction.booking and transaction.booking.status == 'cancelled'):
+        return False
+    if pay_after_repair_block(transaction):          # a repair bill waits until the repair is done
         return False
     # A GCash screenshot already waiting for review: paying again would charge twice.
     return not (transaction.payment_status == 'pending' and transaction.receipt_image)
@@ -3405,6 +4129,9 @@ def api_payment_qr(transaction_id):
     transaction = _owned_transaction(transaction_id)
     if transaction.payment_status == 'confirmed':
         return jsonify({'status': 'paid'})
+    if nothing_due(transaction):
+        return jsonify({'status': 'unavailable',
+                        'message': 'Nothing to pay: your booking fee already covers this bill.'}), 400
     if not can_pay_online(transaction):
         return jsonify({'status': 'unavailable', 'message': 'This payment can no longer be paid online.'}), 400
     try:
@@ -3412,6 +4139,10 @@ def api_payment_qr(transaction_id):
     except paymongo_service.PaymongoError as exc:
         app.logger.warning('PayMongo QR failed for %s: %s %s', transaction.transaction_number, exc.status, exc.body)
         return jsonify({'status': 'error', 'message': 'The QR code could not be created. Please try again.'}), 502
+    except Exception:                      # never leave the dialog without an answer
+        db.session.rollback()
+        app.logger.exception('QR payment could not start for %s', transaction.transaction_number)
+        return jsonify({'status': 'error', 'message': 'The QR code could not be created. Please try again.'}), 500
     return jsonify({'status': 'pending', 'qr': details['image'], 'expires_at': details['expires_at'],
                     'amount': f'{float(transaction.amount):,.2f}', 'reference': transaction.transaction_number,
                     'test_url': details['test_url'] if paymongo_service.is_test_mode(app) else '',
@@ -3530,7 +4261,10 @@ def paymongo_cancelled(transaction_id):
     transaction = Transaction.query.get_or_404(transaction_id)
     if transaction.user_id != session.get('user_id'):
         abort(404)
-    flash('Online payment was not completed. You can pay any time with "Pay online".', 'info')
+    if is_fee_hold(transaction):
+        flash('The booking fee payment was not completed. Your form is kept: press Book Now to try again.', 'info')
+    else:
+        flash('Online payment was not completed. You can pay any time with "Pay online".', 'info')
     placed = {'placed': transaction.order.order_number} if transaction.order else {}
     return redirect(_paymongo_back_page(transaction, **placed))
 
@@ -3577,11 +4311,14 @@ app.jinja_env.globals['booking_fee_booking'] = booking_fee_booking
 @app.route('/receipts/<int:transaction_id>/<name>')
 @account_required
 def receipt_file(transaction_id, name):
-    """Serves a receipt only to the customer who uploaded it or to an admin."""
+    """Serves a receipt only to the customer who uploaded it, an admin, or the
+    technician releasing that repair (they check the GCash payment by hand)."""
     transaction = Transaction.query.get_or_404(transaction_id)
     viewer = current_account()
     is_owner = viewer.role == 'customer' and transaction.customer_id == viewer.id
-    if not is_owner and viewer.role != 'admin':
+    booking = booking_of(transaction) if viewer.role == 'technician' else None
+    is_their_job = bool(booking and booking.technician_id == viewer.id)
+    if not is_owner and not is_their_job and viewer.role != 'admin':
         abort(404)
     stored = os.path.basename(transaction.receipt_image or '')
     if not stored or stored != name:
@@ -3701,7 +4438,8 @@ def api_support_bot():
     data = request.get_json(silent=True) or {}
     question = str(data.get('message') or '')[:500]
     details = _inject_site_details()['site']()
-    result = support_bot.answer(question, support_bot.shop_details(details, details.get('booking_fee')))
+    fees = db.session.query(func.min(Service.service_fee), func.max(Service.service_fee))        .filter(Service.is_active.is_(True), Service.service_fee > 0).one()
+    result = support_bot.answer(question, support_bot.shop_details(details, details.get('booking_fee'), fees))
     result['links'] = [{'label': label, 'url': url_for(endpoint)} for label, endpoint in result['links']]
     return jsonify({'success': True, **result})
 
@@ -3864,6 +4602,9 @@ def account_appearance():
                                                 account.avatar_frame_key)
     account.banner = profile_presets.pick(form.get('banner'), profile_presets.BANNERS, account.banner_key)
     db.session.commit()
+    if account.role == 'technician':
+        from services import profile_photo_rule
+        profile_photo_rule.photo_added(account)     # a photo ends the "add your profile photo" notice
     if account.role != 'technician':      # the Tech ID stays the technician's sign-in name
         session['username'] = account.shown_name
     log_activity(account.id, 'profile_update', 'Updated profile look', role=account.role)
@@ -4010,10 +4751,12 @@ def _delete_account_private_rows(account):
     """Rows that only matter to this account. Does not commit."""
     Notification.query.filter_by(user_role=account.role, user_id=account.id).delete()
     ActivityLog.query.filter_by(user_role=account.role, user_id=account.id).delete()
-    if account.role == 'technician' and account.id_document_file:
+    if account.role == 'technician' and (account.id_document_file or account.id_back_file):
         from services.technician_service import delete_id_document
         delete_id_document(account.id_document_file)
+        delete_id_document(account.id_back_file)
         account.id_document_file = account.id_document_mime = None
+        account.id_back_file = account.id_back_mime = None
     if account.role == 'technician':
         TechnicianEmployee.query.filter_by(technician_id=account.id).update(
             {'technician_id': None, 'registered_at': None}, synchronize_session=False)
@@ -5005,7 +5748,7 @@ def get_cached_dashboard_stats():
     total_bookings = Booking.query.count()
     pending_bookings = Booking.query.filter_by(status='pending').count()
     total_transactions = Transaction.query.count()
-    pending_payments = Transaction.query.filter_by(payment_status='pending').count()
+    pending_payments = Transaction.query.filter_by(payment_status='pending').filter(not_an_unpaid_fee_hold()).count()
     total_revenue = db.session.query(db.func.sum(Transaction.amount)).filter_by(payment_status='confirmed').scalar() or 0
 
     users_trend = calculate_trend(Customer, Customer.created_at)
@@ -5037,7 +5780,8 @@ def admin_dashboard():
     recent_bookings = Booking.query.order_by(Booking.created_at.desc()).limit(5).all()
     recent_users = all_accounts()[:5]
     recent_activities = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(10).all()
-    recent_pending_payments = Transaction.query.filter_by(payment_status='pending').order_by(Transaction.transaction_date.desc()).limit(3).all()
+    recent_pending_payments = Transaction.query.filter_by(payment_status='pending').filter(not_an_unpaid_fee_hold())\
+        .order_by(Transaction.transaction_date.desc()).limit(3).all()
 
     return render_template('admin/admin_dashboard.html',
                          total_users=stats['total_users'],
@@ -5502,6 +6246,11 @@ def admin_request_status(booking_id):
         if booking.status != 'pending':
             flash('Only pending requests can be approved.', 'danger')
             return redirect(url_for('admin_requests'))
+        fee_txn = booking_fee_transaction(booking)
+        if fee_txn and fee_txn.payment_status != 'confirmed':
+            flash(f'Confirm the booking fee of {booking.booking_number} under Payments first '
+                  '(check the screenshot against the shop account).', 'danger')
+            return redirect(url_for('admin_requests'))
         tech = Technician.query.filter_by(id=technician_id, is_active=True).first() if technician_id else None
         if not tech:
             flash('Please select a technician before approving.', 'danger')
@@ -5570,8 +6319,11 @@ def admin_tech_verification():
                             request.args.get('page', 1, type=int))
     counts = dict(db.session.query(Technician.verification_status, func.count(Technician.id))
                   .group_by(Technician.verification_status).all())
+    from services import profile_photo_rule
+    photo_overdue = profile_photo_rule.overdue_query().order_by(Technician.photo_notice_at).limit(20).all()
     return render_template('admin/technician_verification.html', techs=techs, pager=pager, counts=counts,
-                           status=status, q=q, statuses=TECH_VERIFICATION_STATUSES)
+                           status=status, q=q, statuses=TECH_VERIFICATION_STATUSES,
+                           photo_overdue=photo_overdue, photo_rule=profile_photo_rule)
 
 @app.route('/admin/technician-verification/<int:tech_id>')
 @admin_required
@@ -5588,22 +6340,36 @@ def admin_tech_verification_detail(tech_id):
         age = today.year - tech.birth_date.year - ((today.month, today.day) < (tech.birth_date.month, tech.birth_date.day))
     open_jobs = Booking.query.filter(Booking.technician_id == tech.id,
                                      Booking.status.in_(REASSIGNABLE_STATUSES)).count()
+    from services import profile_photo_rule
     return render_template('admin/technician_verification_detail.html', tech=tech, actions=actions,
                            has_document=has_document, age=age, open_jobs=open_jobs,
-                           statuses=TECH_VERIFICATION_STATUSES)
+                           statuses=TECH_VERIFICATION_STATUSES, photo_rule=profile_photo_rule)
 
 @app.route('/admin/technician-verification/<int:tech_id>/document')
 @admin_required
 def admin_tech_verification_document(tech_id):
-    """The technician's ID document. Admins only; every view is logged."""
+    """The technician's ID document (?side=back for the back). Admins only; every view is logged."""
     from services.technician_service import send_id_document
     tech = Technician.query.get_or_404(tech_id)
-    resp = send_id_document(tech)
-    log_activity(session.get('user_id'), 'id_document_view', f'Viewed the ID document of {tech.username}')
+    side = 'back' if request.args.get('side') == 'back' else 'front'
+    resp = send_id_document(tech, side)
+    log_activity(session.get('user_id'), 'id_document_view', f'Viewed the ID document ({side}) of {tech.username}')
+    return resp
+
+@app.route('/admin/technician-roster/<int:record_id>/id/<side>')
+@admin_required
+def admin_tech_roster_id_photo(record_id, side):
+    """A photo of the valid ID the admin recorded when hiring. Admins only; every view is logged."""
+    from services.technician_service import send_id_file
+    record = TechnicianEmployee.query.get_or_404(record_id)
+    if side not in ('front', 'back'):
+        abort(404)
+    resp = send_id_file(getattr(record, f'id_{side}_file'), getattr(record, f'id_{side}_mime'), f'id-{side}')
+    log_activity(session.get('user_id'), 'id_document_view', f'Viewed the roster ID photo ({side}) of {record.tech_id}')
     return resp
 
 def _roster_page(form=None, errors=None, edit=None, status_code=200):
-    from services.technician_service import ID_TYPES
+    from services.technician_service import ID_TYPES, IDS_WITH_BACK
     status = request.args.get('status', 'all')
     if status not in ('all', 'waiting', 'registered'):
         status = 'all'
@@ -5620,7 +6386,7 @@ def _roster_page(form=None, errors=None, edit=None, status_code=200):
     total = TechnicianEmployee.query.count()
     registered = TechnicianEmployee.query.filter(TechnicianEmployee.technician_id.isnot(None)).count()
     return render_template('admin/technician_roster.html', records=records, pager=pager, q=q, status=status,
-                           id_types=ID_TYPES, next_id=_next_tech_id(), edit=edit, form=form or {},
+                           id_types=ID_TYPES, ids_with_back=IDS_WITH_BACK, next_id=_next_tech_id(), edit=edit, form=form or {},
                            errors=errors or {}, stats={'total': total, 'registered': registered,
                                                        'waiting': total - registered}), status_code
 
@@ -5638,7 +6404,7 @@ def admin_tech_roster():
 def admin_tech_roster_save(record_id=None):
     from services.technician_service import save_employee
     record = TechnicianEmployee.query.get_or_404(record_id) if record_id else None
-    ok, result = save_employee(request.form, current_account().full_name, record)
+    ok, result = save_employee(request.form, current_account().full_name, record, request.files)
     if not ok:
         return _roster_page(form=request.form, errors=result, edit=record, status_code=400)
     log_activity(session.get('user_id'), 'technician_roster_save',
@@ -5646,6 +6412,20 @@ def admin_tech_roster_save(record_id=None):
     flash(f'{result.tech_id} {"updated" if record else "added"}. '
           + ('' if result.technician_id else 'Give this Tech ID to the technician so they can register.'), 'success')
     return redirect(url_for('admin_tech_roster'))
+
+@app.route('/admin/technician-roster/read-id', methods=['POST'])
+@admin_required
+@limiter.limit('30 per minute')
+def admin_tech_roster_read_id():
+    """Roster: pick the name, birth date, ID type and number out of the text the admin's
+    browser read off a valid ID (services/id_card_reader.py). Only text arrives here, never the photo."""
+    from services import id_card_reader
+    data = request.get_json(silent=True) or {}
+    text = str(data.get('text') or '')[:6000]
+    if not text.strip():
+        return jsonify({'success': False, 'message': 'No text was read from the ID.'}), 422
+    confident = str(data['confident_text'])[:6000] if data.get('confident_text') else None
+    return jsonify({'success': True, 'fields': id_card_reader.read(text, data.get('id_type') or None, confident)})
 
 @app.route('/admin/technician-roster/<int:record_id>/delete', methods=['POST'])
 @admin_required
@@ -5677,7 +6457,29 @@ def admin_tech_verification_decide(tech_id):
     if ok:
         log_activity(session.get('user_id'), f'technician_verification_{action}',
                      f'{TECH_DECISION_LOG[action]} technician {tech.username}')
+        from services import profile_photo_rule
+        if action == 'approve' and profile_photo_rule.applies(tech):
+            profile_photo_rule.send_notice(tech)     # verified without a photo: 2 days to add one
+            message += (' They have been told to add a profile photo of themselves within '
+                        f'{profile_photo_rule.DAYS} days.')
     flash(message, 'success' if ok else 'danger')
+    return redirect(url_for('admin_tech_verification_detail', tech_id=tech.id))
+
+@app.route('/admin/technician-verification/<int:tech_id>/photo-notice', methods=['POST'])
+@admin_required
+def admin_tech_photo_notice(tech_id):
+    """Send a verified technician another 2-day notice to add a profile photo of themselves."""
+    from services import profile_photo_rule
+    tech = Technician.query.get_or_404(tech_id)
+    if not profile_photo_rule.applies(tech):
+        flash(f'{tech.full_name} already has a profile photo.' if tech.avatar_file
+              else 'Only verified technicians are sent this notice.', 'danger')
+        return redirect(url_for('admin_tech_verification_detail', tech_id=tech.id))
+    profile_photo_rule.send_notice(tech, reminder=True)
+    log_activity(session.get('user_id'), 'technician_photo_notice',
+                 f'Sent profile photo notice #{tech.photo_notice_count} to {tech.username}')
+    flash(f'Another notice was sent. {tech.full_name} has until {profile_photo_rule.due_text(tech)} '
+          'to add a profile photo.', 'success')
     return redirect(url_for('admin_tech_verification_detail', tech_id=tech.id))
 
 @app.route('/admin/requests/<int:booking_id>/assign', methods=['POST'])
@@ -5764,9 +6566,13 @@ def api_admin_booking_detail(booking_id):
         'service': {
             'name': service.name if service else 'N/A',
             'price': float(service.price) if service else 0,
+            'service_fee': float(service.service_fee or 0) if service else 0,
             'estimated_hours': service.estimated_hours if service else None,
             'description': service.description if service else None,
         },
+        'customer_received_at': booking.customer_received_at.strftime('%b %d, %Y at %I:%M %p')
+                                if booking.customer_received_at else None,
+        'intake': _admin_intake(booking),
         'technician': {
             'full_name': tech.full_name,
             'phone': tech.phone,
@@ -5788,6 +6594,19 @@ def api_admin_booking_detail(booking_id):
             'gcash_reference': txn.gcash_reference,
         } if txn else None
     })
+
+def _admin_intake(booking):
+    """The device intake record and its photo record, for the admin's booking details."""
+    from models.technician_models import IntakeRecord
+    from blueprints.technician_api import intake_files
+    r = IntakeRecord.query.filter_by(booking_id=booking.id).first()
+    if not r:
+        return None
+    return {'recorded_at': r.recorded_at, 'device_type': r.device_type, 'device_model': r.device_model,
+            'condition': (r.condition or '').title(), 'condition_notes': r.condition_notes,
+            'photos_note': r.photos_note,
+            'photos': [{'url': url_for('admin_upload_file', upload_id=f.id), 'caption': f.caption,
+                        'name': f.original_name} for f in intake_files(booking.id) if f.owner_id == r.id]}
 
 ORDER_TRANSITIONS = {  # current status -> statuses an admin may move it to
     'pending': ('processing', 'cancelled'),
@@ -6014,7 +6833,37 @@ def admin_product_toggle(product_id):
 @admin_required
 def admin_services():
     categories = ServiceCategory.query.order_by(ServiceCategory.display_order, ServiceCategory.name).all()
-    return render_template('admin/services.html', categories=categories)
+    return render_template('admin/services.html', categories=categories, fee_limit=SERVICE_FEE_LIMIT,
+                           fee_min=SERVICE_FEE_MIN, fee_max=SERVICE_FEE_MAX,
+                           editing=request.args.get('edit', type=int), booking_fee=int(current_booking_fee()),
+                           booking_fee_max=BOOKING_FEE_MAX)
+
+BOOKING_FEE_MAX = 5000      # whole pesos; the same limit as Admin > Settings
+
+@app.route('/admin/services/booking-fee', methods=['POST'])
+@admin_required
+def admin_booking_fee():
+    """Change the booking fee customers pay when they book (whole pesos, 0 turns it off).
+    It is the same setting as in Admin > Settings. New bookings use it; bookings already
+    made keep the fee they paid."""
+    raw = (request.form.get('booking_fee') or '').strip()
+    if not raw.isdigit() or int(raw) > BOOKING_FEE_MAX:
+        flash(f'Enter the booking fee in whole pesos, from 0 to {BOOKING_FEE_MAX:,}. Use 0 for no booking fee.', 'danger')
+        return redirect(url_for('admin_services') + '#bookingFee')
+    value = str(int(raw))
+    row = SystemSetting.query.filter_by(setting_key='booking_fee').first()
+    old = row.value if row else str(DEFAULT_BOOKING_FEE)
+    if row:
+        row.value = value
+        row.updated_at = datetime.utcnow()
+    else:
+        db.session.add(SystemSetting(setting_key='booking_fee', value=value,
+                                     description='Booking fee in pesos, deducted from the final bill'))
+    db.session.commit()
+    log_activity(session.get('user_id'), 'settings_update', f'Booking fee changed from PHP {old} to PHP {value}')
+    flash(f'Booking fee set to ₱{int(value):,}. New bookings pay it; existing bookings keep what they paid.'
+          if int(value) else 'Booking fee turned off. New bookings are sent without one.', 'success')
+    return redirect(url_for('admin_services') + '#bookingFee')
 
 def _service_from_form(form):
     name = (form.get('name') or '').strip()
@@ -6026,11 +6875,18 @@ def _service_from_form(form):
     price, err = _decimal_field(form.get('price'), 'Starting price', minimum=1)
     if err:
         return None, err
+    fee_text = (form.get('service_fee') or '').strip()
+    if fee_text == '':
+        fee = Decimal(str(suggested_service_fee(price)))     # left blank: the suggested fee
+    else:
+        fee, err = _decimal_field(fee_text, 'Service fee', minimum=0)
+        if err or fee > SERVICE_FEE_LIMIT:
+            return None, f'Service fee must be a number from 0 to {SERVICE_FEE_LIMIT:,}. Use 0 for no fee.'
     hours, err = _int_field(form.get('estimated_hours') or 1, 'Estimated hours', 1, 200)
     if err:
         return None, err
     devices = [d for d in form.getlist('device_types') if d in BOOKING_DEVICE_KEYS.values() and d]
-    return {'name': name, 'category_id': category.id, 'price': price, 'estimated_hours': hours,
+    return {'name': name, 'category_id': category.id, 'price': price, 'service_fee': fee, 'estimated_hours': hours,
             'description': (form.get('description') or '').strip()[:2000] or None,
             'device_types': ','.join(devices) or None}, None
 
@@ -6063,6 +6919,34 @@ def admin_service_update(service_id):
     flash(f'{service.name} updated. New bookings use the new price.', 'success')
     return redirect(url_for('admin_services'))
 
+@app.route('/admin/services/fees', methods=['POST'])
+@admin_required
+def admin_service_fees():
+    """Set the service fee on many services at once: every service or one category's,
+    either to an amount the admin chooses or to the suggested fee for each price."""
+    scope = request.form.get('scope', 'all')
+    category = None if scope == 'all' else db.session.get(ServiceCategory, int(scope) if scope.isdigit() else 0)
+    if scope != 'all' and not category:
+        flash('Choose which services to update.', 'danger')
+        return redirect(url_for('admin_services'))
+    mode = 'suggested' if request.form.get('mode') == 'suggested' else 'fixed'
+    amount = None
+    if mode == 'fixed':
+        amount, err = _decimal_field((request.form.get('amount') or '').strip(), 'Service fee', minimum=0)
+        if err or amount > SERVICE_FEE_LIMIT:
+            flash(f'Enter a service fee from 0 to {SERVICE_FEE_LIMIT:,}. Use 0 for no fee.', 'danger')
+            return redirect(url_for('admin_services'))
+    services = Service.query.filter_by(category_id=category.id).all() if category else Service.query.all()
+    for svc in services:
+        svc.service_fee = amount if mode == 'fixed' else Decimal(str(suggested_service_fee(svc.price)))
+    db.session.commit()
+    where = f'in {category.name}' if category else 'in every category'
+    what = f'set to ₱{amount:,.2f}' if mode == 'fixed' else 'set to the suggested fee for each price'
+    n = len(services)
+    log_activity(session.get('user_id'), 'service_fees', f'Service fee {what} on {n} services {where}')
+    flash(f'Service fee {what} on {n} {"service" if n == 1 else "services"} {where}.', 'success')
+    return redirect(url_for('admin_services'))
+
 @app.route('/admin/services/<int:service_id>/toggle', methods=['POST'])
 @admin_required
 def admin_service_toggle(service_id):
@@ -6091,6 +6975,68 @@ def admin_category_create():
     db.session.commit()
     flash(f'Category {name} added.', 'success')
     return redirect(url_for('admin_services'))
+
+@app.route('/admin/categories/<int:category_id>', methods=['POST'])
+@admin_required
+def admin_category_update(category_id):
+    """Edit one category at once: its name, icon and description, and the name,
+    starting price, service fee and hours of every service in it. Nothing is
+    saved unless every row is valid."""
+    category = ServiceCategory.query.get_or_404(category_id)
+    form = request.form
+    name = ' '.join((form.get('name') or '').split())
+    if not name or len(name) > 50:
+        flash('Category name is required (max 50 characters).', 'danger')
+        return redirect(url_for('admin_services', edit=category.id) + f'#cat-{category.id}')
+    clash = ServiceCategory.query.filter(ServiceCategory.id != category.id,
+                                         func.lower(ServiceCategory.name) == name.lower()).first()
+    if clash:
+        flash(f'Another category is already called {clash.name}.', 'danger')
+        return redirect(url_for('admin_services', edit=category.id) + f'#cat-{category.id}')
+    icon = (form.get('icon') or category.icon or 'fa-tools').strip()
+    if not re.fullmatch(r'fa-[a-z0-9-]{1,40}', icon):
+        icon = category.icon or 'fa-tools'
+
+    updates, problems = [], []
+    for svc in category.services:
+        sid = svc.id
+        if f'price_{sid}' not in form:          # a service added since the page was opened
+            continue
+        label = (form.get(f'name_{sid}') or '').strip() or svc.name
+        svc_name = ' '.join((form.get(f'name_{sid}') or '').split())
+        if not svc_name or len(svc_name) > 100:
+            problems.append(f'{label}: the name is required (max 100 characters).')
+            continue
+        price, err = _decimal_field(form.get(f'price_{sid}'), 'Starting price', minimum=0)
+        if err:
+            problems.append(f'{label}: {err}')
+            continue
+        fee, err = _decimal_field(form.get(f'fee_{sid}') or '0', 'Service fee', minimum=0, maximum=SERVICE_FEE_LIMIT)
+        if err:
+            problems.append(f'{label}: {err}')
+            continue
+        hours, err = _int_field(form.get(f'hours_{sid}') or svc.estimated_hours or 1, 'Estimated hours', 1, 200)
+        if err:
+            problems.append(f'{label}: {err}')
+            continue
+        updates.append((svc, svc_name, price, fee, hours))
+    if problems:
+        flash('Nothing was saved. ' + ' '.join(problems[:4]) + (' …' if len(problems) > 4 else ''), 'danger')
+        return redirect(url_for('admin_services', edit=category.id) + f'#cat-{category.id}')
+
+    changed = 0
+    for svc, svc_name, price, fee, hours in updates:
+        before = (svc.name, Decimal(svc.price or 0), Decimal(svc.service_fee or 0), svc.estimated_hours)
+        svc.name, svc.price, svc.service_fee, svc.estimated_hours = svc_name, price, fee, hours
+        changed += before != (svc_name, price, fee, hours)
+    category.name, category.icon = name, icon
+    category.description = (form.get('description') or '').strip()[:500] or None
+    db.session.commit()
+    log_activity(session.get('user_id'), 'service_update',
+                 f'Edited category {category.name}: {changed} of {len(updates)} services changed')
+    flash(f'{category.name} saved: {changed} {"service" if changed == 1 else "services"} changed. '
+          'New bookings use the new prices.', 'success')
+    return redirect(url_for('admin_services') + f'#cat-{category.id}')
 
 @app.route('/admin/categories/<int:category_id>/toggle', methods=['POST'])
 @admin_required
@@ -6314,7 +7260,7 @@ def admin_notifications_clear():
 @admin_required
 def admin_payments():
     status, q, page = _list_filters(PAYMENT_STATUSES)
-    query = Transaction.query
+    query = Transaction.query.filter(not_an_unpaid_fee_hold())
     if status != 'all':
         query = query.filter(Transaction.payment_status == status)
     if q:
@@ -6324,7 +7270,7 @@ def admin_payments():
                         Transaction.reference_number.ilike(like), Customer.full_name.ilike(like)))
     transactions, pager = paginate(query.order_by(Transaction.transaction_date.desc(), Transaction.id.desc()), page)
     counts = dict(db.session.query(Transaction.payment_status, func.count(Transaction.id))
-                  .group_by(Transaction.payment_status).all())
+                  .filter(not_an_unpaid_fee_hold()).group_by(Transaction.payment_status).all())
     stats = {'total': sum(counts.values()), **{s: counts.get(s, 0) for s in PAYMENT_STATUSES}}
     return render_template('admin/payment_confirmation.html', transactions=transactions,
                            pager=pager, stats=stats, status=status, q=q)
@@ -7059,15 +8005,37 @@ def _float_between(value, low, high):
 
 # Settings the admin Settings page may write, with their validators.
 # Anything else in the request (including csrf_token) is ignored.
+def default_system_settings():
+    """(key, value, description) for every setting a new install starts with.
+    init_db adds any that are missing; Settings > Reset All Settings restores them."""
+    return [
+        ('system_name', 'DEVTech Computer Services', 'System name displayed throughout'),
+        ('system_email', 'admin@devtech.com', 'Primary system email'),
+        ('default_currency', 'PHP', 'Default currency for transactions'),
+        ('timezone', 'Asia/Manila', 'System timezone'),
+        ('booking_fee', str(DEFAULT_BOOKING_FEE), 'Booking fee in pesos, deducted from the final bill'),
+        ('enable_cod', 'true', 'Enable Cash on Delivery'),
+        # the downtown shop (services/geo.py); change it in Admin > Settings
+        ('contact_address', geo.DEFAULT_SHOP['address'], 'Shop address shown to customers'),
+        ('business_hours', geo.DEFAULT_SHOP['hours'], 'Opening hours shown to customers'),
+        ('shop_latitude', str(geo.DEFAULT_SHOP['lat']), 'Shop pin: in-shop directions and delivery distance'),
+        ('shop_longitude', str(geo.DEFAULT_SHOP['lng']), 'Shop pin: in-shop directions and delivery distance'),
+        ('shop_city', geo.DEFAULT_SHOP['city'], 'Shop city'),
+        ('shop_province', geo.DEFAULT_SHOP['province'], 'Shop province'),
+    ]
+
+
 EDITABLE_SETTINGS = {
     'system_name':      lambda v: 0 < len(v) <= 100,
     'system_email':     lambda v: len(v) <= 120 and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', v),
     'default_currency': lambda v: v in ('PHP', 'USD', 'EUR'),
     'timezone':         lambda v: v in ('Asia/Manila', 'Asia/Singapore', 'America/New_York'),
-    'service_fee':      lambda v: re.fullmatch(r'\d{1,2}(\.\d{1,2})?|100', v),
     # Paid by QR when booking, deducted from the final service bill (whole pesos, 0 = none).
     'booking_fee':      lambda v: re.fullmatch(r'\d{1,4}', v) and int(v) <= 5000,
     'enable_cod':       lambda v: v in ('true', 'false'),
+    # The account behind the shop's payment QR, shown next to it (blank = not shown).
+    'payment_account_name':   lambda v: len(v) <= 80,
+    'payment_account_number': lambda v: len(v) <= 30 and re.fullmatch(r'[0-9+()\- ]*', v),
     # Public business details shown on the home, support and payment pages.
     # Blank means "don't show it" - no placeholder numbers are ever displayed.
     'contact_phone':    lambda v: len(v) <= 40 and re.fullmatch(r'[0-9+()\- ]*', v),
@@ -7087,7 +8055,8 @@ def admin_settings():
     values = {row.setting_key: row.value for row in SystemSetting.query.all()}
     paymongo = {'enabled': paymongo_service.is_enabled(app), 'test_mode': paymongo_service.is_test_mode(app),
                 'webhook': bool(app.config.get('PAYMONGO_WEBHOOK_SECRET'))}
-    return render_template('admin/settings.html', settings=values, paymongo=paymongo)
+    return render_template('admin/settings.html', settings=values, paymongo=paymongo,
+                           deactivated=values.get(SYSTEM_DEACTIVATED) == '1')
 
 @app.route('/admin/settings/update', methods=['POST'])
 @admin_required
@@ -7111,6 +8080,167 @@ def admin_settings_update():
     db.session.commit()
     log_activity(session.get('user_id'), 'settings_update', f'Updated settings: {", ".join(sorted(updates)) or "none"}')
     return jsonify({'success': True, 'message': 'Settings saved.'})
+
+# ==================== SETTINGS: DANGER ZONE ====================
+# Every action is confirmed three times in the browser, and the server checks the
+# last step again: the action's name typed exactly, and the admin's own password.
+
+DANGER_PHRASES = {
+    'reset': 'RESET ALL SETTINGS',
+    'clear': 'CLEAR ALL DATA',
+    'deactivate': 'DEACTIVATE SYSTEM',
+    'reactivate': 'REACTIVATE SYSTEM',
+}
+SYSTEM_DEACTIVATED, SYSTEM_DEACTIVATED_AT, SYSTEM_DEACTIVATED_BY = (
+    'system_deactivated', 'system_deactivated_at', 'system_deactivated_by')
+
+# "Clear All Data" empties these, children before parents. Accounts, services,
+# products, the technician roster, settings and the activity log are kept.
+ACTIVITY_TABLES = ('refunds', 'transactions', 'tech_uploaded_files', 'tech_job_logs', 'tech_approval_requests',
+                   'tech_service_reports', 'tech_intake_records', 'tech_incident_reports', 'service_ratings',
+                   'support_messages', 'support_tickets', 'message_attachments', 'messages', 'notifications',
+                   'order_items', 'orders', 'contact_inquiries', 'bookings')
+
+
+def system_deactivated():
+    """True while Settings > Deactivate System (maintenance mode) is on."""
+    try:
+        row = SystemSetting.query.filter_by(setting_key=SYSTEM_DEACTIVATED).first()
+        return bool(row and row.value == '1')
+    except Exception:
+        db.session.rollback()
+        return False          # no database yet (fresh install): not deactivated
+
+
+def _put_setting(key, value, description=None):
+    row = SystemSetting.query.filter_by(setting_key=key).first()
+    if row:
+        row.value, row.updated_at = value, datetime.utcnow()
+    else:
+        db.session.add(SystemSetting(setting_key=key, value=value, description=description))
+
+
+def _danger_refused(action):
+    """The final check, repeated on the server. None when it passes."""
+    data = request.get_json(silent=True) or {}
+    if (data.get('phrase') or '').strip() != DANGER_PHRASES[action]:
+        return jsonify({'success': False, 'field': 'phrase',
+                        'message': f'Type {DANGER_PHRASES[action]} exactly as shown to confirm.'}), 422
+    admin = current_account()
+    if not admin or not admin.check_password(str(data.get('password') or '')):
+        log_activity(session.get('user_id'), 'system_action_refused', f'Wrong password for the Danger Zone action: {action}')
+        return jsonify({'success': False, 'field': 'password', 'message': 'That password is not correct.'}), 422
+    return None
+
+
+@app.route('/admin/system/reset-settings', methods=['POST'])
+@admin_required
+@limiter.limit('10 per 10 minutes')
+def admin_system_reset_settings():
+    refused = _danger_refused('reset')
+    if refused:
+        return refused
+    # Only what admins can edit is reset; maintenance mode and internal flags stay.
+    SystemSetting.query.filter(SystemSetting.setting_key.in_(list(EDITABLE_SETTINGS))).delete(synchronize_session=False)
+    for key, value, description in default_system_settings():
+        _put_setting(key, value, description)
+    db.session.commit()
+    log_activity(session.get('user_id'), 'system_reset_settings', 'Reset all settings to their defaults')
+    return jsonify({'success': True, 'message': 'All settings were reset to their defaults.'})
+
+
+@app.route('/admin/system/clear-data', methods=['POST'])
+@admin_required
+@limiter.limit('10 per 10 minutes')
+def admin_system_clear_data():
+    refused = _danger_refused('clear')
+    if refused:
+        return refused
+    from models.technician_models import UploadedFile
+    from services.upload_service import path_for
+    # The files go only once the rows are gone, so a failed delete never leaves records without their files.
+    tech_files = [path_for(f) for f in UploadedFile.query.all()]
+    message_files = [os.path.join(app.config['MESSAGE_UPLOAD_FOLDER'], a.filename) for a in MessageAttachment.query.all()]
+    receipt_files = [os.path.join(app.config['RECEIPT_UPLOAD_FOLDER'], os.path.basename(t.receipt_image))
+                     for t in Transaction.query.filter(Transaction.receipt_image.isnot(None)).all()]
+    counts = {}
+    try:
+        db.session.execute(text('UPDATE messages SET parent_id = NULL'))   # messages point at each other
+        for table in ACTIVITY_TABLES:
+            counts[table] = db.session.execute(text(f'DELETE FROM {table}')).rowcount
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Clear all data failed')
+        return jsonify({'success': False, 'message': 'Nothing was deleted: the database refused. Try again.'}), 500
+    for path in tech_files + message_files + receipt_files:
+        try:
+            file_store.removed(path)
+        except Exception:
+            app.logger.warning('Could not remove %s', path)
+    log_activity(session.get('user_id'), 'system_clear_data',
+                 f"Cleared all activity data: {counts['bookings']} bookings, {counts['messages']} messages, "
+                 f"{counts['support_tickets']} support chats, {counts['orders']} orders, "
+                 f"{len(tech_files) + len(message_files) + len(receipt_files)} files")
+    return jsonify({'success': True, 'counts': counts,
+                    'message': f"All activity was cleared: {counts['bookings']} bookings, {counts['orders']} orders, "
+                               f"{counts['messages']} messages and {counts['support_tickets']} support chats. "
+                               'Accounts, services, products and settings were kept.'})
+
+
+@app.route('/admin/system/deactivate', methods=['POST'])
+@admin_required
+@limiter.limit('10 per 10 minutes')
+def admin_system_deactivate():
+    refused = _danger_refused('deactivate')
+    if refused:
+        return refused
+    _put_setting(SYSTEM_DEACTIVATED, '1', 'Maintenance mode: only admins can use the system')
+    _put_setting(SYSTEM_DEACTIVATED_AT, datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
+    _put_setting(SYSTEM_DEACTIVATED_BY, current_account().full_name or 'Admin')
+    db.session.commit()
+    log_activity(session.get('user_id'), 'system_deactivate', 'Deactivated the system (maintenance mode on)')
+    return jsonify({'success': True, 'message': 'The system is deactivated. Customers and technicians now see a '
+                                                'maintenance page; admins keep access.'})
+
+
+@app.route('/admin/system/reactivate', methods=['POST'])
+@admin_required
+@limiter.limit('10 per 10 minutes')
+def admin_system_reactivate():
+    refused = _danger_refused('reactivate')
+    if refused:
+        return refused
+    SystemSetting.query.filter(SystemSetting.setting_key.in_(
+        [SYSTEM_DEACTIVATED, SYSTEM_DEACTIVATED_AT, SYSTEM_DEACTIVATED_BY])).delete(synchronize_session=False)
+    db.session.commit()
+    log_activity(session.get('user_id'), 'system_reactivate', 'Reactivated the system (maintenance mode off)')
+    return jsonify({'success': True, 'message': 'The system is active again. Customers and technicians can use it.'})
+
+
+@app.before_request
+def _maintenance_gate():
+    """Deactivate System (maintenance mode): customers, technicians and visitors get an
+    "offline" page. Admins keep full access so they can turn it back on."""
+    path = request.path
+    if (path.startswith(('/static/', '/admin', '/api/admin/')) or path in ('/logout', '/favicon.ico')
+            or session.get('role') == 'admin' or not system_deactivated()):
+        return None
+    name = (_setting_values('system_name').get('system_name') or 'DEVTech Computer Services')
+    message = f'{name} is temporarily offline for maintenance. Please try again later.'
+    if path.startswith(('/api/', '/technician/api/')) or request.is_json or \
+            request.accept_mimetypes.best == 'application/json':
+        return jsonify({'ok': False, 'success': False, 'message': message, 'reason': message}), 503
+    resp = make_response(render_template('errors/maintenance.html', name=name, message=message), 503)
+    resp.headers['Retry-After'] = '3600'
+    return resp
+
+
+@app.context_processor
+def _inject_system_state():
+    """system_deactivated() for the admin layout banner and the Settings page."""
+    return {'system_deactivated': system_deactivated, 'danger_phrases': DANGER_PHRASES}
+
 
 # ==================== ERROR HANDLERS ====================
 
@@ -7187,6 +8317,8 @@ def init_db():
         add_paymongo_columns()
         add_service_device_column()
         add_support_chat_columns()
+        add_service_fee_and_receipt_columns()
+        add_id_back_and_address_columns()
         
         # No default admin is ever created here. Create one with
         # `flask --app app create-admin` (or /setup/first-admin with SETUP_TOKEN).
@@ -7205,22 +8337,7 @@ def init_db():
         # Add each default that is missing (never overwrites an admin's value).
         # Checked per key, not "table is empty", because migration flags such
         # as CART_STOCK_MIGRATION_KEY also live in this table.
-        default_settings = [
-            ('system_name', 'DEVTech Computer Services', 'System name displayed throughout'),
-            ('system_email', 'admin@devtech.com', 'Primary system email'),
-            ('default_currency', 'PHP', 'Default currency for transactions'),
-            ('timezone', 'Asia/Manila', 'System timezone'),
-            ('service_fee', '5', 'Service fee percentage'),
-            ('booking_fee', str(DEFAULT_BOOKING_FEE), 'Booking fee in pesos, deducted from the final bill'),
-            ('enable_cod', 'true', 'Enable Cash on Delivery'),
-            # the downtown shop (services/geo.py); change it in Admin > Settings
-            ('contact_address', geo.DEFAULT_SHOP['address'], 'Shop address shown to customers'),
-            ('business_hours', geo.DEFAULT_SHOP['hours'], 'Opening hours shown to customers'),
-            ('shop_latitude', str(geo.DEFAULT_SHOP['lat']), 'Shop pin: in-shop directions and delivery distance'),
-            ('shop_longitude', str(geo.DEFAULT_SHOP['lng']), 'Shop pin: in-shop directions and delivery distance'),
-            ('shop_city', geo.DEFAULT_SHOP['city'], 'Shop city'),
-            ('shop_province', geo.DEFAULT_SHOP['province'], 'Shop province'),
-        ]
+        default_settings = default_system_settings()
         existing_keys = {s.setting_key for s in SystemSetting.query.all()}
         missing = [SystemSetting(setting_key=k, value=v, description=d)
                    for k, v, d in default_settings if k not in existing_keys]
@@ -7253,6 +8370,6 @@ if __name__ == '__main__':
         init_db()
         
     dev_host = os.environ.get('DEV_HOST', '127.0.0.1')
-    # DEV_SSL=1 serves a self-signed HTTPS cert (needed for OAuth callbacks).
+    # DEV_SSL=1 serves a self-signed HTTPS cert.
     ssl_context = 'adhoc' if os.environ.get('DEV_SSL') == '1' else None
     app.run(debug=app.config['DEBUG'], host=dev_host, port=5000, ssl_context=ssl_context)

@@ -155,6 +155,23 @@
 
                 </div>
 
+                {% from 'partials/avatar.html' import avatar %}
+                <div class="tech-customer-id">
+                    {% if job.user and job.user.avatar_file %}
+                    <a href="{{ job.user.avatar_url }}" target="_blank" rel="noopener" title="Open the full photo">{{ avatar(job.user, 'lg') }}</a>
+                    {% else %}
+                    {{ avatar(job.user, 'lg') }}
+                    {% endif %}
+                    <small>
+                        <i class="fas fa-camera" aria-hidden="true"></i>
+                        {% if job.user and job.user.avatar_file %}
+                        Their profile photo. Use it to recognise them at drop-off, pickup or a home visit.
+                        {% else %}
+                        This customer has not added a profile photo.
+                        {% endif %}
+                    </small>
+                </div>
+
                 <div class="tech-kv">
 
                     <div class="tech-kv-item">
@@ -190,8 +207,13 @@
                     </div>
 
                     <div class="tech-kv-item">
-                        <span class="tech-kv-key">Amount</span>
+                        <span class="tech-kv-key">Starting price</span>
                         <span class="tech-kv-val">₱{{ '%.2f'|format(job.service.price) }}</span>
+                    </div>
+
+                    <div class="tech-kv-item">
+                        <span class="tech-kv-key">Service fee</span>
+                        <span class="tech-kv-val">₱{{ '%.2f'|format(job.service.service_fee or 0) }}</span>
                     </div>
 
                     <div class="tech-kv-item">
@@ -369,6 +391,22 @@
                         </div>
                     {% endif %}
 
+                    {% if intake_photos %}
+                        <div>
+                            <span class="tech-kv-key">Photo record ({{ intake_photos|length }})</span>
+                            <ul class="tech-intake-photos">
+                                {% for f in intake_photos %}
+                                <li>
+                                    <a href="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" target="_blank" rel="noopener">
+                                        <img src="{{ url_for('technician_api.serve_upload', upload_id=f.id) }}" alt="{{ f.caption or f.original_name }}" loading="lazy">
+                                    </a>
+                                    {% if f.caption %}<small>{{ f.caption }}</small>{% endif %}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+
                 {% else %}
 
                     <p style="
@@ -489,10 +527,27 @@
                                 value="{{ csrf_token() }}"
                             >
 
+                            {% if reqs.awaiting_customer %}
+                            <p class="tech-hint" style="margin:0 0 0.55rem;">
+                                <i class="fas fa-hourglass-half"></i> Waiting for the customer to confirm they received the device.
+                                This page updates by itself when they do.
+                            </p>
+                            {% endif %}
                             {% if reqs.cash_due is not none %}
                             <label class="tech-check" style="margin-bottom:0.55rem;">
-                                <input type="checkbox" name="cash_received" value="1">
+                                <input type="checkbox" name="cash_received" value="1" {% if reqs.awaiting_customer %}disabled{% endif %}>
                                 <span>I collected ₱{{ '{:,.2f}'.format(reqs.cash_due) }} cash from the customer</span>
+                            </label>
+                            {% endif %}
+                            {% if reqs.proof_due %}
+                            <div class="tech-proof">
+                                <a class="tech-btn tech-btn--ghost" href="{{ reqs.proof_due.url }}" target="_blank" rel="noopener">
+                                    <i class="fas fa-image"></i> Open the payment screenshot</a>
+                                {% if reqs.proof_due.reference %}<small>Reference no. {{ reqs.proof_due.reference }}</small>{% endif %}
+                            </div>
+                            <label class="tech-check" style="margin-bottom:0.55rem;">
+                                <input type="checkbox" name="payment_verified" value="1" {% if reqs.awaiting_customer %}disabled{% endif %}>
+                                <span>I checked that ₱{{ '{:,.2f}'.format(reqs.proof_due.amount) }} reached the shop's GCash account</span>
                             </label>
                             {% endif %}
 
@@ -500,6 +555,8 @@
                                 class="tech-btn tech-btn--primary tech-btn--wide"
                                 style="justify-content:flex-start;"
                                 type="submit"
+                                {% if reqs.awaiting_customer %}disabled{% endif %}
+                                {% if reqs.next == 'released' %}data-confirm-title="Release the device to the customer?" data-confirm="The repair is marked as released and the customer is notified." data-confirm-ok="Release device"{% endif %}
                             >
                                 <i class="fas fa-{{ 'hand-holding-heart' if reqs.next == 'released' else 'forward' }}"></i>
                                 {{ 'Release device to customer' if reqs.next == 'released' else 'Advance to ' ~ reqs.next_label }}

@@ -4,6 +4,7 @@ import json
 from datetime import date, timedelta
 
 from app import db, Booking, Service, ServiceCategory, shop_location
+from tests.conftest import payment_proof
 from services import geo
 
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
@@ -38,7 +39,8 @@ def _book_home(client, lat, lng):
     return client.post('/user/service-request', data={
         'service_id': str(svc.id), 'device_type': 'Laptop', 'problem_description': 'The laptop does not turn on at all since yesterday',
         'booking_date': TOMORROW, 'booking_time': '10:00', 'service_address': '12 Real Street, Tacloban City',
-        'pinned_lat': str(lat), 'pinned_lng': str(lng), 'payment_method': 'C.A.R', 'accept_terms': 'on'})
+        'pinned_lat': str(lat), 'pinned_lng': str(lng), 'payment_method': 'C.A.R', 'accept_terms': 'on',
+        'fee_receipt': payment_proof()})
 
 
 def test_home_service_outside_the_city_line_is_refused(customer_logged_in):

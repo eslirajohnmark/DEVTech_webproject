@@ -1,6 +1,8 @@
-/* Service report photos: choose files, take a photo (phones), drop them, or paste
-   a screenshot. Each upload goes straight to /technician/api/uploads and shows up
-   with a note field (saved with the report) and a remove button. */
+/* Photos on a service report or a device intake record: choose files, take a photo
+   (phones), drop them, or paste a screenshot. Each upload goes straight to
+   /technician/api/uploads and shows up with a note field (saved with the form) and a
+   remove button. Settings on #rpDrop: data-owner-type (report | intake), data-form
+   (the form the notes belong to, if they sit outside it) and data-noun ("report"). */
 (function () {
     'use strict';
     const drop = document.getElementById('rpDrop');
@@ -11,6 +13,9 @@
     const status = document.getElementById('rpStatus');
     const job = drop.dataset.job;
     const max = parseInt(drop.dataset.max, 10) || 12;
+    const ownerType = drop.dataset.ownerType || 'report';
+    const formId = drop.dataset.form === undefined ? 'reportForm' : drop.dataset.form;
+    const noun = drop.dataset.noun || 'report';
     const csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
     const TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     let busy = 0;
@@ -57,7 +62,7 @@
         const cap = document.createElement('input');
         cap.className = 'tech-input rp-caption';
         cap.name = 'caption_' + f.id;
-        cap.setAttribute('form', 'reportForm');
+        if (formId) cap.setAttribute('form', formId);
         cap.maxLength = 255;
         cap.placeholder = 'What does this show? e.g. Before: cracked panel';
         cap.setAttribute('aria-label', 'Note for ' + f.originalName);
@@ -82,7 +87,7 @@
         }
         const room = max - list.children.length - busy;
         if (room <= 0) {
-            say(`A report can have up to ${max} photos. Remove one to add another.`, true);
+            say(`A ${noun} can have up to ${max} photos. Remove one to add another.`, true);
             return;
         }
         const batch = images.slice(0, room);
@@ -93,7 +98,7 @@
             const file = await shrink(original);
             const form = new FormData();
             form.append('file', file, file.name || 'screenshot.png');
-            form.append('ownerType', 'report');
+            form.append('ownerType', ownerType);
             form.append('ownerId', '');
             form.append('jobId', job);
             try {
@@ -108,7 +113,7 @@
             }
             busy -= 1;
         }
-        if (images.length > batch.length) failed = `Only ${max} photos fit in one report.`;
+        if (images.length > batch.length) failed = `Only ${max} photos fit in one ${noun}.`;
         say(failed ? `${done} added. ${failed}` : `${done} photo${done === 1 ? '' : 's'} added. Add a note to each, then save.`, !!failed);
         const first = list.lastElementChild && list.lastElementChild.querySelector('.rp-caption');
         if (done && first) first.focus();

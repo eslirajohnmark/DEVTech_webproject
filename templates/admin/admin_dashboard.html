@@ -399,6 +399,10 @@
                             <span>₱${b.service.price.toFixed(2)}</span>
                         </div>
                         <div class="admin-detail-item">
+                            <label>Service Fee</label>
+                            <span>₱${(b.service.service_fee || 0).toFixed(2)}</span>
+                        </div>
+                        <div class="admin-detail-item">
                             <label>Est. Duration</label>
                             <span>${b.service.estimated_hours ? b.service.estimated_hours + ' hr(s)' : 'N/A'}</span>
                         </div>

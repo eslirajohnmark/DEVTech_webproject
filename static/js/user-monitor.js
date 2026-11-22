@@ -43,21 +43,72 @@
         return out;
     }
 
-    // The technician's certificates / achievements, each opening in a new tab.
-    function credentialsBlock(list) {
-        if (!list || !list.length) return '';
-        return '<div class="usr-contact-title">Certificates &amp; achievements</div>' +
-            '<ul class="usr-cred-list">' +
-            list.map(function (c) {
-                return '<li><a href="' + esc(c.url) + '" target="_blank" rel="noopener">' +
-                    (c.isImage
-                        ? '<img src="' + esc(c.url) + '" alt="" loading="lazy">'
-                        : '<span class="usr-cred-icon"><i class="fas fa-file-pdf"></i></span>') +
-                    '<span><strong>' + esc(c.title) + '</strong>' +
-                    '<small>' + esc([c.issuer, c.issued].filter(Boolean).join(' · ')) + '</small></span>' +
-                    '</a></li>';
-            }).join('') +
-            '</ul>';
+    // The certificates and achievements the technician posted on their profile, in a section of
+    // their own: images open in a viewer on this page, PDFs in a new tab.
+    function certificatesBlock(tech) {
+        var list = tech.credentials || [];
+        var first = String(tech.name || 'Your technician').split(' ')[0];
+        var body = list.length
+            ? '<ul class="usr-cert-grid">' +
+              list.map(function (c) {
+                  var meta = [c.issuer, c.issued].filter(Boolean).join(' · ');
+                  var inner = (c.isImage
+                          ? '<img src="' + esc(c.url) + '" alt="' + esc(c.title) + '" loading="lazy">'
+                          : '<span class="usr-cert-pdf"><i class="fas fa-file-pdf"></i><small>PDF</small></span>') +
+                      '<span class="usr-cert-text"><strong>' + esc(c.title) + '</strong>' +
+                      (meta ? '<small>' + esc(meta) + '</small>' : '') + '</span>';
+                  return '<li>' + (c.isImage
+                      ? '<button type="button" class="usr-cert" data-cert-view="' + esc(c.url) + '" data-cert-title="' +
+                            esc(c.title) + '" data-cert-meta="' + esc(meta) + '">' + inner + '</button>'
+                      : '<a class="usr-cert" href="' + esc(c.url) + '" target="_blank" rel="noopener">' + inner + '</a>') +
+                      '</li>';
+              }).join('') +
+              '</ul>'
+            : '<p class="usr-cert-empty"><i class="fas fa-certificate"></i> ' + esc(first) +
+              ' has not posted any certificates yet.</p>';
+        return '<section class="usr-panel usr-certs" id="techCerts">' +
+                   '<div class="usr-panel-head">' +
+                       '<h3><i class="fas fa-award"></i> ' + esc(first) + '&rsquo;s certificates' +
+                       (list.length ? ' <span class="usr-cert-count">' + list.length + '</span>' : '') + '</h3>' +
+                   '</div>' +
+                   (list.length ? '<p class="usr-cert-sub">Training and achievements ' + esc(tech.name) +
+                       ' posted on their profile. Select one to view it.</p>' : '') +
+                   body +
+               '</section>';
+    }
+
+    // A viewer for certificate images, opened from the certificates section.
+    var certViewer = null;
+    function viewCertificate(url, title, meta) {
+        if (!certViewer) {
+            certViewer = document.createElement('dialog');
+            certViewer.className = 'usr-cert-viewer';
+            certViewer.innerHTML =
+                '<div class="usr-cert-viewer-head"><div><strong></strong><small></small></div>' +
+                '<button type="button" class="usr-cert-viewer-close" aria-label="Close"><i class="fas fa-xmark"></i></button></div>' +
+                '<img alt="">' +
+                '<a class="g-btn g-btn--quiet usr-cert-viewer-open" target="_blank" rel="noopener">' +
+                '<i class="fas fa-up-right-from-square"></i> Open full size</a>';
+            document.body.appendChild(certViewer);
+            certViewer.querySelector('.usr-cert-viewer-close').addEventListener('click', function () { certViewer.close(); });
+            certViewer.addEventListener('click', function (e) { if (e.target === certViewer) certViewer.close(); });
+        }
+        certViewer.querySelector('strong').textContent = title;
+        certViewer.querySelector('small').textContent = meta;
+        certViewer.querySelector('img').src = url;
+        certViewer.querySelector('img').alt = title;
+        certViewer.querySelector('.usr-cert-viewer-open').href = url;
+        if (certViewer.showModal) certViewer.showModal(); else window.open(url, '_blank', 'noopener');
+    }
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest && e.target.closest('[data-cert-view]');
+        if (btn) viewCertificate(btn.dataset.certView, btn.dataset.certTitle || '', btn.dataset.certMeta || '');
+    });
+
+    // Ask with DEVTech's dialog (static/js/confirm.js), or the browser's own box if it isn't loaded.
+    function ask(title, options) {
+        return window.devtechAsk ? window.devtechAsk(title, options)
+                                 : Promise.resolve(window.confirm(title));
     }
 
     function render(data) {
@@ -194,7 +245,11 @@
                           : '<span>No ratings yet</span>') +
                   '</div>' +
 
-                  credentialsBlock(data.technician.credentials) +
+                  '<a class="usr-cert-jump" href="#techCerts"><i class="fas fa-award"></i> ' +
+                      ((data.technician.credentials || []).length
+                          ? 'View certificates (' + data.technician.credentials.length + ')'
+                          : 'Certificates') +
+                  '</a>' +
 
                   '<div class="usr-contact-title">' +
                       'Contact' +
@@ -690,9 +745,35 @@
               '</section>'
             : '';
 
+        // Ready for collection: the customer confirms they have the device before it can be released.
+        var rc = data.receipt;
+        var receiptBlock = !rc ? '' : rc.canConfirm
+            ? '<section class="usr-receipt usr-receipt--ask" id="receiptCard">' +
+                  '<span class="usr-receipt-icon" aria-hidden="true"><i class="fas fa-box-open"></i></span>' +
+                  '<div class="usr-receipt-text">' +
+                      '<h2>Your device is ready for collection</h2>' +
+                      '<p>When you have your device back and have checked it, confirm it here. ' +
+                      'Your technician can only mark the repair as released after you do.</p>' +
+                  '</div>' +
+                  '<button type="button" class="g-btn g-btn--primary" id="receiptBtn">' +
+                      '<i class="fas fa-circle-check"></i> I received my device</button>' +
+              '</section>'
+            : '<section class="usr-receipt usr-receipt--done">' +
+                  '<span class="usr-receipt-icon" aria-hidden="true"><i class="fas fa-circle-check"></i></span>' +
+                  '<div class="usr-receipt-text">' +
+                      (rc.released
+                          ? '<h2>Device returned</h2><p>You confirmed receiving your device' +
+                                (rc.confirmedAt ? ' on ' + esc(rc.confirmedAt) : '') + ', and the repair is released.</p>'
+                          : '<h2>You confirmed you received your device</h2><p>' +
+                                (rc.confirmedAt ? 'Confirmed on ' + esc(rc.confirmedAt) + '. ' : '') +
+                                'Your technician will now mark the repair as released.</p>') +
+                  '</div>' +
+              '</section>';
+
         root.innerHTML =
             header +
             track +
+            receiptBlock +
             approvalBlock +
 
             '<div class="usr-tri-grid">' +
@@ -700,6 +781,8 @@
                 deviceColumn +
                 activityColumn +
             '</div>' +
+
+            (data.technician ? certificatesBlock(data.technician) : '') +
 
             ratingBlock;
 
@@ -709,6 +792,45 @@
         if (ap) {
             wireApproval(ap);
         }
+        if (rc && rc.canConfirm) {
+            wireReceipt();
+        }
+    }
+
+    function wireReceipt() {
+        var btn = document.getElementById('receiptBtn');
+        if (!btn) {
+            return;
+        }
+        btn.addEventListener('click', function () {
+            ask('Did you receive your device?', {ok: 'Yes, I received it',
+                message: 'Only confirm once the device is in your hands and you have checked it. ' +
+                         'Your technician can then mark the repair as released.'})
+                .then(function (yes) {
+                    if (!yes) {
+                        return;
+                    }
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Confirming...';
+                    fetch('/api/booking/' + bookingId + '/received', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken}
+                    })
+                        .then(function (r) { return r.json(); })
+                        .then(function (d) {
+                            if (!d.ok) {
+                                throw new Error(d.reason || 'Could not confirm. Try again.');
+                            }
+                            load();
+                        })
+                        .catch(function (err) {
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="fas fa-circle-check"></i> I received my device';
+                            window.alert(err.message || 'Could not confirm. Try again.');
+                        });
+                });
+        });
     }
 
     function wireApproval(ap) {
@@ -726,7 +848,16 @@
                 ? 'Approve this work' + (ap.additionalCost > 0
                     ? ' and the extra ₱' + Number(ap.additionalCost).toFixed(2) + ' charge' : '') + '?'
                 : 'Decline this work? The technician will continue with the original repair only.';
-            if (!confirm(question)) {
+            if (btn.dataset.dcAsked !== '1') {
+                var approving = decision === 'approve';
+                ask(question, {ok: approving ? 'Yes, approve' : 'Yes, decline', tone: approving ? '' : 'danger',
+                               message: approving ? 'The technician continues with the extra work.' : ''})
+                    .then(function (yes) {
+                        if (!yes) { return; }
+                        btn.dataset.dcAsked = '1';
+                        btn.click();
+                        delete btn.dataset.dcAsked;
+                    });
                 return;
             }
             form.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
@@ -879,6 +1010,18 @@
             }
 
             if (!ok) {
+                return;
+            }
+
+            if (form.dataset.dcAsked !== '1') {
+                ask('Submit your rating?', {ok: 'Submit rating',
+                    message: 'Your stars and comments go to the shop and to your technician.'})
+                    .then(function (yes) {
+                        if (!yes) { return; }
+                        form.dataset.dcAsked = '1';
+                        form.requestSubmit();
+                        delete form.dataset.dcAsked;
+                    });
                 return;
             }
 
@@ -1068,8 +1211,18 @@
         );
     }
 
-    // Auto-refresh every 45 seconds so the repair
-    // status updates without a manual page reload.
+    // Live: the moment the repair changes (live.js), update this page in place
+    // instead of reloading it; wait while the customer is typing.
+    function loadWhenFree() {
+        if (isTyping()) { setTimeout(loadWhenFree, 1500); return; }
+        load();
+    }
+    document.addEventListener('devtech:live-changed', function (e) {
+        e.preventDefault();
+        loadWhenFree();
+    });
+
+    // Fallback: check again every 45 seconds even without a live signal.
     setInterval(
         function () {
             if (!isTyping()) {

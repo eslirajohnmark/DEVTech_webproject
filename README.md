@@ -20,7 +20,7 @@ Everything shares one database. A job assigned in the admin panel appears instan
 - **Backend** — Flask 3.1, Flask-SQLAlchemy, Flask-WTF (CSRF), Flask-Limiter (rate limits), Flask-Caching, Flask-Talisman (security headers)
 - **Database** — MySQL (production) or SQLite (development)
 - **Frontend** — server-rendered Jinja templates. Vanilla JavaScript as ES modules. No build step. No npm. No bundler.
-- **Auth** — bcrypt password hashing, signed-cookie sessions re-checked against the database on every request, optional Google/Facebook OAuth (customers only, verified email required)
+- **Auth** — bcrypt password hashing, signed-cookie sessions re-checked against the database on every request
 - **Uploads** — type-whitelisted and signature-checked, size-capped, stored under `instance/` and served through authenticated routes only
 
 ---
@@ -74,7 +74,7 @@ python app.py
 
 Open `http://localhost:5000`.
 
-For HTTPS locally (needed for testing Google OAuth callbacks):
+For HTTPS locally:
 
 ```bash
 DEV_SSL=1 python app.py
@@ -198,7 +198,7 @@ What's covered:
 - Login rate limiting (5 attempts per minute)
 - Dynamic config endpoint shape
 - End-to-end workflow: intake → diagnosis → report → release, with the guards between each step
-- Security regressions: script-safe `tojson`, OAuth linking rules, sign-out of deactivated accounts, receipt access, upload signature checks
+- Security regressions: script-safe `tojson`, sign-out of deactivated accounts, receipt access, upload signature checks
 - Shop: cart quantity validation, checkout stock deduction, admin order and payment status sync
 
 ---

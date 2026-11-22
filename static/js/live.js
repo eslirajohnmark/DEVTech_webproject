@@ -7,9 +7,11 @@
      • when the data on this page changed:
          - pages with [data-live-region] elements (message inboxes) swap just those
            parts in place, so a half-written reply is never lost;
-         - other pages refresh themselves once you're idle (not typing, no dialog
-           open, no unsaved form), keeping your scroll position; if you're busy an
-           "Updates available" button appears instead.
+         - a page can update itself in place: it listens for "devtech:live-changed"
+           and calls preventDefault() (Monitor Device does this);
+         - other pages refresh themselves, keeping your scroll position. While you're
+           busy (typing, a dialog open, a form with unsaved changes) the refresh waits
+           and happens by itself the moment you're done - nothing to click.
    A page can opt out of refreshing with {% block live_mode %}self{% endblock %}.
    Works under the technician portal's strict CSP (no inline handlers). */
 (function () {
@@ -22,7 +24,7 @@
     var SCROLLERS = 'main, .user-main-content, .tech-content, .admin-main-content, [data-live-scroll]';
 
     var state, mode, timer = null, inflight = false, stopped = false;
-    var dirty = false, pending = false, chip = null, toastBox = null, baseTitle;
+    var pending = false, chip = null, idleTimer = null, toastBox = null, baseTitle;
 
     function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
 
@@ -153,12 +155,39 @@
     }
 
     // ---------- refreshing the page's data ----------
+    // An open pop-up (a modal, the QR payment dialog, a <dialog>). The pop-up itself may not be
+    // the fixed layer (the QR dialog's card sits inside a fixed overlay), so the nearest
+    // fixed ancestor counts too.
     function openDialog() {
-        return $all('[class*="modal"], [role="dialog"], dialog[open]').some(function (el) {
-            if (el.closest('.live-toasts')) return false;
+        return $all('[class*="modal"], [role="dialog"], [aria-modal="true"], dialog[open]').some(function (el) {
+            if (el.closest('.live-toasts') || el.closest('[hidden]')) return false;
             var cs = getComputedStyle(el);
-            return (cs.position === 'fixed' || el.tagName === 'DIALOG') && cs.display !== 'none' &&
-                cs.visibility !== 'hidden' && parseFloat(cs.opacity) > 0.05 && el.offsetWidth > 0;
+            if (cs.display === 'none' || cs.visibility === 'hidden' || !el.offsetWidth) return false;
+            if (el.tagName === 'DIALOG') return true;
+            for (var n = el; n && n !== document.body; n = n.parentElement) {
+                var ns = getComputedStyle(n);
+                if (ns.position === 'fixed') {
+                    return ns.display !== 'none' && ns.visibility !== 'hidden' && parseFloat(ns.opacity) > 0.05 &&
+                        parseFloat(cs.opacity) > 0.05;
+                }
+            }
+            return false;
+        });
+    }
+    // A form the person changed and hasn't sent yet (compared with how the page loaded,
+    // so undoing a change, or a search box, doesn't count).
+    function unsavedForm() {
+        return $all('form').some(function (form) {
+            if ((form.getAttribute('method') || 'get').toLowerCase() !== 'post' || form.closest('[data-live-ignore]')) return false;
+            return Array.prototype.some.call(form.elements, function (el) {
+                if (!el.name || el.disabled || el.closest('[data-live-ignore]')) return false;
+                if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button') return false;
+                if (el.type === 'file') return el.files && el.files.length > 0;
+                if (el.type === 'checkbox' || el.type === 'radio') return el.checked !== el.defaultChecked;
+                if (el.tagName === 'SELECT') return Array.prototype.some.call(el.options, function (o) {
+                    return o.selected !== o.defaultSelected; });
+                return el.value !== el.defaultValue;
+            });
         });
     }
     function busy() {
@@ -166,27 +195,38 @@
         if (a && a !== document.body && a.matches(
             'textarea, select, [contenteditable=""], [contenteditable="true"], ' +
             'input:not([type=button]):not([type=submit]):not([type=reset]):not([type=checkbox]):not([type=radio])')) return true;
-        if (dirty || openDialog()) return true;
+        if (unsavedForm() || openDialog()) return true;
         // An expanded panel (e.g. "Issue refund", "Mark as refunded") means the user is mid-task.
         if (document.querySelector('main details[open]:not([data-live-ignore])')) return true;
         var sel = window.getSelection && String(window.getSelection());
         return !!(sel && sel.trim());
     }
-    function showChip() {
+    // Busy: say that new information is waiting, and refresh by itself as soon as the
+    // person stops typing, closes the dialog or sends the form.
+    function showWaiting() {
         if (chip) return;
-        chip = document.createElement('button');
-        chip.type = 'button';
+        chip = document.createElement('div');
         chip.className = 'live-chip';
+        chip.setAttribute('role', 'status');
         var i = document.createElement('i');
-        i.className = 'fas fa-rotate';
+        i.className = 'fas fa-rotate fa-spin';
         i.setAttribute('aria-hidden', 'true');
         chip.appendChild(i);
-        chip.appendChild(document.createTextNode(' Updates available · Refresh'));
-        chip.addEventListener('click', function () { saveScroll(); location.reload(); });
+        chip.appendChild(document.createTextNode(' New updates · this page refreshes when you finish'));
         portalRoot().appendChild(chip);
     }
+    function reloadWhenIdle() {
+        if (idleTimer) return;
+        idleTimer = setInterval(function () {
+            if (!pending || busy()) return;
+            clearInterval(idleTimer);
+            idleTimer = null;
+            saveScroll();
+            location.reload();
+        }, 1200);
+    }
     function softReload() {
-        if (busy()) { pending = true; showChip(); return; }
+        if (busy()) { pending = true; showWaiting(); reloadWhenIdle(); return; }
         saveScroll();
         location.reload();
     }
@@ -214,6 +254,9 @@
     }
     function refresh() {
         if (mode === 'self') return;
+        // The page can update itself in place instead of a full refresh.
+        var ev = new CustomEvent('devtech:live-changed', { cancelable: true });
+        if (!document.dispatchEvent(ev)) return;
         if (mode === 'regions') refreshRegions();
         else softReload();
     }
@@ -233,7 +276,7 @@
         setCounts(next);
         var onMessages = /messages/.test(p), onNotifications = /notification/.test(p), onDashboard = /dashboard/.test(p);
         var changed = newS || (newM && (onMessages || onDashboard)) || (newN && (onNotifications || onDashboard));
-        state = { n: next.n, nu: next.nu, m: next.m, mu: next.mu, s: next.s };
+        state = { n: next.n, nu: next.nu, m: next.m, mu: next.mu, s: next.s, b: next.b };
         if (changed) refresh();
         else if (pending && !busy()) { saveScroll(); location.reload(); }
     }
@@ -252,7 +295,8 @@
         var wait = document.visibilityState === 'visible';
         var url = '/api/live?n=' + state.n + '&m=' + state.m;
         if (wait) {
-            url += '&wait=1&nu=' + state.nu + '&mu=' + state.mu + '&s=' + encodeURIComponent(state.s);
+            url += '&wait=1&nu=' + state.nu + '&mu=' + state.mu + '&s=' + encodeURIComponent(state.s) +
+                   '&b=' + encodeURIComponent(state.b || '');
         }
         var ctl = window.AbortController ? new AbortController() : null;
         var giveUp = ctl ? setTimeout(function () { ctl.abort(); }, 40000) : null;
@@ -296,11 +340,6 @@
         restoreScroll();
         replayToasts();
 
-        document.addEventListener('input', function (e) {
-            var t = e.target;
-            if (t && t.matches && t.matches('input, textarea, select') && !t.closest('[data-live-ignore]')) dirty = true;
-        }, true);
-        document.addEventListener('submit', function () { dirty = false; pending = false; }, true);
         document.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'visible') schedule(0);
         });

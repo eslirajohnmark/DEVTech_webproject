@@ -288,7 +288,9 @@ def test_pay_by_qr_is_offered_in_the_shop_and_on_transactions(client, customer, 
     _online_order(client, customer)
     assert 'value="paymongo"' in client.get('/user/shop').get_data(as_text=True)
     txn = Transaction.query.one()
-    assert f'data-pay="{txn.id}"' in client.get('/user/transactions').get_data(as_text=True)
+    page = client.get('/user/transactions').get_data(as_text=True)
+    assert f'data-pay-online="{txn.id}"' in page and 'Pay online (instant)' not in page
+    assert 'data-receipt-action=""' in page                     # shop orders: no receipt step, like the shop
     flask_app.config['PAYMONGO_ENABLED'] = False
     from flask import g
     g.pop('site_details', None)      # the test keeps one app context open across requests
@@ -301,3 +303,181 @@ def test_signature_check_accepts_live_signatures_too():
     sig = hmac.new(b'whsk_x', f'{ts}.'.encode() + body, hashlib.sha256).hexdigest()
     assert paymongo_service.signature_matches('whsk_x', body, f't={ts},te=,li={sig}')
     assert not paymongo_service.signature_matches('whsk_x', body + b' ', f't={ts},te=,li={sig}')
+
+
+# ------------------------------------------------------------------ the booking fee, paid before booking
+
+def _fee_service():
+    from app import Service, ServiceCategory
+    cat = ServiceCategory(name='Repairs', is_active=True)
+    db.session.add(cat)
+    db.session.flush()
+    svc = Service(category_id=cat.id, name='Screen Fix', price=1500, is_active=True, device_types='laptop')
+    db.session.add(svc)
+    db.session.commit()
+    return svc
+
+
+def _submit_booking(client, svc, **extra):
+    from datetime import date, timedelta
+    data = {'service_id': str(svc.id), 'device_type': 'Laptop', 'in_shop': 'on', 'accept_terms': 'on',
+            'booking_date': (date.today() + timedelta(days=1)).isoformat(), 'booking_time': '10:00',
+            'problem_description': 'The laptop screen is cracked after it fell off the table', 'payment_method': 'GCash'}
+    data.update(extra)
+    return client.post('/user/service-request', data={k: v for k, v in data.items() if v is not None},
+                       content_type='multipart/form-data')
+
+
+def test_the_fee_is_paid_by_paymongo_qr_and_proven_by_a_screenshot_before_booking(client, customer, admin, paymongo):
+    from app import Booking, booking_fee_transaction
+    from tests.conftest import payment_proof
+    svc = _fee_service()
+    login_as(client, customer)
+    page = client.get('/user/book').get_data(as_text=True)
+    assert 'data-fee-online="1"' in page and 'name="fee_transaction_id"' in page and 'Submit booking' in page
+
+    # nothing paid yet: the request can't be sent, even with a screenshot
+    _submit_booking(client, svc, fee_receipt=payment_proof())
+    start = client.post('/api/booking-fee', json={'service_id': svc.id}).get_json()
+    assert start['status'] == 'pending' and start['amount'] == '100.00'
+    hold_id = start['transaction_id']
+    _submit_booking(client, svc, fee_transaction_id=str(hold_id), fee_receipt=payment_proof())
+    assert Booking.query.count() == 0
+    assert client.post('/api/booking-fee', json={'service_id': svc.id}).get_json()['transaction_id'] == hold_id
+
+    # an unpaid fee payment is not something for an admin to check
+    login_as(client, admin)
+    assert f'FEE-NEW-{hold_id}' not in client.get('/admin/payments').get_data(as_text=True)
+    login_as(client, customer)
+
+    # scan PayMongo's QR and pay
+    assert client.post(f'/api/payments/{hold_id}/qr').get_json()['amount'] == '100.00'
+    paymongo.scan_and_pay(db.session.get(Transaction, hold_id).paymongo_intent_id)
+    assert client.get(f'/api/payments/{hold_id}/status').get_json()['status'] == 'paid'
+    assert client.post('/api/booking-fee', json={'service_id': svc.id}).get_json()['status'] == 'paid'
+
+    # paid, but no screenshot: still refused
+    _submit_booking(client, svc, fee_transaction_id=str(hold_id))
+    assert Booking.query.count() == 0
+    # paid and the screenshot attached: the booking is sent with the fee on it
+    r = _submit_booking(client, svc, fee_transaction_id=str(hold_id), fee_receipt=payment_proof(),
+                        fee_reference='PM-123')
+    assert '/total-bookings?booked=' in r.headers['Location']          # the page clears the form's draft
+    b = Booking.query.one()
+    fee = booking_fee_transaction(b)
+    assert fee.id == hold_id and fee.transaction_number == f'FEE-{b.booking_number}-{hold_id}'
+    assert (fee.payment_status, fee.receipt_image is not None, fee.gcash_reference) == ('confirmed', True, 'PM-123')
+    assert b.booking_fee == Decimal('100.00') and b.transaction.amount == Decimal('1400.00')
+
+    # the same payment can't pay for a second booking
+    _submit_booking(client, svc, fee_transaction_id=str(hold_id), fee_receipt=payment_proof(), booking_time='11:00')
+    assert Booking.query.count() == 1
+
+
+def test_someone_else_cannot_use_my_paid_booking_fee(client, customer, paymongo):
+    from app import Booking, Customer
+    from tests.conftest import payment_proof
+    svc = _fee_service()
+    login_as(client, customer)
+    hold_id = client.post('/api/booking-fee', json={'service_id': svc.id}).get_json()['transaction_id']
+    client.post(f'/api/payments/{hold_id}/qr')
+    paymongo.scan_and_pay(db.session.get(Transaction, hold_id).paymongo_intent_id)
+    client.get(f'/api/payments/{hold_id}/status')
+    other = Customer(username='other', email='other@test.local', full_name='Other Person', is_active=True)
+    other.set_password('password123')
+    db.session.add(other)
+    db.session.commit()
+    login_as(client, other)
+    _submit_booking(client, svc, fee_transaction_id=str(hold_id), fee_receipt=payment_proof())
+    assert Booking.query.count() == 0
+
+
+def test_returning_from_paymongos_page_with_a_booking_fee_goes_back_to_the_form(client, customer, paymongo):
+    svc = _fee_service()
+    login_as(client, customer)
+    hold_id = client.post('/api/booking-fee', json={'service_id': svc.id}).get_json()['transaction_id']
+    r = client.get(f'/paymongo/cancelled/{hold_id}')
+    assert r.status_code == 302 and r.headers['Location'].endswith('/user/book')
+    page = client.get('/user/book').get_data(as_text=True)
+    assert 'devtech.bookingDraft' in page and 'We kept what you entered' in page
+
+
+
+def test_a_repair_bill_is_paid_by_paymongo_qr_then_the_receipt_is_attached(client, customer, technician, assigned_booking, paymongo):
+    from app import Booking
+    from tests.conftest import payment_proof
+    txn = Transaction(transaction_number='TRX-BILL-1', booking_id=assigned_booking.id, user_id=customer.id, amount=1000,
+                      payment_method='GCash', payment_status='pending')
+    db.session.add(txn)
+    db.session.commit()
+    login_as(client, customer)
+    page = client.get('/user/transactions').get_data(as_text=True)
+    assert f'data-pay-online="{txn.id}"' not in page and 'once the repair is done' in page   # still being repaired
+
+    db.session.get(Booking, assigned_booking.id).status = 'completed'
+    db.session.commit()
+    page = client.get('/user/transactions').get_data(as_text=True)
+    assert f'data-pay-online="{txn.id}"' in page and f'data-gcash="{txn.id}"' not in page     # one way to pay: PayMongo
+    assert 'Pay online (instant)' not in page
+    client.post(f'/user/payments/{txn.id}/receipt', data={'receipt_image': payment_proof()},
+                content_type='multipart/form-data')
+    assert not db.session.get(Transaction, txn.id).receipt_image                               # not paid yet
+    client.post(f'/api/payments/{txn.id}/qr')
+    paymongo.scan_and_pay(db.session.get(Transaction, txn.id).paymongo_intent_id)
+    assert client.get(f'/api/payments/{txn.id}/status').get_json()['status'] == 'paid'
+    assert 'Attach receipt screenshot' in client.get('/user/transactions').get_data(as_text=True)
+    client.post(f'/user/payments/{txn.id}/receipt', data={'receipt_image': payment_proof(), 'reference_number': 'PM-9'},
+                content_type='multipart/form-data')
+    t = db.session.get(Transaction, txn.id)
+    assert (t.payment_status, t.payment_method, t.reference_number) == ('confirmed', 'paymongo', 'PM-9') and t.receipt_image
+    assert 'Attach receipt screenshot' not in client.get('/user/transactions').get_data(as_text=True)
+
+
+def test_a_bill_the_booking_fee_fully_covers_asks_for_nothing_and_the_device_can_be_released(
+        client, customer, technician, assigned_booking, paymongo):
+    """Found while testing: a ₱2 job with a ₱2 booking fee left a ₱0 bill. The page
+    offered "Pay with GCash", PayMongo can't make a ₱0 QR, and the dialog never
+    finished; the technician couldn't release the device either."""
+    from datetime import datetime
+    from app import Booking
+    txn = Transaction(transaction_number='TRX-ZERO-1', booking_id=assigned_booking.id, user_id=customer.id,
+                      amount=0, payment_method='GCash', payment_status='pending')
+    db.session.add(txn)
+    b = db.session.get(Booking, assigned_booking.id)
+    b.status, b.customer_received_at = 'completed', datetime.utcnow()
+    db.session.commit()
+
+    login_as(client, customer)
+    page = client.get('/user/transactions').get_data(as_text=True)
+    assert 'Nothing to pay' in page
+    assert f'data-pay-online="{txn.id}"' not in page and f'data-gcash="{txn.id}"' not in page
+    r = client.post(f'/api/payments/{txn.id}/qr')                 # an old tab still asks: a clear answer, no call to PayMongo
+    assert r.status_code == 400 and 'Nothing to pay' in r.get_json()['message']
+    assert not paymongo.calls
+    client.post(f'/user/payments/{txn.id}', data={'payment_method': 'GCash'})
+    assert db.session.get(Transaction, txn.id).payment_status == 'pending'
+
+    client.get('/logout')
+    login_as(client, technician)
+    r = client.post(f'/technician/api/jobs/{assigned_booking.id}/advance', json={})
+    assert r.get_json()['job']['repairStatus'] == 'released'
+    t = db.session.get(Transaction, txn.id)
+    assert t.payment_status == 'confirmed' and 'booking fee' in t.reviewed_by
+
+
+def test_the_qr_dialog_gets_an_answer_even_when_starting_the_payment_crashes(client, customer, assigned_booking,
+                                                                              paymongo, monkeypatch):
+    import app as app_module
+    from app import Booking
+    txn = Transaction(transaction_number='TRX-CRASH-1', booking_id=assigned_booking.id, user_id=customer.id,
+                      amount=500, payment_method='GCash', payment_status='pending')
+    db.session.add(txn)
+    db.session.get(Booking, assigned_booking.id).status = 'completed'
+    db.session.commit()
+
+    def boom(_):
+        raise ValueError('unexpected')
+    monkeypatch.setattr(app_module, 'start_qr_payment', boom)
+    login_as(client, customer)
+    r = client.post(f'/api/payments/{txn.id}/qr')
+    assert r.status_code == 500 and r.is_json and 'could not be created' in r.get_json()['message']

@@ -406,8 +406,8 @@ function initBookingForm() {
     bookingDate.addEventListener('change', updateSummary);
 
     // ===== RESET FORM =====
-    window.resetForm = function() {
-        if (confirm('Clear all form fields?')) {
+    window.resetForm = async function() {
+        if (await devtechAsk('Clear all form fields?', {ok: 'Clear form', tone: 'danger'})) {
             document.getElementById('device-desktop').checked = true;
             serviceSelect.value = '';
             problemDesc.value = '';

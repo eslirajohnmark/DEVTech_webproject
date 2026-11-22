@@ -1,0 +1,285 @@
+/* ==========================================================================
+   DEVTech staff sign-in (admin + technician): a frosted glass panel over the
+   same circuit board as the home page. The portal sets its accent on <body>:
+   data-portal="admin" (signal blue), data-portal="tech" (tool yellow) or
+   data-portal="customer" (the customer sign-in: blue board with yellow and blue accents).
+   ========================================================================== */
+:root {
+    --sl-accent: #5B8CFF; --sl-accent-rgb: 91, 140, 255; --sl-accent-soft: #9DBBFF;
+    --sl-board-1: #0E2152; --sl-board-2: #0A1430; --sl-board-3: #050A1C;
+    --sl-ink: #06122E;                 /* text on the accent */
+    --sl-text: #EEF3FF; --sl-text-2: #B6C3E2; --sl-muted: #8392B6;
+    --sl-glass: rgba(14, 26, 62, 0.52); --sl-glass-2: rgba(6, 14, 38, 0.62);
+    --sl-edge: rgba(255, 255, 255, 0.12);
+    --sl-ok: #3DD68C; --sl-bad: #FF6B6B;
+    --sl-display: 'Chakra Petch', 'Segoe UI', sans-serif;
+    --sl-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    --sl-chamfer: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+body[data-portal="tech"] {
+    --sl-accent: #FACC15; --sl-accent-rgb: 250, 204, 21; --sl-accent-soft: #FDE68A;
+    --sl-board-1: #18203A; --sl-board-2: #0B1124; --sl-board-3: #04060F;
+    --sl-ink: #161204;
+}
+/* Customers: a royal-blue board, yellow as the accent (button, brand, LED) and blue for the
+   traces, links, borders and focus ring - the admin blue and the technician yellow together. */
+body[data-portal="customer"] {
+    --sl-accent: #FACC15; --sl-accent-rgb: 250, 204, 21; --sl-accent-soft: #FDE68A;
+    --sl-blue: #60A5FA; --sl-blue-rgb: 96, 165, 250;
+    --sl-board-1: #1E3A8A; --sl-board-2: #13245C; --sl-board-3: #0A1233;
+    --sl-ink: #161204;
+    --sl-text-2: #C3D2F2; --sl-muted: #93A6D1;
+    --sl-glass: rgba(17, 33, 84, 0.5); --sl-glass-2: rgba(8, 17, 48, 0.64);
+}
+body[data-portal="customer"].sl-page {
+    background:
+        radial-gradient(38rem 26rem at 22% 30%, rgba(var(--sl-blue-rgb), 0.22), transparent 70%),
+        radial-gradient(30rem 22rem at 82% 78%, rgba(var(--sl-accent-rgb), 0.12), transparent 70%),
+        radial-gradient(circle at 1px 1px, rgba(var(--sl-blue-rgb), 0.18) 1px, transparent 1.5px) 0 0 / 22px 22px,
+        linear-gradient(160deg, var(--sl-board-1) 0%, var(--sl-board-2) 50%, var(--sl-board-3) 100%);
+    background-color: var(--sl-board-2);
+    background-attachment: fixed;
+}
+body[data-portal="customer"] .sl-traces .sl-lines path,
+body[data-portal="customer"] .sl-traces .sl-vias circle { stroke: var(--sl-blue); }
+body[data-portal="customer"] .sl-traces .sl-pads circle { stroke: var(--sl-accent); }
+body[data-portal="customer"] .sl-signal::after { background: linear-gradient(90deg, transparent, var(--sl-blue), var(--sl-accent)); }
+body[data-portal="customer"] .sl-panel::before { border-color: var(--sl-blue); }
+body[data-portal="customer"] .sl-chip { border-color: rgba(var(--sl-blue-rgb), 0.45); }
+body[data-portal="customer"] .sl-chip::before,
+body[data-portal="customer"] .sl-chip::after {
+    background: repeating-linear-gradient(to bottom, rgba(var(--sl-blue-rgb), 0.75) 0 7px, transparent 7px 20px);
+}
+body[data-portal="customer"] .sl-points i { color: var(--sl-blue); box-shadow: inset 0 0 0 1.5px rgba(var(--sl-blue-rgb), 0.55); }
+body[data-portal="customer"] .sl-link { color: #93C5FD; }
+body[data-portal="customer"] .sl-link:hover { color: var(--sl-accent); }
+body[data-portal="customer"] .sl-input input { background: rgba(5, 12, 38, 0.6); }
+body[data-portal="customer"] .sl-input input:hover { border-color: rgba(var(--sl-blue-rgb), 0.5); }
+body[data-portal="customer"] .sl-input input:focus { background: rgba(5, 12, 38, 0.8); border-color: var(--sl-blue);
+    box-shadow: 0 0 0 4px rgba(var(--sl-blue-rgb), 0.22); }
+body[data-portal="customer"] .sl-input:focus-within > i { color: var(--sl-blue); }
+body[data-portal="customer"] .sl-input input::placeholder { color: #7D8FBA; }
+body[data-portal="customer"] .sl-btn--ghost:hover { background: rgba(var(--sl-blue-rgb), 0.16); }
+body[data-portal="customer"] :focus-visible { outline-color: var(--sl-accent); }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body.sl-page {
+    min-height: 100vh; min-height: 100dvh;
+    display: grid; place-items: center;
+    padding: clamp(1rem, 4vw, 2.5rem) 16px;
+    font: 400 1rem/1.55 var(--sl-body); color: var(--sl-text);
+    background:
+        radial-gradient(38rem 26rem at 22% 30%, rgba(var(--sl-accent-rgb), 0.16), transparent 70%),
+        radial-gradient(30rem 22rem at 82% 78%, rgba(var(--sl-accent-rgb), 0.10), transparent 70%),
+        radial-gradient(circle at 1px 1px, rgba(var(--sl-accent-rgb), 0.16) 1px, transparent 1.5px) 0 0 / 22px 22px,
+        linear-gradient(160deg, var(--sl-board-1) 0%, var(--sl-board-2) 50%, var(--sl-board-3) 100%);
+    background-color: var(--sl-board-2);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+}
+button, input { font: inherit; }
+a { color: inherit; }
+h1, h2 { font-family: var(--sl-display); line-height: 1.08; margin: 0; }
+p { margin: 0; }
+:focus-visible { outline: 2px solid var(--sl-accent); outline-offset: 3px; }
+
+/* ---------- board traces behind the glass ---------- */
+.sl-traces { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.sl-traces .sl-lines path {
+    fill: none; stroke: var(--sl-accent); stroke-width: 3; stroke-linejoin: round; opacity: 0.4;
+    stroke-dasharray: 1; stroke-dashoffset: 0;
+    animation: sl-draw 1.6s cubic-bezier(.6, 0, .2, 1) both;
+}
+.sl-traces .sl-lines path:nth-child(2n) { animation-delay: 0.15s; }
+.sl-traces .sl-lines path:nth-child(3n) { animation-delay: 0.3s; }
+.sl-traces .sl-pads circle { fill: var(--sl-board-3); stroke: var(--sl-accent); stroke-width: 4; opacity: 0.65; }
+.sl-traces .sl-vias circle { fill: none; stroke: var(--sl-accent); stroke-width: 2.5; opacity: 0.35; }
+@keyframes sl-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+
+/* ---------- the glass panel ---------- */
+.sl-panel {
+    position: relative; z-index: 1;
+    width: min(1040px, 100%);
+    display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    background: var(--sl-glass);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid var(--sl-edge);
+    border-radius: 22px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 40px 90px -40px rgba(0, 0, 0, 0.8);
+}
+/* HUD corner brackets */
+.sl-panel::before, .sl-panel::after {
+    content: ""; position: absolute; width: 26px; height: 26px; pointer-events: none;
+    border: 2px solid var(--sl-accent); opacity: 0.85;
+}
+.sl-panel::before { top: -7px; left: -7px; border-right: 0; border-bottom: 0; border-top-left-radius: 8px; }
+.sl-panel::after { bottom: -7px; right: -7px; border-left: 0; border-top: 0; border-bottom-right-radius: 8px; }
+
+/* the signal that runs across the top edge once on load */
+.sl-signal { position: absolute; left: 22px; right: 22px; top: -1px; height: 2px; overflow: hidden; border-radius: 2px; }
+.sl-signal::after {
+    content: ""; position: absolute; top: 0; left: -35%; width: 35%; height: 100%;
+    background: linear-gradient(90deg, transparent, var(--sl-accent), var(--sl-accent-soft));
+    animation: sl-signal 1.1s 0.9s ease-out both;
+}
+@keyframes sl-signal { 0% { left: -35%; opacity: 1; } 99% { opacity: 1; } 100% { left: 100%; opacity: 0; } }
+
+/* ---------- left: what this portal is ---------- */
+.sl-intro {
+    display: flex; flex-direction: column; gap: 1.6rem;
+    padding: clamp(1.75rem, 4vw, 3rem);
+    border-right: 1px solid var(--sl-edge);
+}
+.sl-brand { display: inline-flex; align-items: center; gap: 0.7rem; text-decoration: none; }
+.sl-brand-mark {
+    display: grid; place-items: center; width: 42px; height: 42px;
+    background: var(--sl-accent); color: var(--sl-ink); font-size: 1.15rem; clip-path: var(--sl-chamfer);
+}
+.sl-brand-word { display: flex; flex-direction: column; line-height: 1.1; }
+.sl-brand-word strong { font: 700 1.4rem var(--sl-display); color: var(--sl-text); }
+.sl-brand-word strong b { color: var(--sl-accent); font-weight: 700; }
+.sl-brand-word small { font-size: 0.82rem; color: var(--sl-muted); }
+
+.sl-title { font-size: clamp(2rem, 3.6vw, 2.9rem); font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.sl-lead { margin-top: 0.85rem; max-width: 30rem; color: var(--sl-text-2); font-size: 1.02rem; }
+
+.sl-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.7rem; }
+.sl-points li {
+    display: flex; align-items: center; gap: 0.8rem;
+    padding: 0.7rem 0.9rem; font-size: 0.93rem; color: var(--sl-text-2);
+    background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 12px;
+}
+.sl-points i {
+    flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+    color: var(--sl-accent); font-size: 0.85rem;
+    box-shadow: inset 0 0 0 1.5px rgba(var(--sl-accent-rgb), 0.5);
+}
+.sl-intro-foot { margin-top: auto; display: flex; align-items: center; gap: 0.5rem; font-size: 0.86rem; color: var(--sl-muted); }
+.sl-intro-foot a { color: var(--sl-text-2); text-decoration: none; }
+.sl-intro-foot a:hover { color: var(--sl-accent); }
+
+/* ---------- right: the form, seated like a chip in a socket ---------- */
+.sl-socket { position: relative; display: grid; align-items: center; padding: clamp(1.25rem, 3vw, 2.25rem) clamp(1.5rem, 3vw, 2.5rem); }
+.sl-chip {
+    position: relative;
+    padding: 1.6rem 1.5rem 1.4rem;
+    background: var(--sl-glass-2);
+    border: 1px solid rgba(var(--sl-accent-rgb), 0.28);
+    border-radius: 14px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+/* pins down both sides */
+.sl-chip::before, .sl-chip::after {
+    content: ""; position: absolute; top: 48px; bottom: 48px; width: 9px;
+    background: repeating-linear-gradient(to bottom, rgba(var(--sl-accent-rgb), 0.7) 0 7px, transparent 7px 20px);
+}
+.sl-chip::before { left: -10px; border-radius: 2px 0 0 2px; }
+.sl-chip::after { right: -10px; border-radius: 0 2px 2px 0; }
+
+.sl-chip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.4rem; }
+.sl-chip-head h2 { font-size: 1.65rem; font-weight: 700; }
+.sl-chip-head p { margin-top: 0.3rem; font-size: 0.9rem; color: var(--sl-text-2); }
+.sl-led {
+    flex: none; margin-top: 0.5rem; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--sl-accent); box-shadow: 0 0 0 4px rgba(var(--sl-accent-rgb), 0.18), 0 0 12px var(--sl-accent);
+}
+
+/* messages */
+.sl-flash {
+    display: flex; align-items: flex-start; gap: 0.55rem; margin: 0 0 1rem; padding: 0.65rem 0.8rem;
+    border-radius: 10px; font-size: 0.88rem; line-height: 1.45;
+    background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.32); color: #FFB3B3;
+}
+.sl-flash i { margin-top: 0.15rem; color: var(--sl-bad); }
+.sl-flash.is-ok { background: rgba(61, 214, 140, 0.1); border-color: rgba(61, 214, 140, 0.32); color: #A6F0CB; }
+.sl-flash.is-ok i { color: var(--sl-ok); }
+.sl-flash.is-info { background: rgba(var(--sl-accent-rgb), 0.1); border-color: rgba(var(--sl-accent-rgb), 0.32); color: var(--sl-text); }
+.sl-flash.is-info i { color: var(--sl-accent); }
+.sl-flash-close { margin-left: auto; padding: 0 0.2rem; background: none; border: 0; color: inherit; opacity: 0.7; cursor: pointer; font-size: 1.1rem; line-height: 1; }
+.sl-flash-close:hover { opacity: 1; }
+
+/* fields */
+.sl-field { margin-bottom: 1rem; }
+.sl-field label { display: block; margin-bottom: 0.4rem; font-size: 0.86rem; font-weight: 600; color: var(--sl-text-2); }
+.sl-field .req { color: var(--sl-bad); margin-left: 0.1rem; }
+.sl-input { position: relative; display: flex; align-items: center; }
+.sl-input > i { position: absolute; left: 0.95rem; color: var(--sl-muted); font-size: 0.95rem; pointer-events: none; transition: color 0.15s ease; }
+.sl-input input {
+    width: 100%; min-height: 48px; padding: 0.7rem 3rem 0.7rem 2.7rem;
+    color: var(--sl-text); background: rgba(3, 8, 24, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+.sl-input input::placeholder { color: #5F6E92; }
+.sl-input input:hover { border-color: rgba(var(--sl-accent-rgb), 0.4); }
+.sl-input input:focus {
+    outline: none; border-color: var(--sl-accent); background: rgba(3, 8, 24, 0.75);
+    box-shadow: 0 0 0 4px rgba(var(--sl-accent-rgb), 0.16);
+}
+.sl-input:focus-within > i { color: var(--sl-accent); }
+.sl-input input.sl-mono { font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; letter-spacing: 0.04em; text-transform: uppercase; }
+.sl-input input.sl-mono::placeholder { text-transform: none; letter-spacing: 0; font-family: var(--sl-body); }
+.sl-eye {
+    position: absolute; right: 0.4rem; width: 38px; height: 38px; display: grid; place-items: center;
+    background: none; border: 0; border-radius: 9px; color: var(--sl-muted); cursor: pointer;
+}
+.sl-eye:hover { color: var(--sl-text); background: rgba(255, 255, 255, 0.06); }
+input::-ms-reveal, input::-ms-clear { display: none; }
+
+.sl-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.6rem 1rem; margin: 0.3rem 0 1.3rem; font-size: 0.88rem; }
+.sl-check { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--sl-text-2); cursor: pointer; }
+.sl-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--sl-accent); cursor: pointer; }
+.sl-link { color: var(--sl-accent); font-weight: 600; text-decoration: none; }
+.sl-link:hover { text-decoration: underline; }
+
+.sl-btn {
+    width: 100%; min-height: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 0.6rem;
+    padding: 0.8rem 1.3rem; border: 0; cursor: pointer; text-decoration: none;
+    font: 700 1.02rem var(--sl-display); letter-spacing: 0.01em;
+    clip-path: var(--sl-chamfer);
+    transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.sl-btn:active { transform: translateY(1px); }
+.sl-btn--go { background: var(--sl-accent); color: var(--sl-ink); }
+.sl-btn--go:hover { background: var(--sl-accent-soft); }
+.sl-btn--ghost { background: rgba(255, 255, 255, 0.06); color: var(--sl-text); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+.sl-btn--ghost:hover { background: rgba(var(--sl-accent-rgb), 0.12); }
+.sl-btn:focus-visible { outline: 2px solid var(--sl-accent-soft); outline-offset: 3px; }
+
+.sl-divider { display: flex; align-items: center; gap: 0.8rem; margin: 1.3rem 0 1rem; font-size: 0.84rem; color: var(--sl-muted); }
+.sl-divider::before, .sl-divider::after { content: ""; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.1); }
+.sl-links { margin-top: 0.9rem; display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem 1.4rem; font-size: 0.88rem; }
+
+/* ---------- smaller screens ---------- */
+@media (max-width: 880px) {
+    .sl-panel { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
+    .sl-intro { border-right: 0; border-bottom: 1px solid var(--sl-edge); gap: 1.1rem; }
+    .sl-points, .sl-intro-foot { display: none; }
+    .sl-title { font-size: clamp(1.7rem, 7vw, 2.2rem); }
+    .sl-lead { font-size: 0.95rem; }
+}
+@media (max-width: 480px) {
+    .sl-socket { padding: 1.2rem 1.15rem 1.4rem; }
+    .sl-chip { padding: 1.3rem 1.1rem 1.15rem; }
+    .sl-chip::before, .sl-chip::after { display: none; }
+    .sl-panel::before, .sl-panel::after { width: 18px; height: 18px; top: auto; }
+    .sl-panel::before { top: -5px; left: -5px; }
+    .sl-panel::after { bottom: -5px; right: -5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .sl-traces .sl-lines path, .sl-signal::after { animation: none; }
+    .sl-signal::after { opacity: 0; }
+    .sl-btn, .sl-input input { transition: none; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .sl-panel { background: rgba(10, 20, 50, 0.94); }
+}
+
+/* sign-in paused after too many wrong passwords (static/js/login-lock.js) */
+.sl-lock-note { margin: 0 0 0.8rem; padding: 0.6rem 0.8rem; border-radius: 10px; font-size: 0.86rem;
+    background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.32); color: #FFB3B3; }
+.sl-lock-note.is-open { background: rgba(61, 214, 140, 0.1); border-color: rgba(61, 214, 140, 0.32); color: #A6F0CB; }
+.sl-btn:disabled { opacity: 0.55; cursor: not-allowed; }

@@ -26,7 +26,9 @@ def form(**over):
     data = {'fullname': 'Maria Santos Cruz', 'email': 'maria@test.local', 'phone': '0917 123 4567',
             'gender': 'Female', 'dob': '1995-05-20', 'id_type': 'UMID', 'id_number': 'CRN-0111-2222-3333',
             'staffId': 'TECH-0042', 'password': PASSWORD, 'password2': PASSWORD, 'privacy_consent': '1',
-            'id_document': (BytesIO(PNG), 'my id.png', 'image/png')}
+            'address': '12 Rizal Avenue, Barangay 5, Tacloban City',
+            'id_document': (BytesIO(PNG), 'my id.png', 'image/png'),
+            'id_document_back': (BytesIO(PNG), 'my id back.png', 'image/png')}
     data.update(over)
     return {k: v for k, v in data.items() if v is not None}
 
@@ -83,7 +85,8 @@ def test_registration_saves_a_pending_inactive_account_with_a_private_document(c
     assert t.check_password(PASSWORD) and PASSWORD not in t.password_hash
     assert t.verification_submitted_at is not None
     # stored under a random name in the private folder, not static/
-    assert id_files() == [t.id_document_file] and t.id_document_file != 'my id.png'
+    assert id_files() == sorted([t.id_document_file, t.id_back_file]) and t.id_document_file != 'my id.png'
+    assert t.address == '12 Rizal Avenue, Barangay 5, Tacloban City' and t.id_back_mime == 'image/png'
     assert not os.path.abspath(flask_app.config['ID_UPLOAD_FOLDER']).startswith(os.path.abspath('static'))
     assert [e.action for e in t.verification_events] == ['submitted']
     note = Notification.query.filter_by(user_role='admin', user_id=admin.id).one()
@@ -182,8 +185,11 @@ def test_rejection_needs_a_reason_and_the_technician_sees_it(client, admin):
     assert (t.verification_status, t.is_active, t.id_verified) == ('rejected', False, False)
     note = Notification.query.filter_by(user_role='technician', user_id=t.id).one()
     assert 'does not match the name' in note.message
-    r = client.post('/technician/login', data={'technician_id': 'TECH-0042', 'password': PASSWORD})
-    assert r.status_code == 403 and 'does not match the name' in r.get_data(as_text=True)
+    r = client.post('/technician/login', data={'technician_id': 'TECH-0042', 'password': PASSWORD},
+                    follow_redirects=True)
+    assert 'does not match the name' in r.get_data(as_text=True)
+    with client.session_transaction() as s:
+        assert 'user_id' not in s
 
 
 def test_correction_request_and_resubmission(client, admin):
@@ -209,7 +215,7 @@ def test_correction_request_and_resubmission(client, admin):
     t = new_tech()
     assert (t.verification_status, t.verification_reason, t.phone) == ('pending', None, '09998887777')
     assert t.username == 'TECH-0042' and not t.id_verified                      # protected fields unchanged
-    assert id_files() == [t.id_document_file] and t.id_document_file != old_file
+    assert id_files() == sorted([t.id_document_file, t.id_back_file]) and t.id_document_file != old_file
     assert [e.action for e in t.verification_events] == ['resubmitted', 'correction_requested', 'submitted']
     assert Notification.query.filter_by(user_role='admin', title='Technician Registration Updated').count() == 1
     # once sent again it can't be edited until the admin decides
@@ -348,9 +354,11 @@ def test_a_correction_must_still_match_the_employee_record(client, admin):
 
 
 def test_admin_manages_the_roster(admin_logged_in, client, customer):
-    r = admin_logged_in.post('/admin/technician-roster', data={
+    r = admin_logged_in.post('/admin/technician-roster', content_type='multipart/form-data', data={
         'tech_id': 'TECH-0042', 'full_name': 'Maria Santos Cruz', 'birth_date': '1995-05-20',
-        'id_type': 'UMID', 'id_number': 'CRN-0111-2222-3333', 'hired_on': '2026-10-01'})
+        'id_type': 'UMID', 'id_number': 'CRN-0111-2222-3333', 'hired_on': '2026-10-01',
+        'address': '12 Rizal Avenue, Tacloban City',
+        'id_front': (BytesIO(PNG), 'front.png', 'image/png'), 'id_back': (BytesIO(PNG), 'back.png', 'image/png')})
     assert r.status_code == 302
     page = admin_logged_in.get('/admin/technician-roster').get_data(as_text=True)
     assert 'TECH-0042' in page and 'Not registered' in page and 'TECH-0043' in page    # next free ID suggested
@@ -364,9 +372,11 @@ def test_admin_manages_the_roster(admin_logged_in, client, customer):
     # once registered, the matched details are locked and the record can't be removed
     assert register(client).status_code == 302
     admin_logged_in.post(f'/admin/technician-roster/{record.id}', data={
-        'full_name': 'Changed Name Here', 'birth_date': '2000-01-01', 'note': 'Hardware team'})
+        'full_name': 'Changed Name Here', 'birth_date': '2000-01-01', 'note': 'Hardware team',
+        'address': '45 Real Street, Tacloban City'})
     record = db.session.get(TechnicianEmployee, record.id)
     assert record.full_name == 'Maria Santos Cruz' and record.note == 'Hardware team'
+    assert record.address == '45 Real Street, Tacloban City'
     admin_logged_in.post(f'/admin/technician-roster/{record.id}/delete')
     assert TechnicianEmployee.query.count() == 1
 
@@ -387,3 +397,12 @@ def test_review_page_shows_the_roster_match(client, admin):
     register(client)
     page = admin_client(admin).get(f'/admin/technician-verification/{new_tech().id}').get_data(as_text=True)
     assert 'Matches roster entry TECH-0042' in page
+
+
+def test_roster_form_takes_the_front_and_back_of_the_id_and_reads_the_front(admin_logged_in):
+    page = admin_logged_in.get('/admin/technician-roster').get_data(as_text=True)
+    assert 'id="trIdScan"' in page and 'js/id-autofill.js' in page and 'js/vendor/jsQR.js' in page
+    assert 'enctype="multipart/form-data"' in page
+    scan_input = page.split('id="trIdScan"')[1].split('>')[0]
+    assert 'name="id_front"' in scan_input           # kept with the record, and read to fill in the fields
+    assert 'name="id_back"' in page and 'name="address"' in page

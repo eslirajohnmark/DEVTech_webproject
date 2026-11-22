@@ -15,11 +15,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/profile.css') }}" />
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/confirm.js') }}" defer></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive-fixes.css') }}" />
     <meta name="devtech-live-mode" content="{% block live_mode %}auto{% endblock %}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/live.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/admin-glass.css') }}" />
     <script src="{{ url_for('static', filename='js/live.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/busy-guard.js') }}" defer></script>
 </head>
 <body data-user-role="{{ session.get('role', '') }}">
     <div class="admin-dashboard-wrapper">
@@ -134,6 +136,14 @@
                     </div>
                 {% endif %}
             {% endwith %}
+
+            {% if system_deactivated() %}
+            <div class="admin-offline-banner" role="status">
+                <i class="fas fa-power-off" aria-hidden="true"></i>
+                <span><strong>The system is deactivated.</strong> Customers and technicians see a maintenance page until it is reactivated.</span>
+                <a href="{{ url_for('admin_settings') }}#dangerZone">Reactivate in Settings</a>
+            </div>
+            {% endif %}
 
             {% block content %}{% endblock %}
         </main>

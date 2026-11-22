@@ -1,14 +1,18 @@
 """Outgoing email through Brevo (https://brevo.com) or Resend (https://resend.com).
 
-Configured from .env (set one key; Brevo wins when both are set):
-    BREVO_API_KEY    Brevo API key (xkeysib-...). Free plan: 300 emails a day.
+Configured from .env:
     RESEND_API_KEY   Resend API key (re_...).
+    BREVO_API_KEY    Brevo API key (xkeysib-...). Free plan: 300 emails a day.
+    EMAIL_PROVIDER   "resend" or "brevo": which one to use when both keys are set
+                     (default: Brevo, as before).
     MAIL_FROM        Sender, e.g. "DEVTech <no-reply@yourdomain.com>".
                      Brevo: the address must be a verified sender in Brevo.
-                     Resend: until a domain is verified, only
-                     onboarding@resend.dev works, and it can only deliver to
-                     the address that owns the Resend account.
-No key = email is switched off. Both are HTTPS APIs, so hosts that block the
+                     Resend: the domain must be verified in Resend (Domains page,
+                     DNS records). Until then only onboarding@resend.dev works,
+                     and it can only deliver to the address that owns the Resend
+                     account.
+No key = email is switched off. `flask send-test-email you@example.com` sends
+one email straight away and prints the provider's answer. Both are HTTPS APIs, so hosts that block the
 email (SMTP) ports can still send.
 
 Emails go out from one background thread so a page never waits on the
@@ -48,8 +52,25 @@ def deliverable(address):
     return '@' in address and not address.endswith(_UNDELIVERABLE_SUFFIXES)
 
 
-def render(title, message, action_url=None, action_label=None, site_name='DEVTech'):
-    """Simple branded HTML + plain-text bodies. All text is escaped."""
+def provider():
+    """'resend', 'brevo' or None: the service the next email goes through."""
+    resend, brevo = os.environ.get('RESEND_API_KEY'), os.environ.get('BREVO_API_KEY')
+    chosen = (os.environ.get('EMAIL_PROVIDER') or '').strip().lower()
+    if chosen == 'resend' and resend:
+        return 'resend'
+    if chosen == 'brevo' and brevo:
+        return 'brevo'
+    return 'brevo' if brevo else ('resend' if resend else None)
+
+
+ACCOUNT_FOOTER = ('You are receiving this because you have an account with {site}.\n'
+                  'You can turn off email notifications in your profile settings.')
+SECURITY_FOOTER = 'This is a security email about your {site} account, so it is sent even when notifications are off.'
+
+
+def render(title, message, action_url=None, action_label=None, site_name='DEVTech', footer=None):
+    """Simple branded HTML + plain-text bodies. All text is escaped. `footer` replaces
+    the notifications line (SECURITY_FOOTER for password emails)."""
     t, m = html.escape(title), html.escape(message).replace('\n', '<br>')
     button = ''
     if action_url:
@@ -63,20 +84,28 @@ def render(title, message, action_url=None, action_label=None, site_name='DEVTec
     <h1 style="font-size:20px;margin:0 0 12px;">{t}</h1>
     <p style="font-size:15px;line-height:1.6;margin:0;color:#334155;">{m}</p>
     {button}
+    __LINK__
   </div>
-  <p style="font-size:12px;color:#64748b;margin-top:16px;">You are receiving this because you have an account with {html.escape(site_name)}.
-  You can turn off email notifications in your profile settings.</p>
+  <p style="font-size:12px;color:#64748b;margin-top:16px;">__FOOTER__</p>
 </div></body></html>"""
     text = f"{title}\n\n{message}\n" + (f"\n{action_label or 'Open'}: {action_url}\n" if action_url else '')
-    return body, text
+    note = (footer or ACCOUNT_FOOTER).format(site=site_name)
+    link = ''
+    if action_url:   # some mail apps hide buttons: give the link as text too
+        link = ('<p style="font-size:12px;color:#64748b;margin:14px 0 0;word-break:break-all;">'
+                'Or copy this link into your browser:<br>'
+                f'<a href="{html.escape(action_url, quote=True)}" style="color:#2563eb;">{html.escape(action_url)}</a></p>')
+    body = body.replace('__LINK__', link).replace('__FOOTER__', html.escape(note).replace('\n', '<br>'))
+    return body, text + f"\n{note}\n"
 
 
 def _send_brevo(key, to, subject, html_body, text_body):
+    """(sent, detail). Never raises."""
     from email.utils import parseaddr
     name, address = parseaddr(os.environ.get('MAIL_FROM') or '')
     if not address:
         log.warning('MAIL_FROM is not set: Brevo needs a verified sender address.')
-        return False
+        return False, 'MAIL_FROM is not set: Brevo needs a verified sender address.'
     try:
         r = requests.post(BREVO_URL, timeout=15,
                           headers={'api-key': key, 'accept': 'application/json'},
@@ -84,35 +113,74 @@ def _send_brevo(key, to, subject, html_body, text_body):
                                 'to': [{'email': to}], 'subject': subject,
                                 'htmlContent': html_body, 'textContent': text_body})
         if r.ok:
-            return True
+            return True, 'Brevo accepted the email.'
         log.warning('Brevo rejected email to %s: %s %s', to, r.status_code, r.text[:300])
+        return False, f'Brevo answered {r.status_code}: {r.text[:300]}'
     except requests.RequestException as e:
         log.warning('Could not reach Brevo for %s: %s', to, e)
-    return False
+        return False, f'Could not reach Brevo: {e}'
+
+
+def resend_hint(status, text):
+    """What to change when Resend refuses an email (written to the log and shown by the CLI)."""
+    low = (text or '').lower()
+    if status == 403 and ('testing emails' in low or 'own email' in low):
+        return ('MAIL_FROM uses onboarding@resend.dev, which only delivers to the email that owns the Resend '
+                'account. Verify a domain you own in Resend (Domains) and set MAIL_FROM to an address on it.')
+    if status == 403 and 'domain' in low:
+        return ('The domain in MAIL_FROM is not verified in Resend yet. Add the DNS records shown on '
+                'Resend > Domains and wait until it says Verified.')
+    if status in (401, 403) and 'api' in low and 'key' in low:
+        return 'RESEND_API_KEY is wrong, revoked, or only allowed to send from another domain.'
+    if status == 422 and '`to`' in low:
+        return 'Resend refused the recipient address (test domains such as example.com are blocked).'
+    if status == 422 and ('`from`' in low or 'from' in low):
+        return 'Check MAIL_FROM: it must look like "DEVTech <no-reply@yourdomain.com>".'
+    if status == 429:
+        return 'Too many emails at once (Resend rate limit or daily quota). Try again in a moment.'
+    return ''
+
+
+def _send_resend(key, to, subject, html_body, text_body):
+    """(sent, detail). Never raises."""
+    sender = os.environ.get('MAIL_FROM') or 'DEVTech <onboarding@resend.dev>'
+    try:
+        r = requests.post(RESEND_URL, timeout=15,
+                          headers={'Authorization': f'Bearer {key}', 'User-Agent': 'devtech-mailer/1.0'},
+                          json={'from': sender, 'to': [to], 'subject': subject,
+                                'html': html_body, 'text': text_body})
+        if r.ok:
+            try:
+                ref = (r.json() or {}).get('id', '')
+            except ValueError:
+                ref = ''
+            return True, 'Resend accepted the email' + (f' (id {ref}).' if ref else '.')
+        hint = resend_hint(r.status_code, r.text)
+        log.warning('Resend rejected email to %s: %s %s%s', to, r.status_code, r.text[:300],
+                    f' -> {hint}' if hint else '')
+        return False, f'Resend answered {r.status_code}: {r.text[:300]}' + (f'\nFix: {hint}' if hint else '')
+    except requests.RequestException as e:
+        log.warning('Could not reach Resend for %s: %s', to, e)
+        return False, f'Could not reach Resend: {e}'
+
+
+def send_with_detail(to, subject, html_body, text_body):
+    """Send one email now: (sent, provider, detail). Never raises."""
+    if not deliverable(to):
+        return False, None, f'{to} is not a deliverable address.'
+    which = provider()
+    if which == 'brevo':
+        sent, detail = _send_brevo(os.environ['BREVO_API_KEY'], to, subject, html_body, text_body)
+    elif which == 'resend':
+        sent, detail = _send_resend(os.environ['RESEND_API_KEY'], to, subject, html_body, text_body)
+    else:
+        return False, None, 'Email is off: set RESEND_API_KEY (or BREVO_API_KEY) in .env.'
+    return sent, which, detail
 
 
 def send_now(to, subject, html_body, text_body):
     """Send one email synchronously. Returns True on success. Never raises."""
-    if not deliverable(to):
-        return False
-    brevo = os.environ.get('BREVO_API_KEY')
-    if brevo:
-        return _send_brevo(brevo, to, subject, html_body, text_body)
-    key = os.environ.get('RESEND_API_KEY')
-    if not key:
-        return False
-    sender = os.environ.get('MAIL_FROM') or 'DEVTech <onboarding@resend.dev>'
-    try:
-        r = requests.post(RESEND_URL, timeout=15,
-                          headers={'Authorization': f'Bearer {key}'},
-                          json={'from': sender, 'to': [to], 'subject': subject,
-                                'html': html_body, 'text': text_body})
-        if r.ok:
-            return True
-        log.warning('Resend rejected email to %s: %s %s', to, r.status_code, r.text[:300])
-    except requests.RequestException as e:
-        log.warning('Could not reach Resend for %s: %s', to, e)
-    return False
+    return send_with_detail(to, subject, html_body, text_body)[0]
 
 
 def _work():

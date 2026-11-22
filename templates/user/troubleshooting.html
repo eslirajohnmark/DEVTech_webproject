@@ -216,7 +216,8 @@
         list($('tsEvidence'), d.evidence || []);
         $('tsEvidence').hidden = !(d.evidence || []).length;
         $('tsCause').textContent = d.cause;
-        $('tsStepsTitle').textContent = d.diy ? 'What you can try' : 'Until a technician sees it';
+        const on = d.device_label ? ' on your ' + d.device_label.toLowerCase() : '';
+        $('tsStepsTitle').textContent = d.diy ? 'What you can try' + on : 'Until a technician sees it';
         list($('tsSteps'), d.steps || []);
         $('tsStepsBlock').hidden = !(d.steps || []).length;
         $('tsAdvice').textContent = d.advice;

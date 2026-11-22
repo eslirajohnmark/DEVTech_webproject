@@ -2,7 +2,7 @@
 import io
 
 from app import (app as flask_app, db, Customer, Technician, Admin, Product, Order, Transaction, ShoppingCart,
-                 CartItem, Notification, _login_or_create_oauth_user)
+                 CartItem, Notification)
 from tests.conftest import login_as
 
 
@@ -56,6 +56,8 @@ def test_self_registered_technician_is_inactive(client, admin):
         'fullname': 'New Tech', 'email': 'new@test.local', 'staffId': 'TECH-0042',
         'password': 'Password#123', 'password2': 'Password#123', 'gender': 'male', 'dob': '1990-01-01',
         'phone': '09171234567', 'id_type': 'UMID', 'id_number': 'CRN-0001-2345', 'privacy_consent': '1',
+        'address': '7 Zamora Street, Tacloban City',
+        'id_document_back': (BytesIO(b'\x89PNG\r\n\x1a\n' + b'0' * 64), 'id-back.png', 'image/png'),
         'id_document': (BytesIO(b'\x89PNG\r\n\x1a\n' + b'0' * 64), 'id.png', 'image/png')})
     assert r.status_code == 302
     u = Technician.query.filter_by(username='TECH-0042').first()
@@ -82,46 +84,11 @@ def test_customer_without_history_is_deleted(customer_logged_in, customer):
     assert db.session.get(Customer, uid) is None
 
 
-# ---- OAuth ----
-
-def _oauth(email, verified, provider_id='g-1'):
-    with flask_app.test_request_context('/login/google/callback'):
-        from flask import session
-        resp = _login_or_create_oauth_user('google', provider_id, email, 'Someone', verified)
-        return resp, dict(session)
-
-
-def test_oauth_rejects_unverified_email(customer):
-    _, sess = _oauth(customer.email, False)
-    assert 'user_id' not in sess
-
-
-def test_oauth_never_logs_into_admin(admin):
-    _, sess = _oauth(admin.email, True)
-    assert 'user_id' not in sess
-    assert Customer.query.filter_by(email=admin.email).count() == 0   # no shadow customer either
-
-
-def test_oauth_links_verified_customer(customer):
-    _, sess = _oauth(customer.email, True)
-    assert sess.get('user_id') == customer.id
-
-
-def test_oauth_with_a_technicians_email_is_just_an_invalid_login(client, technician):
-    resp, sess = _oauth(technician.email, True)
-    assert 'user_id' not in sess and resp.headers['Location'].endswith('/login')
-    assert Customer.query.filter_by(email=technician.email).count() == 0   # no customer account made
-    with client.session_transaction() as s:
-        s['_flashes'] = sess.get('_flashes', [])
-    html = client.get('/login').get_data(as_text=True)
-    assert 'Invalid login.' in html and 'echnician' not in html
-
-
 # ---- Each sign-in page is for its own kind of account ----
 
 def test_customer_sign_in_page_never_signs_in_or_mentions_staff(client, technician, admin):
     for account, password in ((technician, 'testpassword1'), (admin, 'adminpass123')):
-        r = client.post('/login', data={'email': account.email, 'password': password})
+        r = client.post('/login', data={'email': account.email, 'password': password}, follow_redirects=True)
         html = r.get_data(as_text=True)
         # exactly what a wrong password gets; no hint that staff portals exist
         assert r.status_code == 200 and 'Invalid email or password' in html
@@ -136,10 +103,10 @@ def test_customer_still_signs_in_on_the_customer_page(client, customer):
 
 
 def test_staff_pages_only_accept_their_own_accounts(client, customer, technician):
-    r = client.post('/admin/login', data={'email': technician.email, 'password': 'testpassword1'})
+    r = client.post('/admin/login', data={'email': technician.email, 'password': 'testpassword1'}, follow_redirects=True)
     assert r.status_code == 200 and 'Invalid admin credentials' in r.get_data(as_text=True)
     r = client.post('/technician/login', data={'technician_id': customer.email, 'password': 'customerpass1'})
-    assert r.status_code == 401
+    assert r.status_code == 302 and r.headers['Location'].endswith('/technician/login')
     with client.session_transaction() as s:
         assert 'user_id' not in s
 
