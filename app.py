@@ -1726,6 +1726,67 @@ def add_id_back_and_address_columns():
                           ('id_back_mime', 'VARCHAR(40)')):
             _try_sql(f"ALTER TABLE technician_employees ADD COLUMN {col} {kind} NULL")
 
+
+def ensure_schema():
+    """Bring the database up to the models: create missing tables, add missing columns
+    (as NULL-able). Hosts like Vercel never run `python app.py` or `flask upgrade-db`, so
+    a new column in the code would otherwise break every page that reads that table
+    (a 500 on the home page). One query when nothing is missing. Returns what it added."""
+    engine = db.engine
+    dialect = engine.dialect.name
+    if dialect == 'sqlite':
+        from sqlalchemy import inspect as sa_inspect
+        insp = sa_inspect(engine)
+        existing = {t.lower(): {c['name'].lower() for c in insp.get_columns(t)} for t in insp.get_table_names()}
+    else:
+        where = 'database()' if dialect in ('mysql', 'mariadb') else 'current_schema()'
+        rows = db.session.execute(text('SELECT table_name, column_name FROM information_schema.columns '
+                                       f'WHERE table_schema = {where}')).fetchall()
+        db.session.commit()
+        existing = {}
+        for table_name, column_name in rows:
+            existing.setdefault(str(table_name).lower(), set()).add(str(column_name).lower())
+    added = []
+    new_tables = [t for name, t in db.metadata.tables.items() if name.lower() not in existing]
+    if new_tables:
+        db.metadata.create_all(engine, tables=new_tables, checkfirst=True)
+        added += [f'table {t.name}' for t in new_tables]
+    quote = engine.dialect.identifier_preparer.quote
+    for name, table in db.metadata.tables.items():
+        have = existing.get(name.lower())
+        if have is None:
+            continue
+        for col in table.columns:
+            if col.name.lower() in have:
+                continue
+            kind = col.type.compile(dialect=engine.dialect)
+            if _try_sql(f'ALTER TABLE {quote(name)} ADD COLUMN {quote(col.name)} {kind} NULL'):
+                added.append(f'{name}.{col.name}')
+    if added:
+        app.logger.warning('Database schema updated: %s', ', '.join(added))
+    return added
+
+
+_schema_state = {'checked': False}
+_schema_lock = threading.Lock()
+
+def _ensure_schema_once():
+    """First request of each server instance (Vercel, or AUTO_SCHEMA_UPDATE=1)."""
+    if _schema_state['checked'] or request.endpoint == 'static':
+        return
+    with _schema_lock:
+        if _schema_state['checked']:
+            return
+        try:
+            ensure_schema()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception('Could not check the database schema')
+        _schema_state['checked'] = True
+
+if ON_VERCEL or os.environ.get('AUTO_SCHEMA_UPDATE') == '1':
+    app.before_request_funcs.setdefault(None, []).insert(0, _ensure_schema_once)
+
 def add_support_chat_columns():
     """Support tickets become conversations: their columns, and each old ticket's
     message and reply carried over as the first chat messages. Safe to repeat."""
