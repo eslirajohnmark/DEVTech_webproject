@@ -23,6 +23,8 @@ SQLAlchemy==2.0.41
 PyMySQL==1.1.1
 # PostgreSQL (Supabase): DATABASE_URL=postgresql://...
 psycopg[binary]==3.3.9
+# Philippine mobile number check at registration (services/ph_phone.py)
+phonenumbers==9.0.44
 cryptography==44.0.0
 
 

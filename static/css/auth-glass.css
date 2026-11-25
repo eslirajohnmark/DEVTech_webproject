@@ -60,6 +60,29 @@ body > .card .form-note { margin: 0 0 1rem; font-size: 0.85rem; color: var(--a-m
 body > .card .optional { font-weight: 400; color: var(--a-muted); }
 body > .card .field-hint { display: block; margin-top: 0.35rem; font-size: 0.8rem; color: var(--a-muted); }
 
+/* registration: Philippine mobile number (js/ph-phone.js sets data-state="ok" | "error") */
+body > .card .phone-field { display: flex; align-items: stretch; gap: 0.5rem; position: relative; }
+body > .card .phone-cc {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0 0.75rem;
+    border: 1px solid var(--a-line); border-radius: 14px; background: var(--a-wash);
+    font-size: 0.85rem; font-weight: 600; color: var(--a-ink-2); white-space: nowrap;
+}
+body > .card .phone-cc span { font-size: 0.72rem; color: var(--a-blue); }
+body > .card .phone-field input { flex: 1 1 auto; min-width: 0; padding-right: 2.4rem; }
+body > .card .phone-icon { position: absolute; right: 0.85rem; top: 50%; transform: translateY(-50%); font-size: 1rem; pointer-events: none; }
+body > .card .phone-field[data-state="ok"] input,
+body > .card .phone-field[data-state="ok"] input:focus { border-color: #12B76A; }
+body > .card .phone-field[data-state="error"] input:focus { border-color: #D92D20; }
+body > .card .phone-field[data-state="ok"] .phone-icon { color: #12B76A; }
+body > .card .phone-field[data-state="error"] input { border-color: #D92D20; }
+body > .card .phone-field[data-state="error"] input:focus { box-shadow: 0 0 0 4px rgba(217, 45, 32, 0.12); }
+body > .card .phone-field[data-state="error"] .phone-icon { color: #D92D20; }
+body > .card .phone-status[data-state="ok"] { color: #0E7A4A; }
+body > .card .phone-status[data-state="error"] { color: #B42318; }
+@media (max-width: 380px) {
+    body > .card .phone-cc { padding: 0 0.55rem; }
+}
+
 /* labels in sentence case */
 .login-container .input-group label, body > .card label { text-transform: none; letter-spacing: 0; font-size: 0.9rem; font-weight: 600; color: var(--a-ink-2); }
 

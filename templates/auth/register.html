@@ -12,6 +12,7 @@
     <script src="{{ url_for('static', filename='js/password-toggle.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/portal-shortcuts.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/password-rules.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/ph-phone.js') }}" defer></script>
     <script src="{{ url_for('static', filename='js/busy-guard.js') }}" defer></script>
 </head>
 <body>
@@ -70,10 +71,14 @@
 
             <div class="input-group">
                 <label for="phone">Mobile number <span class="req">*</span></label>
-                <input type="tel" id="phone" name="phone" placeholder="+63 912 345 6789" required
-                       inputmode="tel" maxlength="20" autocomplete="tel" aria-describedby="phoneHint"
-                       value="{{ form.get('phone', '') if form else '' }}">
-                <small class="field-hint" id="phoneHint">12 digits starting with 63 9, e.g. +63 912 345 6789</small>
+                <div class="phone-field" data-ph-phone>
+                    <span class="phone-cc" title="Philippine mobile numbers"><span aria-hidden="true">PH</span> +63</span>
+                    <input type="tel" id="phone" name="phone" placeholder="0917 123 4567" required
+                           inputmode="tel" maxlength="20" autocomplete="tel" aria-describedby="phoneHint"
+                           value="{{ form.get('phone', '') if form else '' }}">
+                    <i class="phone-icon fas" aria-hidden="true"></i>
+                </div>
+                <small class="field-hint phone-status" id="phoneHint" aria-live="polite">Type it as 09171234567 or +639171234567.</small>
             </div>
 
             <div class="terms-row">
@@ -99,27 +104,11 @@
             });
         });
 
-        // Mobile number: 12 digits, 63 then 9 (spaces, dashes and + are fine while typing)
-        const phone = document.getElementById('phone');
-        function phoneProblem() {
-            const digits = phone.value.replace(/[\s\-().]/g, '').replace(/^\+/, '');
-            if (!/^\d*$/.test(digits)) return 'Use numbers only, e.g. +63 912 345 6789.';
-            if (digits.length !== 12) return 'The mobile number must have 12 digits (you typed ' + digits.length + '), e.g. +63 912 345 6789.';
-            if (!digits.startsWith('639')) return 'The mobile number must start with 63 9, e.g. +63 912 345 6789.';
-            return '';
-        }
-        phone.addEventListener('input', () => phone.setCustomValidity(''));
+        // The mobile number is checked by js/ph-phone.js (it stops a submit with a wrong number first).
         document.getElementById('password').addEventListener('input', e => e.target.setCustomValidity(''));
-        phone.addEventListener('blur', () => { if (phone.value) phone.setCustomValidity(phoneProblem()); });
 
         // Password match validation
         document.getElementById('registrationForm').addEventListener('submit', function(e) {
-            phone.setCustomValidity(phoneProblem());
-            if (!phone.checkValidity()) {
-                e.preventDefault();
-                phone.reportValidity();
-                return;
-            }
             const pwInput = document.getElementById('password');
             pwInput.setCustomValidity(window.passwordProblem ? window.passwordProblem(pwInput.value) : '');
             if (!pwInput.checkValidity()) {

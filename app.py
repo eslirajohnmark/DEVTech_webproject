@@ -24,7 +24,7 @@ import tempfile
 import shutil
 from werkzeug.utils import secure_filename
 from sqlalchemy import text, or_, and_, func, case as sa_case
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session as SASession
 import threading
@@ -2126,14 +2126,6 @@ def _unique_customer_username(email):
         username = f"{base}{secrets.token_hex(3)}"
     return username
 
-def ph_mobile_number(raw):
-    """A Philippine mobile number as +639XXXXXXXXX (12 digits: 63, then 9 and nine more),
-    or None. Spaces, dashes, brackets and a leading + are allowed when typing."""
-    digits = re.sub(r'[\s\-().]', '', raw or '')
-    if digits.startswith('+'):
-        digits = digits[1:]
-    return '+' + digits if re.fullmatch(r'639\d{9}', digits) else None
-
 def name_from_email(email):
     """'cara.santos@gmail.com' -> 'Cara Santos': a name for an account registered without one."""
     words = re.split(r'[._\-+]+', email.split('@')[0])
@@ -2148,7 +2140,8 @@ def register():
         email = (form.get('email') or '').strip().lower()
         password = form.get('password')
         re_password = form.get('rePassword')
-        phone = ph_mobile_number(form.get('phone'))
+        from services.ph_phone import check_ph_mobile, stored_forms
+        phone, phone_problem = check_ph_mobile(form.get('phone'))   # +639XXXXXXXXX, or why not
 
         def again(message, keep=True):
             # Back to the form (Post/Redirect/Get: Back or Reload never re-sends it). What was
@@ -2163,8 +2156,8 @@ def register():
 
         if not email or not password:
             return again('Please enter your email and a password.')
-        if not phone:
-            return again('Enter a 12-digit mobile number that starts with 63 9, e.g. +63 912 345 6789.')
+        if phone_problem:
+            return again(phone_problem)
         if len(full_name) > 100:
             return again('Please shorten your name (up to 100 characters).')
         from services.password_rules import password_problem as strong_password_problem
@@ -2175,13 +2168,22 @@ def register():
         if email_in_use(email):
             # Nothing about the existing account, and nothing typed, is shown back.
             return again('This email is already registered. Sign in, or use another email.', keep=False)
+        # One customer account per mobile number (also finds numbers saved as 09... or 639... before).
+        if Customer.query.filter(Customer.phone.in_(stored_forms(phone))).first():
+            return again('This mobile number is already registered to another account. '
+                         'Sign in, or use a different number.')
         full_name = full_name or name_from_email(email)       # optional: change it later in Profile
 
         user = Customer(username=_unique_customer_username(email), email=email,
                         full_name=full_name, phone=phone)
         user.set_password(password)
         db.session.add(user)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except SQLAlchemyError:
+            db.session.rollback()
+            app.logger.exception('Registration could not be saved for %s', email)
+            return again('Your account could not be created right now. Please try again in a moment.')
         create_notification(user.id, 'Welcome to DEVTech!',
                             'Thank you for registering. Start booking your repair services today!',
                             'success', role='customer')

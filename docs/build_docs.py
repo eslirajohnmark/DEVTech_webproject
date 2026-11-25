@@ -191,8 +191,8 @@ class Doc(FPDF):
                 for j, value in enumerate(row):
                     value = str(value)
                     if head and i and status_col is not None and j == status_col:
-                        c = PASS if value.startswith(('Pass', 'Fixed', 'OK', 'Meets')) else \
-                            FAIL if value.startswith(('Fail', 'Open', 'Does not')) else WARN
+                        c = PASS if value.startswith(('Pass', 'Fixed', 'OK', 'Meets')) or value == 'Yes' else \
+                            FAIL if value.startswith(('Fail', 'Open', 'Does not')) or value == 'No' else WARN
                         r.cell(value, style=FontFace(emphasis='BOLD', color=c))
                     else:
                         r.cell(value)
@@ -466,8 +466,9 @@ CASES = [
      'Signed out with a message; "Remember me" keeps the session', 'test_idle_sessions_end_unless_remember_me'),
     ('TC-06', 'All forms', 'Double-click protection on every page', 'Open sign-in, registration, booking, admin and technician pages',
      'busy-guard.js loaded on every page type', 'test_every_kind_of_page_stops_double_submits'),
-    ('TC-07', 'Registration', 'Valid registration', 'Name, email, strong password, +63 912 345 6789',
-     'Account created, mobile saved as +639123456789, redirect to sign-in', 'test_registration_saves_the_number_in_one_format'),
+    ('TC-07', 'Registration', 'Valid registration, both phone formats', 'Name, email, strong password; 09171234567, '
+     'then (new database) +639171234567', 'Account created both times, mobile saved as +639171234567, redirect to sign-in',
+     'test_registration_with_either_format_saves_one_format'),
     ('TC-08', 'Registration', 'Weak password refused', 'Password "secret123"',
      'Refused; message lists the missing capital letter and special character', 'test_a_weak_password_is_refused_at_registration'),
     ('TC-09', 'Registration', 'Email already used', 'Register with an existing account\'s email',
@@ -534,6 +535,27 @@ CASES = [
      'Shown as text, never run', 'test_admin_users_page_escapes_user_names'),
     ('TC-40', 'Sign-in page', 'Customer sign-in layout', 'Open /login',
      'Portal layout with "Create an account"', 'test_customer_sign_in_uses_the_portal_layout'),
+    ('TC-41', 'Registration', 'Invalid mobile numbers refused with a reason', '0917123, 0917123456789, 12345678901, '
+     '09001234567, 0917ABC4567, 0917#123456, empty', 'Each refused: too short, too long, incorrect prefix, not a network '
+     'prefix, letters, symbols, empty', 'test_invalid_numbers_are_refused_with_a_clear_reason'),
+    ('TC-42', 'Registration', 'One account per mobile number', 'Register a number already saved as +639..., 09... or 639...',
+     'Refused: "already registered to another account"', 'test_a_number_already_registered_is_refused_in_any_saved_format'),
+    ('TC-43', 'Registration', 'Database error not shown', 'Saving the account fails inside the database',
+     'Plain message; no SQL or server detail on the page', 'test_a_database_error_is_not_shown_to_the_customer'),
+    ('TC-44', 'Billing', 'A bill the booking fee fully covers', 'PHP 0 bill after the repair; customer opens Transactions; '
+     'technician releases', 'Says "Nothing to pay"; no pay button; QR request refused without calling PayMongo; release allowed',
+     'test_a_bill_the_booking_fee_fully_covers_asks_for_nothing_and_the_device_can_be_released'),
+    ('TC-45', 'Payments', 'The QR dialog always gets an answer', 'Starting the QR payment crashes on the server',
+     'JSON error with a "try again" message (no endless spinner)',
+     'test_the_qr_dialog_gets_an_answer_even_when_starting_the_payment_crashes'),
+    ('TC-46', 'Password reset', 'Reset uses the registration password rule', 'Weak password, current password, then a strong one',
+     'First two refused; strong one saved; "password was changed" email sent',
+     'test_reset_needs_the_same_strong_password_as_registration_and_confirms_by_email'),
+    ('TC-47', 'Email', 'A Resend refusal is explained', 'Resend answers 403 (sandbox sender)',
+     'Not sent; the log says how to fix it (verify a domain)', 'test_a_resend_refusal_explains_the_sandbox_sender'),
+    ('TC-48', 'Deployment', 'The database updates itself', 'Database missing a new column and a new table; open the home page',
+     'Column and table added; home page loads (200); nothing to do the second time',
+     'test_missing_columns_and_tables_are_added_and_the_home_page_works'),
 ]
 
 BROWSER = [
@@ -559,6 +581,19 @@ BROWSER = [
     ('BT-13', 'Transactions: Pay with GCash through PayMongo, then the receipt', 'QR opens; after paying the receipt step '
      'opens; screenshot saved', 'First runs: page reloaded before the receipt step (bug B-12); after the fix: as expected',
      'Pass (after fix)', 'Nov 23'),
+    ('BT-14', 'Registration: mobile number field at 1280 px and 375 px (local server)', 'Right message while typing for '
+     'each example; a wrong number is not submitted; no script errors',
+     'All 7 examples gave the right message; 0 requests sent for a wrong number; no errors; no sideways scroll. The '
+     'screenshot showed the red error border replaced by the blue focus border (B-19): CSS fixed, not re-checked',
+     'Pass (fix not re-checked)', 'Nov 25'),
+    ('BT-15', 'Smoke check of the live Vercel site: /, /login, /forgot-password, /healthz', 'Every page 200; database connected',
+     '1st check: home page 500 (B-16), other pages 200. Later check: / and /login 500, /healthz 503 "database '
+     'unreachable" (database password changed, Vercel not updated)', 'Fail', 'Nov 23-25'),
+    ('BT-16', 'Real email through Resend (command line)', 'Accepted for Resend\'s test inbox; a clear reason when refused',
+     'Accepted (id returned). Refused for example.com with 422, and our fix hint blamed the wrong setting (B-18); fixed',
+     'Pass (after fix)', 'Nov 23'),
+    ('BT-17', 'Real PayMongo test-mode QR code (API, no payment)', 'QR created for small amounts',
+     'QR created in about 1 s for PHP 5, 19.99 and 20; PHP 0 refused before calling PayMongo (explains B-13)', 'Pass', 'Nov 23'),
     ('BT-12', 'Accessibility spot check of 13 pages', 'WCAG 2.1 AA contrast, labels, names, reflow', 'See section 9', 'See section 9', 'Nov 22'),
 ]
 
@@ -582,6 +617,22 @@ FIXED = [
     ('B-12', 'The automatic refresh did not notice the QR payment dialog was open, so a confirmed payment reloaded the page '
              'and skipped the receipt step (Transactions and booking fee).', 'High',
      'Any pop-up inside a fixed layer now counts as open; the refresh waits.', 'Fixed'),
+    ('B-13', 'A repair bill fully covered by the booking fee (PHP 0) still showed "Pay with GCash". PayMongo cannot make '
+             'a PHP 0 QR, the server error was not caught, the dialog spun forever, and the technician could not release '
+             'the device.', 'High', '"Nothing to pay" on the page; release settles it; the QR route always answers.', 'Fixed'),
+    ('B-14', '"Pay with card or e-wallet instead" sent the form to the Transactions page itself (405 Method Not Allowed) '
+             'while the QR was still loading.', 'Medium', 'The button gets its address when the dialog opens.', 'Fixed'),
+    ('B-15', 'The QR dialog had no time limit and ignored non-JSON answers, so a slow or failed request kept "Creating your '
+             'QR code..." on screen.', 'Medium', '45 s limit; clear message and "Try again" for every failure.', 'Fixed'),
+    ('B-16', 'Live site: home page 500. The production database (Supabase) never received the new columns and tables, '
+             'because Vercel does not run the database update.', 'High',
+     'The site adds missing tables/columns on its first request; SQL script for Supabase.', 'Fixed in code (deploy pending)'),
+    ('B-17', 'Password reset accepted weaker passwords than registration (found while reviewing the reset code).',
+     'Medium (security)', 'Same rule and live checklist as registration; current password refused.', 'Fixed'),
+    ('B-18', 'When Resend refused an address (422), the fix hint wrongly blamed the sender setting.', 'Low',
+     'The hint now names the field Resend refused.', 'Fixed'),
+    ('B-19', 'Mobile number field: while focused, the blue focus border hid the red error border.', 'Low',
+     'Error and success borders kept on focus.', 'Fixed (not re-checked)'),
 ]
 
 OPEN = [
@@ -589,7 +640,8 @@ OPEN = [
      'Medium', 'Show Philippine time, as My Orders already does.', 'Open'),
     ('O-02', 'The "kept form" (BT-11) and PayMongo fee-first browser runs (BT-10) were not completed.',
      'Medium', 'Re-run both before the defense. The server side is covered by TC-10 to TC-12.', 'Open'),
-    ('O-03', 'PayMongo was tested against a simulated PayMongo API only; no real test-mode payment or live webhook.',
+    ('O-03', 'PayMongo: real test-mode QR codes were created (BT-17), but no test-mode payment was completed and no live '
+             'webhook was received; the full flow was tested against a simulated PayMongo.',
      'Medium', 'Make one test-mode QR payment with the PayMongo test key and check the webhook.', 'Open'),
     ('O-04', 'A payment screenshot can be an edited image.', 'Medium',
      'By design the admin or technician checks the money in the shop\'s GCash account; keep this as a written policy.', 'Accepted risk'),
@@ -604,6 +656,13 @@ OPEN = [
     ('O-08', 'Admin Services & Prices: the per-service edit forms have labels that are not linked to their fields '
              '(1,005 fields counted), so a screen reader cannot announce what each field is.',
      'Medium', 'Give each field an id and the label a matching "for" (or an aria-label); re-run the scan.', 'Open'),
+    ('O-09', 'Live site at the last check (BT-15): home and sign-in pages 500, database unreachable.', 'High',
+     'Put the new database password in Vercel (DATABASE_URL), redeploy with the self-updating database code, or run '
+     'scripts/supabase_update_schema.sql in Supabase; re-run the smoke check.', 'Open'),
+    ('O-10', 'Resend still uses its sandbox sender, which only delivers to the Resend account owner, so most customers '
+             'would not receive reset emails.', 'Medium', 'Verify a domain in Resend and set MAIL_FROM to it.', 'Open'),
+    ('O-11', 'The Profile page lets a customer change the mobile number without the new Philippine mobile check; the '
+             'technician forms use their own rule.', 'Low', 'Use services/ph_phone.py there too.', 'Open'),
 ]
 
 
@@ -635,6 +694,17 @@ FAILED_RUNS = [
      '2 test mistakes (records dated in the future; a wrong assumption about the Notifications page). 1 real bug: '
      'new jobs without a recorded assignment time never showed in the technician\'s My Jobs badge.',
      'Bug fixed; tests fixed; passed'),
+    ('R-09', 'Nov 23', 'Manual test by the developer: Transactions > Pay with GCash on the local server',
+     'Failed', 'Real bug: the dialog stayed on "Creating your QR code..." and the card button showed 405 Method Not Allowed. '
+     'Cause: a PHP 0 bill was offered for payment (B-13, B-14, B-15).', 'Bugs fixed; 2 tests added'),
+    ('R-10', 'Nov 23-25', 'Smoke check of the live site (BT-15)', 'Failed (500, then 503)',
+     'Real bug: the production database lacked the new columns (B-16). Later the database password was changed '
+     'without updating Vercel, so the site could not reach its database (configuration, not code).',
+     'Fixed in code; deploy and Vercel setting pending (O-09)'),
+    ('R-11', 'Nov 25', 'Registration tests after the 13-character phone limit', '1 failed, 41 passed',
+     'Outdated test: it still looked for the old hint text "12 digits starting with 63 9".', 'Test updated; passed'),
+    ('R-12', 'Nov 25', 'Registration tests after the digits-only phone rule', '1 failed, 40 passed',
+     'Test mistake: its "wrong" example 0912 345 has 7 digits, which that rule allowed.', 'Test fixed; passed'),
 ]
 
 # Which test or check found each real bug.
@@ -664,6 +734,17 @@ BUG_FINDERS = [
      'Page reloaded; receipt step never shown', 'Browser re-check: receipt step opens and saves'),
     ('BF-11', 'Accessibility scan (BT-12)', 'Text below AA contrast; unlabeled fields on Services & Prices',
      'Measured contrast ratios and labels', 'Still open (section 10)'),
+    ('BF-13', 'Manual test on the local server (R-11)', 'PHP 0 bill offered for payment; card button 405; endless spinner '
+     '(B-13, B-14, B-15)', 'Stuck "Creating your QR code..."; 405 page', 'test_a_bill_the_booking_fee_fully_covers..., '
+     'test_the_qr_dialog_gets_an_answer...'),
+    ('BF-14', 'Smoke check of the live site (BT-15)', 'Production database missing new columns (B-16)', 'Home page 500',
+     'test_missing_columns_and_tables_are_added_and_the_home_page_works'),
+    ('BF-15', 'Code review of the reset page', 'Weaker password rule on reset (B-17)', 'Rule differed from registration',
+     'test_reset_needs_the_same_strong_password_as_registration...'),
+    ('BF-16', 'Real Resend email (BT-16)', 'Wrong fix hint (B-18)', 'Hint blamed MAIL_FROM for a recipient error',
+     'Command-line re-check'),
+    ('BF-17', 'Screenshot review (BT-14)', 'Error border hidden on focus (B-19)', 'Blue border on a wrong number',
+     'Not re-checked yet'),
 ]
 
 # Errors while running the tests (tools and environment, not the system).
@@ -677,6 +758,11 @@ RUN_ERRORS = [
     ('E-05', 'Errors in our own browser scripts', 'A selector did not match the page (a hidden radio button, a field that '
      'did not exist).', 'Scripts corrected; not system defects'),
     ('E-06', 'The full suite takes 25 to 28 minutes', 'Slow development PC.', 'No effect on results'),
+    ('E-07', 'Could not read the live site\'s error log or its database', 'The Vercel and Supabase tools were signed in to '
+     'another account than the one that owns the live site.', 'Diagnosed from page status codes (BT-15) instead'),
+    ('E-08', 'Command to update the live database failed', 'Git Bash read the "!" in the password as a command ("event not '
+     'found"); then the password had been changed ("password authentication failed").',
+     'SQL script for the Supabase SQL Editor prepared (scripts/supabase_update_schema.sql)'),
 ]
 
 NEGATIVE_WORDS = ('refus', 'invalid', 'cannot', 'cant_', 'wrong', 'never', 'only', 'not_', 'denied', 'outsider', 'reject',
@@ -775,7 +861,7 @@ def build_testing(tests_suite, cases, a11y):
                  ('Data:', 'Only made-up test data. Tests use an in-memory database that is created and destroyed for every test, '
                            'so they never touch the real MySQL or Supabase database.'),
                  ('Outside services:', 'PayMongo is replaced by a simulated PayMongo API in tests (no real money, no real keys). '
-                                       'Email (Brevo) and file storage (Supabase) are also simulated.')])
+                                       'Email (Brevo or Resend) and file storage (Supabase) are also simulated.')])
     pdf.h2('2.4 How bias was kept out')
     pdf.para('The tests were written by the development team (with an AI coding assistant) together with the features. That is a '
              'known source of bias: a test can share the same wrong assumption as the code. These steps were taken to reduce it:')
@@ -792,6 +878,54 @@ def build_testing(tests_suite, cases, a11y):
                  'A browser check passes when the page behaves as expected and the browser reports no script errors.',
                  'An accessibility item meets AA when its measured value reaches the WCAG 2.1 threshold '
                  '(contrast 4.5:1 for normal text, 3:1 for large text).'])
+
+    pdf.h2('2.6 Types of web testing used')
+    pdf.para('The table names each kind of web testing, whether it was done, and how. "Partly" and "No" are stated '
+             'plainly so the panel can see the gaps.')
+    pdf.data_table([
+        ['Type of testing', 'Used?', 'How it was done in DEVTech', 'Example'],
+        ['Functional testing', 'Yes', 'Every feature checked against its rules with pytest and the Flask test client',
+         'TC-10 booking fee before booking'],
+        ['Unit testing', 'Yes', 'Single functions called directly', 'TC-41 phone number rule'],
+        ['Integration testing', 'Yes', 'A page or API together with its database and rules, on a fresh in-memory database',
+         'TC-17 bill paid after the repair'],
+        ['System / end-to-end (browser)', 'Yes', 'Playwright drives Microsoft Edge through whole flows', 'BT-13, BT-14'],
+        ['Regression testing', 'Yes', 'Full suite re-run after changes; every fixed bug keeps a test', 'Sections 5 and 6'],
+        ['API testing', 'Yes', 'JSON endpoints checked for status code and content (QR payment, live updates, '
+                               'technician app)', 'TC-45 QR dialog answer'],
+        ['Form / input validation testing', 'Yes', 'Valid and invalid input for every form; server checked without the '
+                                                   'browser script', 'TC-23, TC-41'],
+        ['Security testing', 'Partly', 'Access control, CSRF, escaping, sign-in lockout, caching headers, upload checks. '
+                                       'No outside penetration test', 'TC-20, TC-39'],
+        ['Accessibility testing', 'Partly', 'Automated WCAG 2.1 AA scan of 13 pages; no screen reader test', 'Section 9'],
+        ['Responsive / compatibility', 'Partly', 'Edge at 1280, 390, 375 and 320 px; no other browsers, no real phones',
+         'BT-14'],
+        ['Third-party integration', 'Partly', 'Simulated PayMongo, email and storage in tests; real PayMongo test-mode QR '
+                                              'and a real Resend email by hand', 'BT-16, BT-17'],
+        ['Smoke testing (live site)', 'Yes', 'Status of key pages on the deployed Vercel site', 'BT-15 (failed)'],
+        ['Exploratory / manual testing', 'Yes', 'The developer used the site on the local server like a customer', 'R-09'],
+        ['Database / schema testing', 'Yes', 'Self-updating schema test; SQL script checked with PostgreSQL\'s own parser',
+         'TC-48'],
+        ['Performance / load testing', 'No', 'Not done', 'O-05'],
+        ['Usability / user acceptance', 'No', 'Checklist prepared, not yet run with real users', 'Appendix B'],
+    ], (40, 14, 82, 34), size=7.6, status_col=1)
+    pdf.h2('2.7 Test design methods')
+    pdf.bullets([
+        ('Black-box testing:', 'tests written from the user\'s side, comparing expected and actual results without '
+                               'looking at the code (section 4 test cases, browser checks).'),
+        ('White-box testing:', 'tests written knowing the code, for paths a user cannot easily reach: two requests racing '
+                               'for the same payment, a database error while saving, a crash while starting a QR payment.'),
+        ('Equivalence partitioning:', 'inputs grouped into classes that behave the same, one test per class. Example: '
+                                      'mobile numbers split into valid local, valid international, letters, symbols, wrong '
+                                      'prefix, too short and too long.'),
+        ('Boundary value analysis:', 'tests at the edges of a rule: 11 digits accepted but 7 and 13 refused; a 5th booking '
+                                     'in a time slot accepted and a 6th refused; a password of 8 characters; a PHP 0 bill.'),
+        ('Negative testing and error guessing:', 'deliberately wrong input, wrong user and double clicks (section 7).'),
+        ('Test doubles (simulation):', 'PayMongo, email and file storage replaced by simulated versions, so tests never '
+                                       'spend money, send mail or touch real data.'),
+        ('Automated and manual testing:', 'pytest and Playwright run automatically; manual use of the local and live site '
+                                          'found the bugs in R-09 and R-10.'),
+    ])
 
     # 3 coverage
     pdf.h1('3. What was tested')
@@ -823,7 +957,7 @@ def build_testing(tests_suite, cases, a11y):
                  'Real phones and tablets (only browser windows at 1280 px, 390 px and 320 px).',
                  'Screen readers and a full keyboard-only walkthrough.',
                  'User acceptance testing with real customers, technicians and the shop owner.',
-                 'The live Vercel + Supabase deployment (tests run locally).'])
+                 'The live Vercel + Supabase deployment, apart from a smoke check of page status codes (BT-15).'])
 
     # 4 cases
     pdf.h1('4. Test cases: expected and actual results')
@@ -849,10 +983,13 @@ def build_testing(tests_suite, cases, a11y):
     pdf.para('Every test run that did not pass, in the order it happened. A failure is one of three things: a real bug in '
              'the system, a test that still described an old rule after the requirements changed, or a mistake in the '
              'test itself. Each one is labelled honestly below.')
-    real = sum('Real bug' in r[4] or 'real bug' in r[4] for r in FAILED_RUNS)
-    pdf.callout('In numbers', f'{len(FAILED_RUNS)} failed runs. {real} of them uncovered real bugs in the system '
-                '(R-01, R-02, R-04, R-08); the others were outdated tests or mistakes in the tests. All were resolved: '
-                'the final run is in section 1.', WARN)
+    real = [r[0] for r in FAILED_RUNS if 'real bug' in r[4].lower()]
+    pending = [r[0] for r in FAILED_RUNS if 'pending' in r[5].lower()]
+    pdf.callout('In numbers', f'{len(FAILED_RUNS)} failed runs (automated tests, manual tests and live-site checks). '
+                f'{len(real)} of them uncovered real bugs in the system ({", ".join(real)}); the others were outdated '
+                'tests or mistakes in the tests. '
+                + (f'All are resolved except {", ".join(pending)} (see section 10). ' if pending else 'All were resolved. ')
+                + 'The final automated run is in section 1.', WARN)
     rows = [['Run', 'Date', 'What ran', 'Result', 'Why it failed', 'Outcome']] + [list(r) for r in FAILED_RUNS]
     pdf.data_table(rows, (11, 11, 32, 22, 70, 24), size=7.2)
 
@@ -942,9 +1079,10 @@ def build_testing(tests_suite, cases, a11y):
              f'{len(FAILED_RUNS)} test runs failed; they uncovered real bugs that were fixed, and each fix kept a test. The functions the system is built for work as '
              'specified, including the safety rules around money (fee before booking, payment checked before release, no '
              'double payments, refunds) and privacy (private IDs and receipts, role-based access).')
-    pdf.para('Before the defense the team should: (1) fix O-01 (times in UTC); (2) re-run BT-10 and BT-11 to completion; '
-             '(3) make one PayMongo test-mode payment (O-03); (4) fix the accessibility items in section 9; '
-             '(5) run the UAT checklist in Appendix B with people outside the team and record the results honestly.')
+    pdf.para('Before the defense the team should: (1) bring the live site back (O-09) and re-run the smoke check; '
+             '(2) fix O-01 (times in UTC); (3) re-run BT-10 and BT-11 to completion; (4) make one PayMongo test-mode '
+             'payment (O-03); (5) verify a Resend domain (O-10); (6) fix the accessibility items in section 9; '
+             '(7) run the UAT checklist in Appendix B with people outside the team and record the results honestly.')
 
     # appendices
     pdf.h1('Appendix A. How to re-run the tests')
@@ -1093,13 +1231,23 @@ QUESTIONS = [
     ('What would you improve in security?',
      'Row Level Security on every Supabase table, enforced SSL on the database connection, two-step verification for admins, '
      'and an outside penetration test before launch.'),
+    ('How do you keep the technicians\' IDs safe?',
+     'Only hired staff on the roster can upload one, with consent. The photo is checked, its location data removed, and '
+     'it is stored under a random name in a private bucket with no public link. Only admins and the technician can open '
+     'it, every admin view is logged, it is never cached, the ID number is masked, and it is deleted with the account. '
+     'What we would add: encryption of ID numbers and files, and deleting IDs some time after verification.'),
+    ('What kinds of testing did you do?',
+     'Functional, unit, integration, end-to-end in a real browser, regression, API, security, input validation, '
+     'accessibility (WCAG 2.1 AA), smoke checks of the live site and manual testing. We designed tests with black-box and '
+     'white-box methods, equivalence partitioning and boundary values. Not done: load testing and user acceptance with '
+     'real users.'),
     ('Why a web system and not a mobile app?',
      'One system works on phones and computers without installing anything, it is cheaper to host and update, and the layout '
      'adapts to phone screens.'),
 ]
 
 
-def build_reviewer(total):
+def build_reviewer(total, failed=0):
     pdf = Doc('Capstone Defense Reviewer')
     pdf.title_page('CAPSTONE PROJECT  ·  DEFENSE REVIEWER',
                    'DEVTech Computer Repair and Services System',
@@ -1345,8 +1493,42 @@ def build_reviewer(total):
         ('Maintenance switch.', 'An admin can take the site offline for everyone except admins (Danger Zone, password and '
                                 'typed phrase required).'),
     ])
-    pdf.h2('5.4 What we would still improve (honest list)')
+    pdf.h2('5.4 How technicians\' IDs are kept safe online')
+    pdf.para('Technicians upload a photo of a government ID (front and back) so the admin can confirm who they are. This '
+             'is the most sensitive data in the system, so it is protected at every step:')
     pdf.bullets([
+        ('1. Only with consent, only for hired staff.', 'The technician must agree to how the ID is used (Data Privacy Act '
+                                                        'of 2012) before uploading. Registration only works for a person the '
+                                                        'admin already recorded on the roster, so strangers cannot upload '
+                                                        'IDs. One ID number can belong to one account only.'),
+        ('2. The file is checked and cleaned.', 'Only JPG, PNG, WEBP or PDF up to 5 MB; the file\'s first bytes must '
+                                                'match its type. Location (GPS) data is removed from phone photos.'),
+        ('3. Stored where no web address reaches it.', 'Saved under a random 32-character name (never the original file '
+                                                       'name), outside the public website folder, and never in GitHub. '
+                                                       'On the live site it is copied to a private Supabase Storage bucket '
+                                                       'that only the server can open, with a secret key.'),
+        ('4. Shown only to the right people.', 'Only admins and the technician (while their registration is being '
+                                               'checked) can open it. Customers and other technicians never can. Every '
+                                               'time an admin opens an ID, the activity log records who and when.'),
+        ('5. Sent safely.', 'Only over HTTPS, marked "no-store, private" so the browser does not keep a copy, and '
+                            '"nosniff" so it cannot be run as a script.'),
+        ('6. The ID number is hidden.', 'Shown masked (•••• and the last 4 characters) on the technician\'s status page, '
+                                        'and never written in logs, notifications or emails.'),
+        ('7. No outside scanning service.', 'When the admin scans an ID on the roster, the text is read inside the admin\'s '
+                                            'own browser (Tesseract.js). The photo is not sent to any outside service.'),
+        ('8. Deleted with the account.', 'Deleting the account removes both sides of the ID. Testing found that the back '
+                                         'side was being left behind (bug B-03); it was fixed and a test guards it.'),
+    ])
+    pdf.para('Tested by TC-27 to TC-30 and TC-32 in the Testing Documentation, plus the tests for consent, for the ID number '
+             'never appearing in notifications, and for deletion.', size=9.5, color=MUTED)
+    pdf.callout('Honest limits', 'The app does not encrypt the ID files or the ID numbers itself: files rely on the '
+                'storage provider\'s protection, and ID numbers are plain text in the database, readable by anyone with '
+                'database access. IDs are kept until the account is deleted. See 5.5 for the fixes we would add.', WARN)
+
+    pdf.h2('5.5 What we would still improve (honest list)')
+    pdf.bullets([
+        'Encrypt ID numbers in the database and ID files before storing them, and delete ID photos a set time after the '
+        'technician is verified.',
         'Turn on Row Level Security for every table in Supabase. The app only connects from the server, but RLS would also '
         'block Supabase\'s automatic web API if its public key were ever used.',
         'Enable "Enforce SSL" for database connections in Supabase, and keep regular database backups.',
@@ -1356,12 +1538,16 @@ def build_reviewer(total):
     ])
 
     pdf.h1('6. How we tested the website')
+    final = 'all passed' if not failed else f'{total - failed} passed, {failed} failed'
     pdf.bullets([('Automated tests:', f'{total} tests with pytest. Each test starts with an empty in-memory database, so results do '
-                                      'not depend on each other. Final run: all passed.'),
+                                      f'not depend on each other. Final run: {final}.'),
                  ('Browser tests:', 'Playwright drives Microsoft Edge through real flows (sign-in, booking, payment, orders, '
                                     'double clicks).'),
                  ('Security tests:', 'every fixed security bug keeps a test (access control, escaping, lockout, caching).'),
                  ('Accessibility:', 'WCAG 2.1 AA contrast, labels, names, language and reflow measured on 13 pages.'),
+                 ('Methods:', 'functional, unit, integration, end-to-end, regression, API, security, validation, '
+                              'smoke and manual testing; black-box and white-box tests designed with equivalence '
+                              'partitioning and boundary values (Testing Documentation, sections 2.6 and 2.7).'),
                  ('Honesty:', 'failed and unfinished checks and open issues are written down in the Testing Documentation.')])
     pdf.callout('Tip for the defense', 'Bring the Testing Documentation. If asked "did anything fail?", say yes for the bugs '
                 'found during development (sections 5 and 6 of the Testing Documentation) and explain the fix and the test '
@@ -1379,7 +1565,8 @@ def build_reviewer(total):
                     ['Slots', 'Hourly, 8 AM to 5 PM, 5 bookings per hour, up to the set days ahead'],
                     ['Sign-in lockout', '5 tries; 10 s pause doubling up to 15 min'],
                     ['Idle timeout', '30 minutes (7 days with "Remember me")'],
-                    ['Automated tests', f'{total}, all passing in the final run'],
+                    ['Automated tests', f'{total}, ' + ('all passing in the final run' if not failed
+                                                         else f'{failed} failing in the final run')],
                     ['Hosting', 'Vercel + Supabase (PostgreSQL, Storage) + Brevo'],
                     ['Payments', 'PayMongo QR Ph; shop QR + screenshot; cash after repair']], (50, 120))
     out = os.path.join(os.environ.get('DOCS_OUT') or HERE, 'DEVTech_Defense_Reviewer.pdf')
@@ -1390,4 +1577,4 @@ def build_reviewer(total):
 if __name__ == '__main__':
     suite, cases = load_tests()
     print(build_testing(suite, cases, load_a11y()))
-    print(build_reviewer(len(cases)))
+    print(build_reviewer(len(cases), sum(c['status'] == 'Fail' for c in cases)))
