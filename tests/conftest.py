@@ -34,8 +34,9 @@ def app(tmp_path):
     flask_app.config['ID_UPLOAD_FOLDER'] = str(tmp_path / 'id_documents')
     flask_app.config['CREDENTIAL_UPLOAD_FOLDER'] = str(tmp_path / 'credentials')
     flask_app.config['PAYMENT_QR_FOLDER'] = str(tmp_path / 'payment_qr')
+    flask_app.config['PRODUCT_IMAGE_FOLDER'] = str(tmp_path / 'product_images')
     for key in ('TECH_UPLOAD_FOLDER', 'RECEIPT_UPLOAD_FOLDER', 'MESSAGE_UPLOAD_FOLDER', 'ID_UPLOAD_FOLDER',
-                'CREDENTIAL_UPLOAD_FOLDER', 'PAYMENT_QR_FOLDER'):
+                'CREDENTIAL_UPLOAD_FOLDER', 'PAYMENT_QR_FOLDER', 'PRODUCT_IMAGE_FOLDER'):
         os.makedirs(flask_app.config[key], exist_ok=True)
 
     # Rate-limit counters live for the whole run; start each test from zero.

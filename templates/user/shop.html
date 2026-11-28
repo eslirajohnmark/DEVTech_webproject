@@ -192,7 +192,8 @@ fa-{% if category == 'memory' %}memory{% elif category == 'storage' %}hdd{% elif
     'description': product.description or '',
     'compatibility': product.compatibility or 'Universal',
     'stock': product.stock_quantity,
-    'category': product.category or ''
+    'category': product.category or '',
+    'image': product.image_url or ''
 }}) %}{% endfor %}
 <script id="productDataJson" type="application/json">{{ ns.items|tojson }}</script>
 
@@ -252,29 +253,32 @@ fa-{% if category == 'memory' %}memory{% elif category == 'storage' %}hdd{% elif
 
 <!-- Product Modal -->
 <div class="user-modal" id="productModal">
-    <div class="user-modal-content" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="user-modal-content shop-detail-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="user-modal-header">
             <h2 id="modalTitle">Product Details</h2>
             <button type="button" class="user-modal-close" onclick="closeProductModal()" aria-label="Close">&times;</button>
         </div>
         <div class="user-modal-body" id="productModalBody">
-            <div class="user-modal-image">
-                <i class="fas fa-box" id="modalIcon" style="font-size:4rem;"></i>
+            <div class="shop-detail-grid">
+                <figure class="shop-detail-photo" id="modalPhoto">
+                    <img id="modalImg" alt="" hidden>
+                    <i class="fas fa-box" id="modalIcon" aria-hidden="true"></i>
+                    <figcaption id="modalNoPhoto">No photo yet</figcaption>
+                </figure>
+                <div class="shop-detail-info">
+                    <p class="shop-detail-category" id="modalCategory"></p>
+                    <h3 id="modalName" class="shop-detail-name">Product Name</h3>
+                    <p class="user-modal-price"><span id="modalPrice">₱0.00</span> <s class="shop-was" id="modalWas" hidden></s>
+                        <span class="shop-badge sale" id="modalSale" hidden></span></p>
+                    <dl class="shop-detail-list">
+                        <div><dt>Compatibility</dt><dd id="modalCompat">Universal</dd></div>
+                        <div><dt>Stock</dt><dd id="modalStock">0</dd></div>
+                        <div id="modalRegularRow" hidden><dt>Regular price</dt><dd id="modalRegular"></dd></div>
+                    </dl>
+                </div>
             </div>
-            <h3 id="modalName" style="font-size:1.3rem; font-weight:700;">Product Name</h3>
-            <p class="user-modal-price"><span id="modalPrice">₱0.00</span> <s class="shop-was" id="modalWas" hidden></s>
-                <span class="shop-badge sale" id="modalSale" hidden></span></p>
-            <p class="user-modal-desc" id="modalDesc">Description</p>
-            <div class="user-modal-compat">
-                <i class="fas fa-check-circle" style="color:var(--success);"></i>
-                <span>Compatibility: </span>
-                <span id="modalCompat">Universal</span>
-            </div>
-            <div class="user-modal-stock">
-                <span>Available Stock: </span>
-                <span id="modalStock">0</span>
-                <span> units</span>
-            </div>
+            <h4 class="shop-detail-heading">Description</h4>
+            <p class="user-modal-desc shop-detail-desc" id="modalDesc">Description</p>
             <div class="user-modal-quantity">
                 <label for="modalQty">Quantity:</label>
                 <div class="user-quantity-control">
@@ -954,14 +958,35 @@ function showProductDetails(id) {
     was.hidden = sale.hidden = !product.onSale;
     was.textContent = peso(product.regular);
     sale.textContent = `Sale −${product.discount}%`;
-    document.getElementById('modalDesc').textContent = product.description || 'No description available';
+    document.getElementById('modalDesc').textContent = product.description || 'The shop has not added a description for this product yet.';
     document.getElementById('modalCompat').textContent = product.compatibility || 'Universal';
-    document.getElementById('modalStock').textContent = product.stock;
+    document.getElementById('modalStock').textContent = product.stock > 0
+        ? `${product.stock} unit${product.stock === 1 ? '' : 's'} available` : 'Out of stock';
+    document.getElementById('modalStock').classList.toggle('is-out', product.stock <= 0);
+    const category = (product.category || '').trim();
+    document.getElementById('modalCategory').textContent = category ? category.charAt(0).toUpperCase() + category.slice(1) : '';
+    document.getElementById('modalCategory').hidden = !category;
+    document.getElementById('modalRegularRow').hidden = !product.onSale;
+    document.getElementById('modalRegular').textContent = `${peso(product.regular)} (you save ${peso(product.regular - product.price)})`;
     const qty = document.getElementById('modalQty');
     qty.value = 1;
     qty.max = Math.max(1, Math.min(99, product.stock));
     const icons = {memory: 'fa-memory', storage: 'fa-hdd', battery: 'fa-battery-three-quarters', accessory: 'fa-plug', cpu: 'fa-microchip', gpu: 'fa-gamepad'};
-    document.getElementById('modalIcon').className = `fas ${icons[product.category] || 'fa-box'}`;
+    // The product photo; the category icon when there is none (or it fails to load).
+    const img = document.getElementById('modalImg');
+    const icon = document.getElementById('modalIcon');
+    const noPhoto = document.getElementById('modalNoPhoto');
+    icon.className = `fas ${icons[product.category] || 'fa-box'}`;
+    const showIcon = () => { img.hidden = true; icon.hidden = false; noPhoto.hidden = false; };
+    if (product.image) {
+        img.onerror = showIcon;
+        img.alt = `Photo of ${product.name}`;
+        img.src = product.image;
+        img.hidden = false; icon.hidden = true; noPhoto.hidden = true;
+    } else {
+        img.removeAttribute('src');
+        showIcon();
+    }
     const addBtn = document.getElementById('modalAddBtn');
     addBtn.disabled = product.stock <= 0;
     addBtn.querySelector('.btn-text').textContent = product.stock > 0 ? 'Add to Cart' : 'Out of Stock';

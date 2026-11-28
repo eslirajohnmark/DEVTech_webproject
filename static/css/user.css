@@ -12635,3 +12635,47 @@ html, body {
 .user-field-hint.is-error { color: var(--user-danger); }
 .user-field-hint.is-ok { color: #12B76A; }
 .user-transaction-note { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--user-text-muted); }
+
+/* ---- Shop: product details window (photo + complete details) ---- */
+.shop-badge[hidden], .shop-was[hidden], .shop-detail-list [hidden], .shop-detail-photo [hidden],
+.shop-detail-category[hidden] { display: none !important; }    /* "Sale -0%" showed on products not on sale */
+.user-modal-content.shop-detail-modal { max-width: 760px; }
+.shop-detail-grid { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 1.4rem; align-items: start; }
+.shop-detail-photo {
+    margin: 0; aspect-ratio: 1; width: 100%; max-width: 100%; border-radius: var(--user-radius-md); overflow: hidden;
+    display: grid; place-content: center; justify-items: center; gap: 0.4rem;
+    background: rgba(37, 99, 235, 0.06); border: 1px solid var(--user-border);
+}
+.shop-detail-photo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.shop-detail-photo i { font-size: 4rem; color: var(--user-primary); }
+.shop-detail-photo figcaption { font-size: 0.8rem; color: var(--user-text-muted); }
+.shop-detail-info { min-width: 0; display: grid; gap: 0.35rem; align-content: start; }
+.shop-detail-category { margin: 0; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--user-primary); }
+.shop-detail-name { margin: 0; font-size: 1.35rem; font-weight: 700; line-height: 1.25; color: var(--user-text-primary);
+    overflow-wrap: anywhere; }
+.shop-detail-info .user-modal-price { margin: 0.2rem 0 0.4rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; }
+.shop-detail-list { margin: 0; display: grid; border-top: 1px solid var(--user-border); }
+.shop-detail-list > div { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 0.6rem; padding: 0.5rem 0;
+    border-bottom: 1px solid var(--user-border); font-size: 0.9rem; }
+.shop-detail-list dt { color: var(--user-text-muted); }
+.shop-detail-list dd { margin: 0; color: var(--user-text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.shop-detail-list dd.is-out { color: var(--user-danger); }
+.shop-detail-heading { margin: 1.2rem 0 0.3rem; font-size: 0.95rem; font-weight: 700; color: var(--user-text-primary); }
+.shop-detail-desc { white-space: pre-line; overflow-wrap: anywhere; margin-bottom: 1rem; }
+.user-product-card .user-product-image img { max-height: 110px; }
+@media (max-width: 640px) {
+    .shop-detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .shop-detail-photo { max-width: 320px; margin-inline: auto; }
+}
+
+/* A toast added straight to <body> (Notifications, Messages, Dashboard, bookings pages, user.js)
+   floats at the top right. <body> is the sidebar | content flex row, and the toast rule above
+   (position: relative; width: 100%, meant for toasts stacked in #toastContainer) made such a
+   toast a third column: the page squeezed left and a dark strip stayed on the right. */
+body > .user-toast {
+    position: fixed;
+    top: 20px; right: 20px; bottom: auto; left: auto;
+    width: auto; max-width: min(400px, calc(100vw - 40px));
+    z-index: 10000;
+}

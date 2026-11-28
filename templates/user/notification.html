@@ -49,7 +49,7 @@
         <i class="fas fa-bell"></i> All
         <span class="user-tab-badge">{{ notifications|length }}</span>
     </button>
-    <button class="user-filter-tab" onclick="filterNotifications('unread', this)">
+    <button class="user-filter-tab" data-tab="unread" onclick="filterNotifications('unread', this)">
         <i class="fas fa-circle" style="color:var(--user-primary); font-size:0.6rem;"></i> Unread
         <span class="user-tab-badge">{{ notifications|selectattr('is_read', 'equalto', false)|list|length }}</span>
     </button>
@@ -441,7 +441,8 @@
     function updateBadgeCount() {
         const unread = document.querySelectorAll('.user-notification-card.unread').length;
         const badge = document.querySelector('.user-badge');
-        const tabBadge = document.querySelector('.user-filter-tab.active .user-tab-badge');
+        // The Unread tab's count (it used to overwrite whichever tab was open, e.g. "All").
+        const tabBadge = document.querySelector('.user-filter-tab[data-tab="unread"] .user-tab-badge');
         
         if (badge) {
             if (unread > 0) {

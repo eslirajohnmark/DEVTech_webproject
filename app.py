@@ -6807,6 +6807,75 @@ def _int_field(raw, label, minimum=0, maximum=1_000_000):
         return None, f'{label} must be between {minimum} and {maximum:,}.'
     return value, None
 
+# ---- product photos (Admin > Products), shown in the shop. Stored like the payment QR:
+# random name on disk (copied to Supabase Storage when it is set up) and served by the app.
+PRODUCT_IMAGE_PREFIX = '/product-images/'
+PRODUCT_IMAGE_NAME_RE = re.compile(r'^prod_[0-9a-f]{16}\.(jpg|png|webp)$')
+PRODUCT_IMAGE_TYPES = ('image/jpeg', 'image/png', 'image/webp')
+app.config.setdefault('PRODUCT_IMAGE_FOLDER', os.path.join(app.instance_path, 'uploads', 'product_images'))
+
+def uploaded_product_image(image_url):
+    """The stored file name when this picture was uploaded here (not a link), else ''."""
+    url = image_url or ''
+    name = url[len(PRODUCT_IMAGE_PREFIX):] if url.startswith(PRODUCT_IMAGE_PREFIX) else ''
+    return name if PRODUCT_IMAGE_NAME_RE.match(name) else ''
+
+def save_product_image(upload):
+    """Save an uploaded product photo. Returns (image_url, None) or (None, problem)."""
+    from services.upload_service import check_file, strip_jpeg_metadata
+    if (upload.mimetype or '') not in PRODUCT_IMAGE_TYPES:
+        return None, 'The product photo must be a JPG, PNG or WEBP image.'
+    ok, checked = check_file(upload, max_bytes=PROOF_MAX_BYTES)
+    if not ok:
+        return None, checked
+    data, mime, ext, _ = checked
+    if mime == 'image/jpeg':
+        data = strip_jpeg_metadata(data)
+    folder = app.config['PRODUCT_IMAGE_FOLDER']
+    os.makedirs(folder, exist_ok=True)
+    name = f'prod_{secrets.token_hex(8)}{ext}'
+    with open(os.path.join(folder, name), 'wb') as fh:
+        fh.write(data)
+    file_store.saved(os.path.join(folder, name))
+    return PRODUCT_IMAGE_PREFIX + name, None
+
+def drop_product_image(image_url):
+    """Delete an uploaded product photo that is no longer used (links are left alone)."""
+    name = uploaded_product_image(image_url)
+    if name:
+        file_store.removed(os.path.join(app.config['PRODUCT_IMAGE_FOLDER'], name))
+
+@app.route('/product-images/<name>')
+def product_image(name):
+    """A product photo. Not private (it is shown in the shop); each upload gets a new
+    random name, so browsers may keep it for a day."""
+    if not PRODUCT_IMAGE_NAME_RE.match(name):
+        abort(404)
+    path = os.path.join(app.config['PRODUCT_IMAGE_FOLDER'], name)
+    if not file_store.exists(path):
+        abort(404)
+    resp = send_file(path, max_age=86400)
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
+def _product_photo_from_request(data, current=None):
+    """Apply the photo part of the product form to `data`: a new upload wins, then
+    "Remove the current photo", then a typed image link; with none of these the product
+    keeps the picture it has. Returns a problem message or None."""
+    upload = request.files.get('image_file')
+    if upload and upload.filename:
+        url, problem = save_product_image(upload)
+        if problem:
+            return problem
+        data['image_url'] = url
+    elif request.form.get('remove_image'):
+        data['image_url'] = None
+    elif not data.get('image_url'):
+        data['image_url'] = current
+    return None
+
+app.jinja_env.globals['uploaded_product_image'] = uploaded_product_image
+
 def _product_from_form(form):
     """Validated product fields from a submitted form. Returns (data, error)."""
     name = (form.get('name') or '').strip()
@@ -6819,8 +6888,9 @@ def _product_from_form(form):
     if err:
         return None, err
     image_url = (form.get('image_url') or '').strip()
-    if image_url and not (image_url.startswith('https://') or image_url.startswith('/static/')):
-        return None, 'Image URL must start with https:// or /static/.'
+    if image_url and not (image_url.startswith('https://') or image_url.startswith('/static/')
+                          or uploaded_product_image(image_url)):
+        return None, 'An image link must start with https:// (or upload a photo instead).'
     sale_price = None
     if (form.get('sale_price') or '').strip():
         sale_price, err = _decimal_field(form.get('sale_price'), 'Sale price', minimum=0.01)
@@ -6851,6 +6921,7 @@ def admin_products():
 @admin_required
 def admin_product_create():
     data, err = _product_from_form(request.form)
+    err = err or _product_photo_from_request(data)
     if err:
         flash(err, 'danger')
         return redirect(url_for('admin_products'))
@@ -6867,12 +6938,16 @@ def admin_product_create():
 def admin_product_update(product_id):
     product = Product.query.get_or_404(product_id)
     data, err = _product_from_form(request.form)
+    err = err or _product_photo_from_request(data, current=product.image_url)
     if err:
         flash(err, 'danger')
         return redirect(url_for('admin_products'))
+    old_image = product.image_url
     for key, value in data.items():
         setattr(product, key, value)
     db.session.commit()
+    if old_image != product.image_url:
+        drop_product_image(old_image)          # the replaced or removed upload
     cache.delete('active_products')
     log_activity(session.get('user_id'), 'product_update', f'Updated product: {product.name}')
     flash(f'{product.name} updated.', 'success')

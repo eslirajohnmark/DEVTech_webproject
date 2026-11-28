@@ -27,13 +27,31 @@
         <label>Compatibility</label>
         <input type="text" name="compatibility" maxlength="100" value="{{ p.compatibility if p and p.compatibility else '' }}" placeholder="e.g. DDR4">
     </div>
-    <div class="admin-form-group">
-        <label>Image URL (optional)</label>
-        <input type="text" name="image_url" maxlength="255" value="{{ p.image_url if p and p.image_url else '' }}" placeholder="https://…">
-    </div>
     <div class="admin-form-group admin-form-wide">
         <label>Description</label>
-        <textarea name="description" rows="2" maxlength="2000">{{ p.description if p and p.description else '' }}</textarea>
+        <textarea name="description" rows="3" maxlength="2000" placeholder="What it is, specs, warranty…">{{ p.description if p and p.description else '' }}</textarea>
+    </div>
+    {% set fid = 'p' ~ (p.id if p else 'new') %}
+    <div class="admin-form-group admin-form-wide">
+        <span class="prod-photo-label">Product photo</span>
+        <div class="prod-photo">
+            <div class="prod-photo-preview" id="{{ fid }}-preview">
+                {% if p and p.image_url %}<img src="{{ p.image_url }}" alt="Photo of {{ p.name }}">
+                {% else %}<i class="fas fa-image" aria-hidden="true"></i><span>No photo yet</span>{% endif %}
+            </div>
+            <div class="prod-photo-inputs">
+                <label for="{{ fid }}-file">Upload a photo</label>
+                <input type="file" id="{{ fid }}-file" name="image_file" accept="image/jpeg,image/png,image/webp"
+                       data-photo-preview="{{ fid }}-preview">
+                <small class="admin-muted">JPG, PNG or WEBP, up to 5 MB.{% if p and p.image_url %} A new photo replaces the current one.{% endif %}</small>
+                {% if p and p.image_url %}
+                <label class="prod-photo-remove"><input type="checkbox" name="remove_image" value="1"> Remove the current photo</label>
+                {% endif %}
+                <label for="{{ fid }}-link">Or an image link (optional)</label>
+                <input type="text" id="{{ fid }}-link" name="image_url" maxlength="255" placeholder="https://…"
+                       value="{{ p.image_url if p and p.image_url and not uploaded_product_image(p.image_url) else '' }}">
+            </div>
+        </div>
     </div>
 </div>
 {% endmacro %}
@@ -48,7 +66,7 @@
 
 <details class="admin-card" {% if not products %}open{% endif %}>
     <summary>Add a product</summary>
-    <form method="POST" action="{{ url_for('admin_product_create') }}">
+    <form method="POST" action="{{ url_for('admin_product_create') }}" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {{ product_fields() }}
         <button type="submit" class="admin-btn admin-btn-primary"><i class="fas fa-plus"></i> Add product</button>
@@ -56,16 +74,22 @@
 </details>
 
 <div class="admin-table-container" style="overflow-x:auto;"><table class="admin-table">
-<thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th></th></tr></thead>
+<thead><tr><th>Photo</th><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th></th></tr></thead>
 <tbody>
 {% for p in products %}
 <tr {% if not p.is_active %}style="opacity:0.6;"{% endif %}>
+    <td class="prod-thumb-cell">
+        {% if p.image_url %}<a href="{{ p.image_url }}" target="_blank" rel="noopener" class="prod-thumb" title="Open the full photo">
+            <img src="{{ p.image_url }}" alt="Photo of {{ p.name }}" loading="lazy"></a>
+        {% else %}<span class="prod-thumb prod-thumb-empty" title="No photo yet"><i class="fas fa-image" aria-hidden="true"></i>
+            <span class="sr-only">No photo</span></span>{% endif %}
+    </td>
     <td>
         <strong>{{ p.name }}</strong>
         {% if p.compatibility %}<span class="admin-muted"> · {{ p.compatibility }}</span>{% endif %}
         <details class="admin-row-edit">
             <summary><i class="fas fa-pen"></i> Edit</summary>
-            <form method="POST" action="{{ url_for('admin_product_update', product_id=p.id) }}">
+            <form method="POST" action="{{ url_for('admin_product_update', product_id=p.id) }}" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {{ product_fields(p) }}
                 <button type="submit" class="admin-btn admin-btn-sm admin-btn-primary">Save changes</button>
@@ -91,8 +115,33 @@
     </td>
 </tr>
 {% else %}
-<tr><td colspan="6" style="text-align:center;padding:1.5rem;">No products yet. Add one above.</td></tr>
+<tr><td colspan="7" style="text-align:center;padding:1.5rem;">No products yet. Add one above.</td></tr>
 {% endfor %}
 </tbody></table></div>
 <p class="admin-muted" style="margin-top:0.8rem;">Hidden products disappear from the shop but stay on past orders. Products are never deleted, so order history stays intact.</p>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Show the chosen photo before saving (a data: image: the page's security policy allows those).
+document.querySelectorAll('input[data-photo-preview]').forEach(input => input.addEventListener('change', () => {
+    const box = document.getElementById(input.dataset.photoPreview);
+    const file = input.files && input.files[0];
+    if (!box || !file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        box.innerHTML = '<i class="fas fa-triangle-exclamation" aria-hidden="true"></i><span>Choose a JPG, PNG or WEBP image</span>';
+        input.value = '';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+        box.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = reader.result;
+        img.alt = 'Preview of the new photo';
+        box.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+}));
+</script>
 {% endblock %}

@@ -191,7 +191,7 @@ class Doc(FPDF):
                 for j, value in enumerate(row):
                     value = str(value)
                     if head and i and status_col is not None and j == status_col:
-                        c = PASS if value.startswith(('Pass', 'Fixed', 'OK', 'Meets')) or value == 'Yes' else \
+                        c = PASS if value.startswith(('Pass', 'Fixed', 'OK', 'Meets', 'Resolved')) or value == 'Yes' else \
                             FAIL if value.startswith(('Fail', 'Open', 'Does not')) or value == 'No' else WARN
                         r.cell(value, style=FontFace(emphasis='BOLD', color=c))
                     else:
@@ -588,13 +588,44 @@ BROWSER = [
      'Pass (fix not re-checked)', 'Nov 25'),
     ('BT-15', 'Smoke check of the live Vercel site: /, /login, /forgot-password, /healthz', 'Every page 200; database connected',
      '1st check: home page 500 (B-16), other pages 200. Later check: / and /login 500, /healthz 503 "database '
-     'unreachable" (database password changed, Vercel not updated)', 'Fail', 'Nov 23-25'),
+     'unreachable" (database password changed, Vercel not updated). Re-check Nov 25, 14:22 UTC: all pages 200, '
+     'database connected (section 4.2)', 'Pass (after fix)', 'Nov 23-25'),
     ('BT-16', 'Real email through Resend (command line)', 'Accepted for Resend\'s test inbox; a clear reason when refused',
      'Accepted (id returned). Refused for example.com with 422, and our fix hint blamed the wrong setting (B-18); fixed',
      'Pass (after fix)', 'Nov 23'),
     ('BT-17', 'Real PayMongo test-mode QR code (API, no payment)', 'QR created for small amounts',
      'QR created in about 1 s for PHP 5, 19.99 and 20; PHP 0 refused before calling PayMongo (explains B-13)', 'Pass', 'Nov 23'),
     ('BT-12', 'Accessibility spot check of 13 pages', 'WCAG 2.1 AA contrast, labels, names, reflow', 'See section 9', 'See section 9', 'Nov 22'),
+]
+
+LIVE_URL = 'https://devtech-taclobancity.vercel.app'
+LIVE_WHEN = 'Nov 25, 2026, 14:22 UTC (10:22 PM Philippine time)'
+# Checks of the deployed website. Read-only: pages were opened, nothing was submitted.
+LIVE = [
+    ('LT-01', 'Public pages answer', 'Home, sign-in (3 portals), register (customer, technician), forgot password, '
+     'CSS and JS files', 'Every page 200', 'All 200', 'Pass'),
+    ('LT-02', 'Health check', '/healthz', 'Database connected', '{"database":"connected","status":"ok"}', 'Pass'),
+    ('LT-03', 'Unknown page', '/this-page-does-not-exist', '404 page, no crash', '404', 'Pass'),
+    ('LT-04', 'Protected pages while signed out', 'Customer, admin and technician dashboards',
+     'Sent to that portal\'s sign-in page', '302 to /login, /admin/login, /technician/login', 'Pass'),
+    ('LT-05', 'HTTPS only', 'http:// address; Strict-Transport-Security header',
+     'Redirect to https; browsers told to use HTTPS', '308 to https; HSTS 1 year with subdomains', 'Pass'),
+    ('LT-06', 'Security headers and cookie', 'Headers of the sign-in page',
+     'CSP, nosniff, frame protection, no-store; cookie Secure, HttpOnly, SameSite',
+     'All present: CSP, nosniff, X-Frame-Options SAMEORIGIN, Referrer-Policy, no-store; cookie Secure, HttpOnly, '
+     'SameSite=Lax', 'Pass'),
+    ('LT-07', 'Form sent without its CSRF token', 'Sign-in form posted from outside the site', 'Refused, not processed',
+     'Redirected back with "Your form session expired"; nothing processed', 'Pass'),
+    ('LT-08', 'Pages in a real browser', '7 pages in Microsoft Edge at 1280 px (desktop) and 375 px (phone)',
+     'No script errors, no failed files, no sideways scrolling', '14 of 14 loads clean', 'Pass'),
+    ('LT-09', 'Basic accessibility on the live pages', 'Same 14 loads', 'Language set; images have alt text; '
+     'fields have labels', 'lang="en" everywhere; 0 images without alt; 0 unlabeled fields (contrast not re-measured)', 'Pass'),
+    ('LT-10', 'Live mobile number field', 'Typed 09171234567, +639171234567, 0917123456789, 12345678901, 0917ABC4567 '
+     '(never submitted)', 'Valid, valid, too long, incorrect prefix, letters', 'Exactly as expected', 'Pass'),
+    ('LT-11', 'The deployed version is the latest', 'Register and forgot-password pages', 'New phone check and email reset '
+     'present', 'Both present ("Send reset link" shown)', 'Pass'),
+    ('LT-12', 'Response time', 'Home page timed 4 times; sign-in twice', 'Server answer under about 3 s',
+     'Home 6.1 to 6.5 s every time (11 to 12 s full load in the browser); sign-in 1.7 to 2.0 s', 'Fail'),
 ]
 
 FIXED = [
@@ -626,7 +657,7 @@ FIXED = [
              'QR code..." on screen.', 'Medium', '45 s limit; clear message and "Try again" for every failure.', 'Fixed'),
     ('B-16', 'Live site: home page 500. The production database (Supabase) never received the new columns and tables, '
              'because Vercel does not run the database update.', 'High',
-     'The site adds missing tables/columns on its first request; SQL script for Supabase.', 'Fixed in code (deploy pending)'),
+     'The site adds missing tables/columns on its first request; SQL script for Supabase.', 'Fixed (re-checked live)'),
     ('B-17', 'Password reset accepted weaker passwords than registration (found while reviewing the reset code).',
      'Medium (security)', 'Same rule and live checklist as registration; current password refused.', 'Fixed'),
     ('B-18', 'When Resend refused an address (422), the fix hint wrongly blamed the sender setting.', 'Low',
@@ -656,9 +687,12 @@ OPEN = [
     ('O-08', 'Admin Services & Prices: the per-service edit forms have labels that are not linked to their fields '
              '(1,005 fields counted), so a screen reader cannot announce what each field is.',
      'Medium', 'Give each field an id and the label a matching "for" (or an aria-label); re-run the scan.', 'Open'),
-    ('O-09', 'Live site at the last check (BT-15): home and sign-in pages 500, database unreachable.', 'High',
-     'Put the new database password in Vercel (DATABASE_URL), redeploy with the self-updating database code, or run '
-     'scripts/supabase_update_schema.sql in Supabase; re-run the smoke check.', 'Open'),
+    ('O-09', 'Live site was down (BT-15): home and sign-in pages 500, database unreachable.', 'High',
+     'Done: new database password in Vercel, self-updating database code deployed. Re-checked on Nov 25 (LT-01, LT-02).',
+     'Resolved'),
+    ('O-12', 'The live server runs in Washington DC (Vercel region iad1) while the database is in Singapore, so every '
+             'database query crosses the Pacific: the home page takes about 6 s to answer (LT-12).', 'Medium',
+     'Set the Vercel Function Region to Singapore (sin1), redeploy, and time the pages again.', 'Open'),
     ('O-10', 'Resend still uses its sandbox sender, which only delivers to the Resend account owner, so most customers '
              'would not receive reset emails.', 'Medium', 'Verify a domain in Resend and set MAIL_FROM to it.', 'Open'),
     ('O-11', 'The Profile page lets a customer change the mobile number without the new Philippine mobile check; the '
@@ -700,7 +734,7 @@ FAILED_RUNS = [
     ('R-10', 'Nov 23-25', 'Smoke check of the live site (BT-15)', 'Failed (500, then 503)',
      'Real bug: the production database lacked the new columns (B-16). Later the database password was changed '
      'without updating Vercel, so the site could not reach its database (configuration, not code).',
-     'Fixed in code; deploy and Vercel setting pending (O-09)'),
+     'Fixed and deployed; live re-check passed on Nov 25 (section 4.2)'),
     ('R-11', 'Nov 25', 'Registration tests after the 13-character phone limit', '1 failed, 41 passed',
      'Outdated test: it still looked for the old hint text "12 digits starting with 63 9".', 'Test updated; passed'),
     ('R-12', 'Nov 25', 'Registration tests after the digits-only phone rule', '1 failed, 40 passed',
@@ -818,11 +852,14 @@ def build_testing(tests_suite, cases, a11y):
         ['Time for the full run', f'{seconds / 60:.1f} minutes on the development PC'],
         ['Browser (system) checks', f'{sum(1 for b in BROWSER if b[4].startswith("Pass"))} passed, '
                                     f'{sum(1 for b in BROWSER if b[4] == "Not completed")} not completed, 1 reported in section 9'],
+        ['Checks of the deployed website', f'{sum(1 for l in LIVE if l[5] == "Pass")} passed, '
+                                           f'{sum(1 for l in LIVE if l[5] == "Fail")} failed (section 4.2)'],
         ['Failed test runs during development', f'{len(FAILED_RUNS)} (section 5), all resolved'],
         ['Error and negative tests', f'{len(negative_tests(cases))} (section 7)'],
         ['Defects found and fixed during testing', f'{len(FIXED)}'],
         ['Open issues / needs fixing', f'{sum(1 for o in OPEN if o[4] == "Open")} open, '
-                                       f'{sum(1 for o in OPEN if o[4] != "Open")} accepted or monitored'],
+                                       f'{sum(1 for o in OPEN if o[4] == "Resolved")} resolved, '
+                                       f'{sum(1 for o in OPEN if o[4] not in ("Open", "Resolved"))} accepted or monitored'],
     ], (70, 100))
     verdict = ('All automated tests passed.' if failed == 0 else f'{failed} automated tests failed.')
     pdf.callout('Honest verdict',
@@ -902,11 +939,13 @@ def build_testing(tests_suite, cases, a11y):
          'BT-14'],
         ['Third-party integration', 'Partly', 'Simulated PayMongo, email and storage in tests; real PayMongo test-mode QR '
                                               'and a real Resend email by hand', 'BT-16, BT-17'],
-        ['Smoke testing (live site)', 'Yes', 'Status of key pages on the deployed Vercel site', 'BT-15 (failed)'],
+        ['Deployed-site (live) testing', 'Yes', 'Read-only checks of the real website on the internet: pages, '
+                                                'redirects, HTTPS, headers, CSRF, browser at two widths', 'Section 4.2'],
         ['Exploratory / manual testing', 'Yes', 'The developer used the site on the local server like a customer', 'R-09'],
         ['Database / schema testing', 'Yes', 'Self-updating schema test; SQL script checked with PostgreSQL\'s own parser',
          'TC-48'],
-        ['Performance / load testing', 'No', 'Not done', 'O-05'],
+        ['Performance / load testing', 'Partly', 'Response times of the live pages measured; no load test with '
+                                                    'many users', 'LT-12 (failed)'],
         ['Usability / user acceptance', 'No', 'Checklist prepared, not yet run with real users', 'Appendix B'],
     ], (40, 14, 82, 34), size=7.6, status_col=1)
     pdf.h2('2.7 Test design methods')
@@ -957,7 +996,8 @@ def build_testing(tests_suite, cases, a11y):
                  'Real phones and tablets (only browser windows at 1280 px, 390 px and 320 px).',
                  'Screen readers and a full keyboard-only walkthrough.',
                  'User acceptance testing with real customers, technicians and the shop owner.',
-                 'The live Vercel + Supabase deployment, apart from a smoke check of page status codes (BT-15).'])
+                 'On the live site, anything that writes data: signing in, booking, paying, sending email, admin '
+                 'actions. Only read-only checks were run there (section 4.2).'])
 
     # 4 cases
     pdf.h1('4. Test cases: expected and actual results')
@@ -976,7 +1016,22 @@ def build_testing(tests_suite, cases, a11y):
              'and are reported as such.', size=9.5, color=MUTED)
     rows = [['ID', 'Check', 'Expected', 'Actual', 'Status', 'Date']]
     rows += [list(b) for b in BROWSER]
-    pdf.data_table(rows, (12, 48, 42, 42, 18, 8), size=7.4, status_col=4)
+    pdf.data_table(rows, (12, 45, 40, 42, 18, 13), size=7.4, status_col=4)
+
+    pdf.h2('4.2 Testing the deployed website (live)')
+    pdf.para(f'The real website at {LIVE_URL} was tested over the internet on {LIVE_WHEN}, from the development PC. '
+             'These checks only open pages and read their answers: nothing was submitted, so no account, booking or '
+             'payment was created in the real database. Pages were loaded with curl (status, headers, timing) and in '
+             'Microsoft Edge with Playwright (script errors, failed files, layout, accessibility basics).')
+    rows = [['ID', 'Check', 'Input', 'Expected', 'Actual', 'Status']] + [list(l) for l in LIVE]
+    pdf.data_table(rows, (12, 30, 38, 36, 40, 14), size=7.4, status_col=5)
+    live_fail = [l for l in LIVE if l[5] == 'Fail']
+    pdf.callout('Live result', f'{len(LIVE) - len(live_fail)} of {len(LIVE)} live checks passed. '
+                + ('Failed: ' + '; '.join(f'{l[0]} {l[1].lower()}' for l in live_fail) + '. The home page answers slowly '
+                   'because the server runs in Washington DC while the database is in Singapore (open issue O-12). '
+                   if live_fail else '')
+                + 'An earlier live check had failed (BT-15: home page 500, then database unreachable); after the fix, '
+                'this re-check passed.', WARN if live_fail else PASS)
 
     # 5 failed tests
     pdf.h1('5. Failed tests during development')
@@ -1079,7 +1134,7 @@ def build_testing(tests_suite, cases, a11y):
              f'{len(FAILED_RUNS)} test runs failed; they uncovered real bugs that were fixed, and each fix kept a test. The functions the system is built for work as '
              'specified, including the safety rules around money (fee before booking, payment checked before release, no '
              'double payments, refunds) and privacy (private IDs and receipts, role-based access).')
-    pdf.para('Before the defense the team should: (1) bring the live site back (O-09) and re-run the smoke check; '
+    pdf.para('Before the defense the team should: (1) move the Vercel server to Singapore (O-12) and re-time the pages; '
              '(2) fix O-01 (times in UTC); (3) re-run BT-10 and BT-11 to completion; (4) make one PayMongo test-mode '
              'payment (O-03); (5) verify a Resend domain (O-10); (6) fix the accessibility items in section 9; '
              '(7) run the UAT checklist in Appendix B with people outside the team and record the results honestly.')
@@ -1497,26 +1552,26 @@ def build_reviewer(total, failed=0):
     pdf.para('Technicians upload a photo of a government ID (front and back) so the admin can confirm who they are. This '
              'is the most sensitive data in the system, so it is protected at every step:')
     pdf.bullets([
-        ('1. Only with consent, only for hired staff.', 'The technician must agree to how the ID is used (Data Privacy Act '
+        ('Only with consent, only for hired staff.', 'The technician must agree to how the ID is used (Data Privacy Act '
                                                         'of 2012) before uploading. Registration only works for a person the '
                                                         'admin already recorded on the roster, so strangers cannot upload '
                                                         'IDs. One ID number can belong to one account only.'),
-        ('2. The file is checked and cleaned.', 'Only JPG, PNG, WEBP or PDF up to 5 MB; the file\'s first bytes must '
+        ('The file is checked and cleaned.', 'Only JPG, PNG, WEBP or PDF up to 5 MB; the file\'s first bytes must '
                                                 'match its type. Location (GPS) data is removed from phone photos.'),
-        ('3. Stored where no web address reaches it.', 'Saved under a random 32-character name (never the original file '
+        ('Stored where no web address reaches it.', 'Saved under a random 32-character name (never the original file '
                                                        'name), outside the public website folder, and never in GitHub. '
                                                        'On the live site it is copied to a private Supabase Storage bucket '
                                                        'that only the server can open, with a secret key.'),
-        ('4. Shown only to the right people.', 'Only admins and the technician (while their registration is being '
+        ('Shown only to the right people.', 'Only admins and the technician (while their registration is being '
                                                'checked) can open it. Customers and other technicians never can. Every '
                                                'time an admin opens an ID, the activity log records who and when.'),
-        ('5. Sent safely.', 'Only over HTTPS, marked "no-store, private" so the browser does not keep a copy, and '
+        ('Sent safely.', 'Only over HTTPS, marked "no-store, private" so the browser does not keep a copy, and '
                             '"nosniff" so it cannot be run as a script.'),
-        ('6. The ID number is hidden.', 'Shown masked (•••• and the last 4 characters) on the technician\'s status page, '
+        ('The ID number is hidden.', 'Shown masked (•••• and the last 4 characters) on the technician\'s status page, '
                                         'and never written in logs, notifications or emails.'),
-        ('7. No outside scanning service.', 'When the admin scans an ID on the roster, the text is read inside the admin\'s '
+        ('No outside scanning service.', 'When the admin scans an ID on the roster, the text is read inside the admin\'s '
                                             'own browser (Tesseract.js). The photo is not sent to any outside service.'),
-        ('8. Deleted with the account.', 'Deleting the account removes both sides of the ID. Testing found that the back '
+        ('Deleted with the account.', 'Deleting the account removes both sides of the ID. Testing found that the back '
                                          'side was being left behind (bug B-03); it was fixed and a test guards it.'),
     ])
     pdf.para('Tested by TC-27 to TC-30 and TC-32 in the Testing Documentation, plus the tests for consent, for the ID number '
@@ -1545,8 +1600,10 @@ def build_reviewer(total, failed=0):
                                     'double clicks).'),
                  ('Security tests:', 'every fixed security bug keeps a test (access control, escaping, lockout, caching).'),
                  ('Accessibility:', 'WCAG 2.1 AA contrast, labels, names, language and reflow measured on 13 pages.'),
+                 ('Live website:', 'read-only checks of the deployed site over the internet: every public page, '
+                                   'HTTPS, security headers, CSRF, desktop and phone layout (Testing Documentation 4.2).'),
                  ('Methods:', 'functional, unit, integration, end-to-end, regression, API, security, validation, '
-                              'smoke and manual testing; black-box and white-box tests designed with equivalence '
+                              'live-site and manual testing; black-box and white-box tests designed with equivalence '
                               'partitioning and boundary values (Testing Documentation, sections 2.6 and 2.7).'),
                  ('Honesty:', 'failed and unfinished checks and open issues are written down in the Testing Documentation.')])
     pdf.callout('Tip for the defense', 'Bring the Testing Documentation. If asked "did anything fail?", say yes for the bugs '
